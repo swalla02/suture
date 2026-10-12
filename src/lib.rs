@@ -5,9 +5,11 @@
 //! See `docs/ir-spec.md` for the formal model.
 
 pub mod rng;
+pub mod sig;
 pub mod value;
 
 pub use rng::Rng;
+pub use sig::{KindDecl, KindId, Polarity, PortType, SigBuilder, SigError, Signature, TypeId, TypeMode};
 pub use value::{Value, ValueError, ValueType};
 
 /// Builds a [`Value::Tuple`] from expressions convertible into [`Value`].
