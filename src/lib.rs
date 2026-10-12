@@ -1,0 +1,23 @@
+//! Suture: a typed, deterministic interaction-net kernel.
+//!
+//! The running program is a port graph; the only internal computation is
+//! `INTERACT`, the atomic replacement of an active pair by a validated patch.
+//! See `docs/ir-spec.md` for the formal model.
+
+pub mod rng;
+pub mod value;
+
+pub use rng::Rng;
+pub use value::{Value, ValueError, ValueType};
+
+/// Builds a [`Value::Tuple`] from expressions convertible into [`Value`].
+#[macro_export]
+macro_rules! tup {
+    ($($x:expr),* $(,)?) => { $crate::Value::tuple([$($crate::Value::from($x)),*]) };
+}
+
+/// Builds a [`Value::List`] from expressions convertible into [`Value`].
+#[macro_export]
+macro_rules! vlist {
+    ($($x:expr),* $(,)?) => { $crate::Value::list([$($crate::Value::from($x)),*]) };
+}
