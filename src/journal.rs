@@ -5,6 +5,10 @@
 //! records; recovery replays them and verifies every deterministic reduction
 //! against its recorded digest.
 
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
+
 use serde::{Deserialize, Serialize};
 
 use crate::id::{AgentId, Digest, HoleId};
@@ -88,4 +92,111 @@ impl Journal for MemJournal {
     fn len_durable(&self) -> usize {
         self.durable.len()
     }
+}
+
+/// A JSON-lines journal file. `commit` appends the buffered records plus a
+/// commit marker and fsyncs; `open` truncates anything after the last commit
+/// marker (a torn or uncommitted tail).
+pub struct FileJournal {
+    path: PathBuf,
+    file: File,
+    buffer: Vec<String>,
+    committed: usize,
+}
+
+/// Parses complete lines up to the last commit marker. Returns the records
+/// and the byte length of the committed prefix.
+fn committed_prefix(bytes: &[u8]) -> (Vec<Record>, usize) {
+    let (mut records, mut pending) = (Vec::new(), Vec::new());
+    let (mut offset, mut keep) = (0, 0);
+    for line in bytes.split_inclusive(|&b| b == b'\n') {
+        if !line.ends_with(b"\n") {
+            break;
+        }
+        let Ok(rec) = serde_json::from_slice::<Record>(&line[..line.len() - 1]) else { break };
+        offset += line.len();
+        let is_commit = rec == Record::Commit;
+        pending.push(rec);
+        if is_commit {
+            records.append(&mut pending);
+            keep = offset;
+        }
+    }
+    (records, keep)
+}
+
+impl FileJournal {
+    pub fn open(path: &Path) -> Result<FileJournal, JournalError> {
+        let mut file = OpenOptions::new().read(true).write(true).create(true).truncate(false).open(path)?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        let (records, keep) = committed_prefix(&bytes);
+        if keep != bytes.len() {
+            file.set_len(keep as u64)?;
+            file.sync_all()?;
+        }
+        file.seek(SeekFrom::End(0))?;
+        Ok(FileJournal { path: path.to_path_buf(), file, buffer: vec![], committed: records.len() })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Journal for FileJournal {
+    fn append(&mut self, r: Record) {
+        self.buffer.push(serde_json::to_string(&r).expect("journal records always serialize"));
+    }
+
+    fn commit(&mut self) -> Result<(), JournalError> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
+        let mut out = String::new();
+        for line in &self.buffer {
+            out.push_str(line);
+            out.push('\n');
+        }
+        out.push_str(&serde_json::to_string(&Record::Commit).expect("commit marker serializes"));
+        out.push('\n');
+        self.file.write_all(out.as_bytes())?;
+        self.file.flush()?;
+        self.file.sync_data()?;
+        self.committed += self.buffer.len() + 1;
+        self.buffer.clear();
+        Ok(())
+    }
+
+    fn durable(&self) -> Result<Vec<Record>, JournalError> {
+        let mut bytes = Vec::new();
+        File::open(&self.path)?.read_to_end(&mut bytes)?;
+        Ok(committed_prefix(&bytes).0)
+    }
+
+    fn crash(&mut self) {
+        self.buffer.clear();
+    }
+
+    fn len_durable(&self) -> usize {
+        self.committed
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RecoveryError {
+    #[error(transparent)]
+    Journal(#[from] JournalError),
+    #[error("journal header mismatch: {0}")]
+    Header(String),
+    #[error("journal references unknown rule {0}")]
+    UnknownRule(String),
+    #[error("rule {rule} is version {program} but the journal recorded version {journal}")]
+    RuleVersion { rule: String, journal: u32, program: u32 },
+    #[error("replay diverged at record {step}: rule {rule} no longer produces the recorded patch")]
+    Divergence { rule: String, step: usize },
+    #[error("record {step} reduces a pair that is not active")]
+    MissingPair { step: usize },
+    #[error("replaying an inject failed: {0}")]
+    Inject(String),
 }

@@ -130,6 +130,16 @@ pub fn sum(m: &Mini, a: u64, b: u64, label: &str) -> Injection {
     Injection::new(nb.finish().unwrap()).new_hole(r, Some(label))
 }
 
+/// An injection whose `Start >< Go` pair emits the `Ask(7)` effect; the
+/// eventual `Result` lands at a new hole labeled `label`.
+pub fn start_go(m: &Mini, label: &str) -> Injection {
+    let mut nb = NetBuilder::new(&m.prog.sig);
+    let (p, o) = (nb.var(), nb.var());
+    nb.agent(m.start, (), p, &[]);
+    nb.agent(m.go, (), p, &[o]);
+    Injection::new(nb.finish().unwrap()).new_hole(o, Some(label))
+}
+
 /// Reads a Peano numeral attached to hole `h`.
 pub fn read_nat(m: &Machine, mini: &Mini, h: HoleId) -> Option<u64> {
     let mut e = m.graph().hole(h)?.peer;

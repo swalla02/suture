@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::check::{check_inject_static, check_patch, NetError, PatchSpec};
 use crate::graph::{Agent, Cause, Endpoint, Graph, GraphError, Hole, HoleOrigin};
 use crate::id::{AgentId, Digest, HoleId};
-use crate::journal::{Journal, JournalError, MemJournal, RecBind, Record, FORMAT};
+use crate::journal::{Journal, JournalError, MemJournal, RecBind, Record, RecoveryError, FORMAT};
 use crate::net::{resolve, Bind, End, ExtKind, HoleRef, Injection, NetData, Slot, Var};
 use crate::policy::{PatchView, Policy};
 use crate::rng::Rng;
@@ -732,6 +732,109 @@ impl Machine {
         self.stats.injects += 1;
         self.stats.created += net.agents.len() as u64;
         self.stats.max_agents = self.stats.max_agents.max(self.graph.agent_count());
+    }
+
+    // ------------------------------------------------------------ recovery
+
+    /// Rebuilds a machine from the committed records of `journal` and keeps
+    /// appending to it. Deterministic reductions are re-run and must
+    /// reproduce their recorded digest; recorded (opaque) reductions apply
+    /// the journaled patch without re-running the rule.
+    pub fn recover(prog: Program, mut journal: Box<dyn Journal>) -> Result<Machine, RecoveryError> {
+        journal.crash(); // only committed records survive recovery
+        let records = journal.durable()?;
+        let mut m = Self::fresh(prog, journal);
+        let Some(first) = records.first() else { return Ok(m) };
+        m.journal.crash(); // drop the header `fresh` buffered: the journal has one
+        let Record::Header { program, version, format } = first else {
+            return Err(RecoveryError::Header("first record is not a header".into()));
+        };
+        if program != m.prog.name() || *version != m.prog.version() || *format != FORMAT {
+            return Err(RecoveryError::Header(format!(
+                "journal is {program} v{version} (format {format}), program is {} v{} (format {FORMAT})",
+                m.prog.name(),
+                m.prog.version()
+            )));
+        }
+        m.replaying = true;
+        for (step, rec) in records.iter().enumerate().skip(1) {
+            match rec {
+                Record::Inject { seq, key, mint, net, binds } => {
+                    let mut inj = Injection { net: net.clone(), binds: vec![], key: key.clone(), mint: *mint };
+                    for (v, b) in binds {
+                        let bind = match b {
+                            RecBind::Hole(h) => Bind::Hole(HoleRef::Id(*h)),
+                            RecBind::New { label } => Bind::New(label.clone()),
+                        };
+                        inj.binds.push((*v, bind));
+                    }
+                    let rc = m.inject(inj).map_err(|e| RecoveryError::Inject(format!("record {step}: {e}")))?;
+                    if rc.seq != *seq || rc.duplicate {
+                        return Err(RecoveryError::Inject(format!("record {step}: sequence {} != {seq}", rc.seq)));
+                    }
+                }
+                Record::Reduce { left, right, rule, version, digest, patch } => {
+                    m.replay_reduce(step, *left, *right, rule, *version, *digest, patch.as_ref())?;
+                }
+                Record::Fault { left, right, rule, error } => {
+                    m.stats.faults += 1;
+                    let f = Fault { left: *left, right: *right, rule: rule.clone(), error: error.clone() };
+                    m.faults.insert(norm(*left, *right), f);
+                }
+                Record::Commit | Record::Header { .. } => {}
+            }
+        }
+        m.replaying = false;
+        m.ready = m.graph.active_pairs().into_iter().filter(|p| !m.faults.contains_key(p)).collect();
+        Ok(m)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn replay_reduce(
+        &mut self,
+        step: usize,
+        l: AgentId,
+        r: AgentId,
+        rule_name: &str,
+        version: u32,
+        digest: Digest,
+        patch: Option<&NetData>,
+    ) -> Result<(), RecoveryError> {
+        if self.graph.active_partner(l) != Some(r) {
+            return Err(RecoveryError::MissingPair { step });
+        }
+        let prog = self.prog.clone();
+        let (ridx, rule) = prog.rules.by_name(rule_name).ok_or_else(|| RecoveryError::UnknownRule(rule_name.into()))?;
+        let diverged = || RecoveryError::Divergence { rule: rule_name.to_string(), step };
+        match self.orient(l, r) {
+            Ok((idx, ol, or)) if idx == ridx && ol == l && or == r => {}
+            _ => return Err(diverged()),
+        }
+        let net = match patch {
+            Some(p) => {
+                if p.digest() != digest {
+                    return Err(diverged());
+                }
+                p.clone()
+            }
+            None => {
+                if rule.version != version {
+                    return Err(RecoveryError::RuleVersion {
+                        rule: rule_name.to_string(),
+                        journal: version,
+                        program: rule.version,
+                    });
+                }
+                let net = self.run_rule(rule, l, r).map_err(|_| diverged())?;
+                if net.digest() != digest {
+                    return Err(diverged());
+                }
+                net
+            }
+        };
+        let prep = self.prepare(rule, l, r, &net).map_err(|_| diverged())?;
+        self.install(ridx, rule, l, r, &net, prep);
+        Ok(())
     }
 
     // -------------------------------------------------------------- commit

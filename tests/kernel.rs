@@ -3,14 +3,6 @@ mod common;
 use common::*;
 use suture::*;
 
-fn start_go(m: &Mini, label: &str) -> Injection {
-    let mut nb = NetBuilder::new(&m.prog.sig);
-    let (p, o) = (nb.var(), nb.var());
-    nb.agent(m.start, (), p, &[]);
-    nb.agent(m.go, (), p, &[o]);
-    Injection::new(nb.finish().unwrap()).new_hole(o, Some(label))
-}
-
 fn single(m: &Mini, kind: KindId, payload: Value, hole: Bind) -> Injection {
     let mut nb = NetBuilder::new(&m.prog.sig);
     let v = nb.var();

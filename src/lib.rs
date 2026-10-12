@@ -20,7 +20,7 @@ pub mod value;
 pub use check::NetError;
 pub use graph::{Agent, Cause, Endpoint, Graph, GraphError, Hole, HoleOrigin};
 pub use id::{AgentId, Digest, DigestBuilder, HoleId};
-pub use journal::{Journal, JournalError, MemJournal, RecBind, Record};
+pub use journal::{FileJournal, Journal, JournalError, MemJournal, RecBind, Record, RecoveryError};
 pub use machine::{EffectView, Fault, InjectError, InjectReceipt, Limits, Machine, Program, ProgramError, Rounds, RunOutcome, SchedulerKind, Stats};
 pub use net::{Bind, HoleRef, Injection, NetAgent, NetBuilder, NetData, Slot, Var};
 pub use policy::{PatchView, Policy};
