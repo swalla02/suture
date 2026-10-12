@@ -8,7 +8,9 @@ pub mod check;
 pub mod graph;
 pub mod id;
 pub mod net;
+pub mod policy;
 pub mod rng;
+pub mod rule;
 pub mod sig;
 pub mod value;
 
@@ -16,7 +18,9 @@ pub use check::NetError;
 pub use graph::{Agent, Cause, Endpoint, Graph, GraphError, Hole, HoleOrigin};
 pub use id::{AgentId, Digest, DigestBuilder, HoleId};
 pub use net::{Bind, HoleRef, Injection, NetAgent, NetBuilder, NetData, Slot, Var};
+pub use policy::{PatchView, Policy};
 pub use rng::Rng;
+pub use rule::{Coverage, Rule, RuleCx, RuleError, RuleMode, RuleTable};
 pub use sig::{KindDecl, KindId, Polarity, PortType, SigBuilder, SigError, Signature, TypeId, TypeMode};
 pub use value::{Value, ValueError, ValueType};
 
