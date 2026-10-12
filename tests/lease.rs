@@ -296,3 +296,19 @@ fn experiment_a_file_journal() {
         assert!(r.crashes > 0, "seed {seed}");
     }
 }
+
+#[test]
+fn idempotency_keys_use_full_hole_identities() {
+    // A short (32-bit) prefix would let two different effects share a key,
+    // and the second inject would be silently dropped as a duplicate.
+    let mut d = Drive::new(LeaseConfig::default(), &[LeaseSpec::new(1, "eu-west-1")]);
+    d.admit("r1", "acme", eu());
+    let job = d.job("r1");
+    let reply = lease::reply_injection(&d.m.program().sig, &d.k, &job, true).unwrap();
+    assert_eq!(reply.key, Some(format!("reply:{:032x}", job.hole.0)));
+    lease::reply_job(&mut d.m, &d.k, &job, true).unwrap();
+    d.m.run(None);
+    let send = d.m.outbox().into_iter().find(|e| e.kind == d.k.send).unwrap();
+    let route = lease::route_injection(&d.m.program().sig, &d.k, &send).unwrap();
+    assert_eq!(route.key, Some(format!("route:{:032x}", send.hole.0)));
+}

@@ -376,7 +376,7 @@ fn ack_effect(m: &mut Machine, kind: KindId, hole: crate::HoleId) -> Result<(), 
     let mut b = NetBuilder::new(&m.program().sig);
     let p = b.var();
     b.agent(kind, (), p, &[]);
-    m.inject(Injection::new(b.finish()?).at_hole(p, hole).key(format!("ack:{hole}"))).map(|_| ())
+    m.inject(Injection::new(b.finish()?).at_hole(p, hole).key(format!("ack:{:032x}", hole.0))).map(|_| ())
 }
 
 #[derive(Clone, Debug)]

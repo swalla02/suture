@@ -458,7 +458,7 @@ pub fn route_injection(sig: &Signature, k: &LeaseKinds, send: &EffectView) -> Re
         .at_hole(p, send.hole)
         .at_label(d, &dest)
         .new_hole(n, Some(&dest))
-        .key(format!("route:{}", send.hole)))
+        .key(format!("route:{:032x}", send.hole.0)))
 }
 
 pub fn route(m: &mut Machine, k: &LeaseKinds, send: &EffectView) -> Result<InjectReceipt, InjectError> {
@@ -471,7 +471,7 @@ pub fn reply_injection(sig: &Signature, k: &LeaseKinds, job: &EffectView, ok: bo
     let mut b = NetBuilder::new(sig);
     let p = b.var();
     b.agent(if ok { k.job_done } else { k.job_failed }, (), p, &[]);
-    Ok(Injection::new(b.finish()?).at_hole(p, job.hole).key(format!("reply:{}", job.hole)))
+    Ok(Injection::new(b.finish()?).at_hole(p, job.hole).key(format!("reply:{:032x}", job.hole.0)))
 }
 
 pub fn reply_job(m: &mut Machine, k: &LeaseKinds, job: &EffectView, ok: bool) -> Result<InjectReceipt, InjectError> {
