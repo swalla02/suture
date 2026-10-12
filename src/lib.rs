@@ -10,6 +10,7 @@ pub mod id;
 pub mod journal;
 pub mod machine;
 pub mod net;
+pub mod nets;
 pub mod policy;
 pub mod rng;
 pub mod rule;
