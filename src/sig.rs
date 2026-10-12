@@ -118,6 +118,11 @@ impl Signature {
         &self.kinds[k.0 as usize]
     }
 
+    /// Whether `k` belongs to this signature.
+    pub fn has_kind(&self, k: KindId) -> bool {
+        (k.0 as usize) < self.kinds.len()
+    }
+
     pub fn kind_id(&self, name: &str) -> Option<KindId> {
         self.by_name.get(name).copied()
     }

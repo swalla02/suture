@@ -103,6 +103,10 @@ impl<'s> NetBuilder<'s> {
     }
 
     fn arity_ok(&mut self, kind: KindId, n: usize) -> bool {
+        if !self.sig.has_kind(kind) {
+            self.fail(NetError::UnknownKind(kind.0));
+            return false;
+        }
         let expected = self.sig.arity(kind);
         if expected != n {
             self.fail(NetError::Arity { kind: self.sig.kind(kind).name.clone(), expected, got: n });

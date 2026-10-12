@@ -16,6 +16,8 @@ pub enum NetError {
     Arity { kind: String, expected: usize, got: usize },
     #[error("unknown wire variable {0}")]
     UnknownVar(u32),
+    #[error("kind {0} is not in this program's signature")]
+    UnknownKind(u16),
     #[error("wire variable {var} used {uses} times (must be exactly 2)")]
     VarUses { var: u32, uses: usize },
     #[error("closed wire loop through variable {0}")]
@@ -61,6 +63,9 @@ pub(crate) fn dual(p: PortType) -> PortType {
 fn check_agents(sig: &Signature, net: &NetData, max_agents: usize, may_emit: Option<&[KindId]>) -> Result<(), NetError> {
     if net.agents.len() > max_agents {
         return Err(NetError::TooLarge { agents: net.agents.len(), limit: max_agents });
+    }
+    if let Some(a) = net.agents.iter().find(|a| !sig.has_kind(a.kind)) {
+        return Err(NetError::UnknownKind(a.kind.0));
     }
     for a in &net.agents {
         let d = sig.kind(a.kind);

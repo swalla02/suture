@@ -291,3 +291,22 @@ fn inject_can_connect_two_existing_holes() {
     assert!(m.hole("x").is_none() && m.hole("z").is_none());
     m.check_invariants().unwrap();
 }
+
+#[test]
+fn foreign_kind_ids_are_rejected_not_panicked() {
+    let m0 = mini();
+    let mut m = Machine::new(m0.prog.clone());
+    let before = m.digest();
+    let net = NetData {
+        vars: 1,
+        agents: vec![NetAgent { kind: KindId(999), payload: Value::Unit, ports: vec![Slot::Var(Var(0))] }],
+        links: vec![],
+    };
+    let res = m.inject(Injection::new(net).new_hole(Var(0), None));
+    assert!(matches!(res, Err(InjectError::Net(NetError::UnknownKind(999)))), "{res:?}");
+    assert_eq!(m.digest(), before);
+    let mut b = NetBuilder::new(&m0.prog.sig);
+    let v = b.var();
+    b.agent(KindId(999), (), v, &[]);
+    assert_eq!(b.finish().unwrap_err(), NetError::UnknownKind(999));
+}
