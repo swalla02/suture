@@ -5,6 +5,7 @@
 //! See `docs/ir-spec.md` for the formal model.
 
 pub mod check;
+pub mod dnc;
 mod dot;
 pub mod explain;
 pub mod graph;
