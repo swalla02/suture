@@ -20,7 +20,7 @@ This report applies the readme's §7 decision rule to the two minimal programs i
 | Item | Value |
 | --- | --- |
 | Kernel | `src/*.rs`, about 2,600 non-blank lines of Rust, 4 crate dependencies |
-| Tests | 99 tests (unit and integration) |
+| Tests | 101 tests (unit and integration) |
 | Programs on the kernel | Peano arithmetic, symmetric interaction combinators, Experiment A, Experiment B, Experiment B0 |
 | Rule coverage | complete for all five programs (`coverage().missing` is empty) |
 | Throughput | 60 × 60 in Peano arithmetic: 110,042 reductions in 0.56 s, about 196 k reductions/s. Release build, single thread, every patch validated and journaled in memory. |

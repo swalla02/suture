@@ -102,6 +102,11 @@ pub struct FileJournal {
     file: File,
     buffer: Vec<String>,
     committed: usize,
+    /// Byte length of the committed prefix; a failed commit is rolled back to it.
+    committed_len: u64,
+    /// Test hook: the next commit writes only this many bytes, then fails.
+    #[cfg(test)]
+    fail_after: Option<usize>,
 }
 
 /// Parses complete lines up to the last commit marker. Returns the records
@@ -136,11 +141,32 @@ impl FileJournal {
             file.sync_all()?;
         }
         file.seek(SeekFrom::End(0))?;
-        Ok(FileJournal { path: path.to_path_buf(), file, buffer: vec![], committed: records.len() })
+        Ok(FileJournal {
+            path: path.to_path_buf(),
+            file,
+            buffer: vec![],
+            committed: records.len(),
+            committed_len: keep as u64,
+            #[cfg(test)]
+            fail_after: None,
+        })
     }
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+}
+
+impl FileJournal {
+    fn write_durably(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        #[cfg(test)]
+        if let Some(n) = self.fail_after.take() {
+            self.file.write_all(&bytes[..n.min(bytes.len())])?;
+            return Err(std::io::Error::other("injected write failure"));
+        }
+        self.file.write_all(bytes)?;
+        self.file.flush()?;
+        self.file.sync_data()
     }
 }
 
@@ -160,9 +186,14 @@ impl Journal for FileJournal {
         }
         out.push_str(&serde_json::to_string(&Record::Commit).expect("commit marker serializes"));
         out.push('\n');
-        self.file.write_all(out.as_bytes())?;
-        self.file.flush()?;
-        self.file.sync_data()?;
+        if let Err(e) = self.write_durably(out.as_bytes()) {
+            // Remove any torn bytes so later commits stay readable; the
+            // records stay buffered and the next commit retries them.
+            self.file.set_len(self.committed_len)?;
+            self.file.seek(SeekFrom::End(0))?;
+            return Err(e.into());
+        }
+        self.committed_len += out.len() as u64;
         self.committed += self.buffer.len() + 1;
         self.buffer.clear();
         Ok(())
@@ -199,4 +230,43 @@ pub enum RecoveryError {
     MissingPair { step: usize },
     #[error("replaying an inject failed: {0}")]
     Inject(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::id::AgentId;
+
+    fn rec(error: &str) -> Record {
+        Record::Fault { left: AgentId(1), right: AgentId(2), rule: None, error: error.into() }
+    }
+
+    fn errors(j: &FileJournal) -> Vec<String> {
+        j.durable()
+            .unwrap()
+            .into_iter()
+            .filter_map(|r| match r {
+                Record::Fault { error, .. } => Some(error),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn failed_commit_is_rolled_back_and_retryable() {
+        let path = std::env::temp_dir().join(format!("suture-journal-{}-rollback.jsonl", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let mut j = FileJournal::open(&path).unwrap();
+        j.append(rec("first"));
+        j.commit().unwrap();
+        let good = std::fs::metadata(&path).unwrap().len();
+        j.append(rec("second"));
+        j.fail_after = Some(5);
+        assert!(j.commit().is_err());
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), good, "torn bytes must be rolled back");
+        j.append(rec("third"));
+        j.commit().unwrap(); // retries "second" as well
+        assert_eq!(errors(&FileJournal::open(&path).unwrap()), ["first", "second", "third"]);
+        let _ = std::fs::remove_file(&path);
+    }
 }
