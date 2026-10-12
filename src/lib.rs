@@ -4,10 +4,12 @@
 //! `INTERACT`, the atomic replacement of an active pair by a validated patch.
 //! See `docs/ir-spec.md` for the formal model.
 
+pub mod id;
 pub mod rng;
 pub mod sig;
 pub mod value;
 
+pub use id::{AgentId, Digest, DigestBuilder, HoleId};
 pub use rng::Rng;
 pub use sig::{KindDecl, KindId, Polarity, PortType, SigBuilder, SigError, Signature, TypeId, TypeMode};
 pub use value::{Value, ValueError, ValueType};
