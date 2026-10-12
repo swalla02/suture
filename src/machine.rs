@@ -282,6 +282,10 @@ impl Machine {
         self.faults.values().cloned().collect()
     }
 
+    pub(crate) fn is_faulted(&self, a: AgentId, b: AgentId) -> bool {
+        self.faults.contains_key(&norm(a, b))
+    }
+
     pub fn hole(&self, label: &str) -> Option<HoleId> {
         self.graph.hole_by_label(label)
     }

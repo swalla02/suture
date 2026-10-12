@@ -5,6 +5,8 @@
 //! See `docs/ir-spec.md` for the formal model.
 
 pub mod check;
+mod dot;
+pub mod explain;
 pub mod graph;
 pub mod id;
 pub mod journal;
@@ -18,6 +20,7 @@ pub mod sig;
 pub mod value;
 
 pub use check::NetError;
+pub use explain::{Explanation, Terminal, WaitGroup};
 pub use graph::{Agent, Cause, Endpoint, Graph, GraphError, Hole, HoleOrigin};
 pub use id::{AgentId, Digest, DigestBuilder, HoleId};
 pub use journal::{FileJournal, Journal, JournalError, MemJournal, RecBind, Record, RecoveryError};
