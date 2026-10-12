@@ -37,6 +37,7 @@ impl TypeId {
         PortType { ty: self, pol: Polarity::Pos }
     }
     /// The consuming side of a polarized type.
+    #[allow(clippy::should_implement_trait)] // polarity constructor, not arithmetic negation
     pub fn neg(self) -> PortType {
         PortType { ty: self, pol: Polarity::Neg }
     }

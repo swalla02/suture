@@ -5,6 +5,7 @@
 //! touches the graph. The machine validates every patch it produces before
 //! installation, so a buggy rule can fault a pair but cannot corrupt the graph.
 
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
@@ -181,11 +182,13 @@ impl RuleTable {
         body: impl Fn(&mut RuleCx<'_>) -> Result<(), RuleError> + Send + Sync + 'static,
     ) -> &mut Rule {
         let idx = self.rules.len();
-        let k = key(left, right);
-        if self.index.contains_key(&k) {
-            self.errors.push(format!("rule {name}: kinds {left:?} and {right:?} already have a rule"));
-        } else {
-            self.index.insert(k, idx);
+        match self.index.entry(key(left, right)) {
+            Entry::Vacant(e) => {
+                e.insert(idx);
+            }
+            Entry::Occupied(_) => {
+                self.errors.push(format!("rule {name}: kinds {left:?} and {right:?} already have a rule"));
+            }
         }
         if self.names.insert(name.to_string(), idx).is_some() {
             self.errors.push(format!("duplicate rule name {name}"));

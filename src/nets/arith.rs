@@ -95,6 +95,7 @@ pub enum Expr {
     Mul(Box<Expr>, Box<Expr>),
 }
 
+#[allow(clippy::should_implement_trait)] // `Expr::add(a, b)` builds a term; it is not `a + b`
 impl Expr {
     pub fn num(n: u64) -> Expr {
         Expr::Num(n)

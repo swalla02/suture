@@ -29,4 +29,16 @@ fn main() {
         rounds.reductions as f64 / rounds.rounds as f64
     );
     assert_eq!(r.digest(), m.digest(), "round-based and sequential reduction agree");
+
+    // Raw throughput on a larger term: 60 * 60 (validated, journaled reductions).
+    let big = Expr::mul(Expr::num(60), Expr::num(60));
+    let (prog, k) = arith::program();
+    let mut m = Machine::new(prog);
+    let h = arith::inject_expr(&mut m, &k, &big, "result").unwrap();
+    let t = std::time::Instant::now();
+    m.run(None);
+    let dt = t.elapsed();
+    assert_eq!(arith::readback(&m, &k, h), Some(3600));
+    let n = m.stats().reductions;
+    println!("60 * 60: {n} reductions in {dt:.2?} ({:.0} reductions/s)", n as f64 / dt.as_secs_f64());
 }

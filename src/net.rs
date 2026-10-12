@@ -309,8 +309,7 @@ pub(crate) fn resolve(net: &NetData, ext_vars: &[Var], ext: &[ExtKind]) -> Resul
     let mut visited = vec![false; n];
     let mut conns = Vec::new();
     for v in 0..n {
-        for slot in 0..2 {
-            let start = uses[v][slot];
+        for start in [uses[v][0], uses[v][1]] {
             if visited[v] || !terminal(start) {
                 continue;
             }

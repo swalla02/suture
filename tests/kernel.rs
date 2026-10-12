@@ -264,3 +264,30 @@ fn conserved_census() {
     assert_eq!(m.census("lease"), vec![Value::Int(3)]);
     assert!(m.census("other").is_empty());
 }
+
+#[test]
+fn inject_can_connect_two_existing_holes() {
+    // A net with no agents and one variable bound to two holes is `CONNECT`.
+    let m0 = mini();
+    let mut m = Machine::new(m0.prog.clone());
+    let mut b = NetBuilder::new(&m0.prog.sig);
+    let (x, y, r) = (b.var(), b.var(), b.var());
+    b.agent(m0.add, (), x, &[y, r]);
+    let w = b.var();
+    b.agent(m0.z, (), w, &[]);
+    m.inject(Injection::new(b.finish().unwrap()).new_hole(x, Some("x")).new_hole(y, Some("y")).new_hole(r, Some("r")).new_hole(w, Some("z")))
+        .unwrap();
+    assert!(m.is_quiescent());
+    let mut b = NetBuilder::new(&m0.prog.sig);
+    let v = b.var();
+    m.inject(Injection::new(b.finish().unwrap()).at_label(v, "x").at_label(v, "z")).unwrap();
+    assert_eq!(m.ready_count(), 1, "Z now faces Add");
+    let mut b = NetBuilder::new(&m0.prog.sig);
+    let v = b.var();
+    b.agent(m0.z, (), v, &[]);
+    m.inject(Injection::new(b.finish().unwrap()).at_label(v, "y")).unwrap();
+    m.run(None);
+    assert_eq!(read_nat(&m, &m0, m.hole("r").unwrap()), Some(0));
+    assert!(m.hole("x").is_none() && m.hole("z").is_none());
+    m.check_invariants().unwrap();
+}

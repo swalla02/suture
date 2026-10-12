@@ -1,6 +1,6 @@
 # Learned Interaction Machine
 
-> **Status:** architecture and research notes — **not implemented, validated, or a product**.  
+> **Status:** architecture and research notes, plus a **v0 kernel** (Rust, `src/`) that implements the typed IR, `INTERACT`, journaling and replay, and the two minimal experiments of §7. See [`docs/ir-spec.md`](docs/ir-spec.md) for the formal IR and memory semantics, and [`docs/experiments.md`](docs/experiments.md) for the findings. It is still **not validated as a product**, and there are no learned rules.  
 > **Purpose:** capture the concrete design direction developed in our discussion, including its motivation, proposed primitives, service lifecycle, deployment model, learning hypothesis, and unresolved questions.  
 > **Last updated:** 2026-10-12.
 
@@ -621,3 +621,24 @@ These questions are deliberately phrased to **drive a choice**, not just prolong
 | Product | Ordinary service APIs and deployable infrastructure | Real platform teams show no meaningful advantage |
 
 **Immediate next technical artifact:** a short **formal IR + memory-semantics specification** (including three worked reductions) followed by the lease and typed-session example programs. That is the smallest next step that can resolve several foundational questions without introducing another grand abstraction.
+
+---
+
+## Code (v0)
+
+```text
+src/            kernel: values, signatures, lineage ids, graph, nets + splice resolution,
+                static checks, rules, policies, machine (INTERACT/INJECT/effects), journal,
+                explanation, DOT export
+src/nets/       programs on the kernel: arith (Peano), combinators, lease (Experiment A),
+                session (Experiment B), session_typed (Experiment B0)
+tests/          kernel, journal/replay, explanation, and per-program suites
+docs/           ir-spec.md (formal IR), experiments.md (findings), superpowers/ (design + plan)
+```
+
+```bash
+cargo test                                      # the full suite
+cargo run --release --example lease_pool        # Experiment A measurements
+cargo run --release --example session           # Experiment B measurements
+cargo run --release --example arith             # Peano demo + throughput
+```
