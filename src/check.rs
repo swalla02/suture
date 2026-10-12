@@ -22,7 +22,7 @@ pub enum NetError {
     ClosedLoop(u32),
     #[error("ill-typed wire {a} ~ {b}")]
     WireType { a: String, b: String },
-    #[error("interface port {port} must be replaced by a {expected} endpoint, got {got}")]
+    #[error("ill-typed interface: port {port} must be replaced by a {expected} endpoint, got {got}")]
     InterfaceType { port: usize, expected: String, got: String },
     #[error("{0} is not an effect kind but its principal faces the host")]
     EmitOnNonEffect(String),

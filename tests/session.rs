@@ -71,3 +71,60 @@ fn quiescence_is_explained() {
     assert!(text.contains("waiting on hole 'c:1'") && text.contains("waiting on hole 's:1'"), "{text}");
     assert!(!text.contains("STUCK") && !text.contains("DEADLOCK"), "{text}");
 }
+
+// ------------------------------------------------- B0: typed in-graph channel
+
+use suture::nets::session_typed::{self, Bug};
+use suture::{Bind, HoleRef, InjectError, Injection, Machine, NetBuilder, Value};
+
+#[test]
+fn typed_session_runs_to_completion() {
+    let (p, k) = session_typed::program(Bug::None);
+    let mut m = Machine::new(p);
+    session_typed::start(&mut m, &k, &[1, 2, 3]).unwrap();
+    m.run(None);
+    let (_, _, app) = m.hole_peer(m.hole("app").unwrap()).unwrap();
+    assert_eq!((app.kind, app.payload.clone()), (k.delivered, Value::list([1.into(), 2.into(), 3.into()])));
+    let (_, _, st) = m.hole_peer(m.hole("status").unwrap()).unwrap();
+    assert_eq!(st.kind, k.session_ok);
+    assert_eq!(m.stats().reductions, 10, "open, accept, 3 x (data, ack), close, closed");
+    assert!(m.faults().is_empty());
+    m.check_invariants().unwrap();
+}
+
+#[test]
+fn typed_session_coverage_complete() {
+    let (p, _) = session_typed::program(Bug::None);
+    let c = p.rules.coverage(&p.sig);
+    assert!(c.missing.is_empty() && c.never_fires.is_empty(), "{c:?}");
+}
+
+#[test]
+fn illegal_send_is_rejected_by_types() {
+    for bug in [Bug::ClientSendsAckAfterAccept, Bug::ServerRepliesClosedToData] {
+        let (p, k) = session_typed::program(bug);
+        let mut m = Machine::new(p);
+        session_typed::start(&mut m, &k, &[1, 2]).unwrap();
+        m.run(None);
+        let faults = m.faults();
+        assert_eq!(faults.len(), 1, "{bug:?}");
+        assert!(faults[0].error.contains("ill-typed"), "{bug:?}: {}", faults[0].error);
+        assert!(m.graph().agents_sorted().iter().all(|(_, a)| a.kind != k.delivered), "{bug:?}");
+        m.check_invariants().unwrap();
+    }
+}
+
+#[test]
+fn boundary_rejects_ill_typed_message_injection() {
+    let (p, k) = session_typed::program(Bug::None);
+    let mut m = Machine::new(p.clone());
+    let mut b = NetBuilder::new(&p.sig);
+    let (srv, app) = (b.var(), b.var());
+    b.agent(k.s_await_open, Value::list([]), srv, &[app]);
+    m.inject(Injection::new(b.finish().unwrap()).new_hole(srv, Some("srv")).new_hole(app, None)).unwrap();
+    let mut b = NetBuilder::new(&p.sig);
+    let (msg, cont) = (b.var(), b.var());
+    b.agent(k.data, suture::tup![0, 1], msg, &[cont]);
+    let res = m.inject(Injection::new(b.finish().unwrap()).bind(msg, Bind::Hole(HoleRef::Label("srv".into()))).new_hole(cont, None));
+    assert!(matches!(res, Err(InjectError::Type { .. })), "{res:?}");
+}
