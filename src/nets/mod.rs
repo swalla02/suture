@@ -2,3 +2,4 @@
 //! arithmetic, interaction combinators) and the readme's experiments.
 
 pub mod arith;
+pub mod combinators;
