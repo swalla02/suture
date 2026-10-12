@@ -211,3 +211,88 @@ fn reference_model_agrees_on_scripted_sequence() {
     assert_eq!(d.m.census("lease"), vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
     assert!(d.m.faults().is_empty());
 }
+
+// ------------------------------------------------------------ simulator
+
+use suture::nets::lease::{simulate, SimConfig};
+
+#[test]
+fn experiment_a_randomized() {
+    let (mut failures, mut grants) = (0, 0);
+    for seed in 0..300 {
+        let r = simulate(&SimConfig::standard(seed)).unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+        assert_eq!(r.outcomes.len(), 10, "seed {seed}");
+        failures += r.outcomes.values().filter(|o| matches!(o, Outcome::Failed { .. })).count();
+        grants += r.grants.len();
+    }
+    assert!(failures > 0, "the retry-exhaustion path was never exercised");
+    assert!(grants > 3000, "every request is granted at least once per seed");
+}
+
+#[test]
+fn experiment_a_with_crashes_and_duplicates() {
+    let (mut crashes, mut dups) = (0, 0);
+    for seed in 0..150 {
+        let mut c = SimConfig::standard(seed);
+        c.crash_rate = 0.05;
+        c.dup_rate = 0.05;
+        c.commit_rate = 0.5;
+        let r = simulate(&c).unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+        crashes += r.crashes;
+        dups += r.duplicates_ignored;
+    }
+    assert!(crashes > 100 && dups > 100, "crashes {crashes}, duplicates {dups}");
+}
+
+/// Replays a boundary log. A host only targets holes it has observed, so an
+/// inject answering an effect that does not exist yet waits for `settle`.
+fn replay(m: &mut Machine, log: &[Injection], mut between: impl FnMut(&mut Machine), settle: impl Fn(&mut Machine)) {
+    for inj in log {
+        match m.inject(inj.clone()) {
+            Err(InjectError::UnknownHole(_)) => {
+                settle(m);
+                m.inject(inj.clone()).unwrap();
+            }
+            other => {
+                other.unwrap();
+            }
+        }
+        between(m);
+    }
+    settle(m);
+}
+
+#[test]
+fn experiment_a_schedule_independence() {
+    for seed in 0..20 {
+        let mut c = SimConfig::standard(seed);
+        c.scheduler = Some(SchedulerKind::Fifo);
+        let r = simulate(&c).unwrap();
+        let (prog, _) = lease::program(&LeaseConfig { max_attempts: c.max_attempts, ..LeaseConfig::default() });
+        for sched in [SchedulerKind::Lifo, SchedulerKind::Random(seed)] {
+            let mut m = Machine::new(prog.clone());
+            m.set_scheduler(sched);
+            let mut rng = Rng::new(seed);
+            replay(&mut m, &r.boundary_log, |m| { m.run(Some(rng.below(6))); }, |m| { m.run(None); });
+            assert_eq!(m.digest(), r.final_digest, "seed {seed} {sched:?}");
+        }
+        let mut m = Machine::new(prog);
+        replay(&mut m, &r.boundary_log, |_| {}, |m| { m.run_rounds(None); });
+        assert_eq!(m.digest(), r.final_digest, "seed {seed} rounds");
+    }
+}
+
+#[test]
+fn experiment_a_file_journal() {
+    for seed in 0..5 {
+        let path = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+            .join(format!("lease-sim-{}-{seed}.jsonl", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let mut c = SimConfig::standard(seed);
+        c.crash_rate = 0.05;
+        c.commit_rate = 0.5;
+        c.file_journal = Some(path);
+        let r = simulate(&c).unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+        assert!(r.crashes > 0, "seed {seed}");
+    }
+}

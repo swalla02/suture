@@ -21,11 +21,14 @@
 
 use std::collections::VecDeque;
 
+mod sim;
+pub use sim::{simulate, Provider, SimConfig, SimReport};
+
 use crate::machine::{EffectView, InjectError, InjectReceipt, Machine, Program};
 use crate::net::{Injection, NetBuilder};
 use crate::policy::{PatchView, Policy};
 use crate::value::{Value, ValueError, ValueType};
-use crate::{tup, Endpoint, KindId, RuleTable, SigBuilder};
+use crate::{tup, Endpoint, KindId, NetError, RuleTable, SigBuilder, Signature};
 
 /// The pool's mailbox label.
 pub const POOL: &str = "pool";
@@ -395,10 +398,14 @@ impl Policy for TenantPolicy {
 }
 
 // ------------------------------------------------------------- host side
+//
+// Each host operation has a pure builder (`*_injection`) returning the
+// `Injection` it performs — so a host can log it, retry it, or replay it —
+// and a convenience wrapper that injects it.
 
 /// Creates the pool with the given leases (in free-list order). Mints.
-pub fn init_pool(m: &mut Machine, k: &LeaseKinds, leases: &[LeaseSpec]) -> Result<InjectReceipt, InjectError> {
-    let mut b = NetBuilder::new(&m.program().sig);
+pub fn init_pool_injection(sig: &Signature, k: &LeaseKinds, leases: &[LeaseSpec]) -> Result<Injection, NetError> {
+    let mut b = NetBuilder::new(sig);
     let (mb, f0, q0) = (b.var(), b.var(), b.var());
     b.agent(k.pool, (), mb, &[f0, q0]);
     let mut cur = f0;
@@ -409,7 +416,12 @@ pub fn init_pool(m: &mut Machine, k: &LeaseKinds, leases: &[LeaseSpec]) -> Resul
     }
     b.agent(k.fnil, (), cur, &[]);
     b.agent(k.qnil, (), q0, &[]);
-    m.inject(Injection::new(b.finish()?).new_hole(mb, Some(POOL)).mint().key("init-pool"))
+    Ok(Injection::new(b.finish()?).new_hole(mb, Some(POOL)).mint().key("init-pool"))
+}
+
+pub fn init_pool(m: &mut Machine, k: &LeaseKinds, leases: &[LeaseSpec]) -> Result<InjectReceipt, InjectError> {
+    let inj = init_pool_injection(&m.program().sig, k, leases)?;
+    m.inject(inj)
 }
 
 fn demand_payload(r: &Request, attempt: i64) -> Value {
@@ -418,48 +430,66 @@ fn demand_payload(r: &Request, attempt: i64) -> Value {
 
 /// Admission: appends the request's demand to the pool mailbox and exposes
 /// its status at hole `op:<req>`.
-pub fn admit(m: &mut Machine, k: &LeaseKinds, r: &Request) -> Result<InjectReceipt, InjectError> {
-    let mut b = NetBuilder::new(&m.program().sig);
+pub fn admit_injection(sig: &Signature, k: &LeaseKinds, r: &Request) -> Result<Injection, NetError> {
+    let mut b = NetBuilder::new(sig);
     let (tail, msg, rest, reply, st) = (b.var(), b.var(), b.var(), b.var(), b.var());
     b.agent(k.mcons, (), tail, &[msg, rest]);
     b.agent(k.demand, demand_payload(r, 1), msg, &[reply]);
     b.agent(k.await_lease, demand_payload(r, 1), reply, &[st]);
-    let inj = Injection::new(b.finish()?)
+    Ok(Injection::new(b.finish()?)
         .at_label(tail, POOL)
         .new_hole(rest, Some(POOL))
         .new_hole(st, Some(&format!("op:{}", r.req)))
-        .key(format!("admit:{}", r.req));
+        .key(format!("admit:{}", r.req)))
+}
+
+pub fn admit(m: &mut Machine, k: &LeaseKinds, r: &Request) -> Result<InjectReceipt, InjectError> {
+    let inj = admit_injection(&m.program().sig, k, r)?;
     m.inject(inj)
 }
 
 /// Transport: delivers a pending `Send` effect into the mailbox it names.
-pub fn route(m: &mut Machine, k: &LeaseKinds, send: &EffectView) -> Result<InjectReceipt, InjectError> {
-    let dest = send.payload.str(0).map_err(|e| crate::NetError::Value(e.to_string()))?.to_string();
-    let mut b = NetBuilder::new(&m.program().sig);
+pub fn route_injection(sig: &Signature, k: &LeaseKinds, send: &EffectView) -> Result<Injection, NetError> {
+    let dest = send.payload.str(0).map_err(|e| NetError::Value(e.to_string()))?.to_string();
+    let mut b = NetBuilder::new(sig);
     let (p, d, n) = (b.var(), b.var(), b.var());
     b.agent(k.route, (), p, &[d, n]);
-    let inj = Injection::new(b.finish()?)
+    Ok(Injection::new(b.finish()?)
         .at_hole(p, send.hole)
         .at_label(d, &dest)
         .new_hole(n, Some(&dest))
-        .key(format!("route:{}", send.hole));
+        .key(format!("route:{}", send.hole)))
+}
+
+pub fn route(m: &mut Machine, k: &LeaseKinds, send: &EffectView) -> Result<InjectReceipt, InjectError> {
+    let inj = route_injection(&m.program().sig, k, send)?;
     m.inject(inj)
 }
 
 /// Provider reply to a `RunJob` effect.
-pub fn reply_job(m: &mut Machine, k: &LeaseKinds, job: &EffectView, ok: bool) -> Result<InjectReceipt, InjectError> {
-    let mut b = NetBuilder::new(&m.program().sig);
+pub fn reply_injection(sig: &Signature, k: &LeaseKinds, job: &EffectView, ok: bool) -> Result<Injection, NetError> {
+    let mut b = NetBuilder::new(sig);
     let p = b.var();
     b.agent(if ok { k.job_done } else { k.job_failed }, (), p, &[]);
-    m.inject(Injection::new(b.finish()?).at_hole(p, job.hole).key(format!("reply:{}", job.hole)))
+    Ok(Injection::new(b.finish()?).at_hole(p, job.hole).key(format!("reply:{}", job.hole)))
+}
+
+pub fn reply_job(m: &mut Machine, k: &LeaseKinds, job: &EffectView, ok: bool) -> Result<InjectReceipt, InjectError> {
+    let inj = reply_injection(&m.program().sig, k, job, ok)?;
+    m.inject(inj)
 }
 
 /// Acknowledges (and removes) a finished request's status.
-pub fn ack_status(m: &mut Machine, k: &LeaseKinds, req: &str) -> Result<InjectReceipt, InjectError> {
-    let mut b = NetBuilder::new(&m.program().sig);
+pub fn ack_injection(sig: &Signature, k: &LeaseKinds, req: &str) -> Result<Injection, NetError> {
+    let mut b = NetBuilder::new(sig);
     let p = b.var();
     b.agent(k.status_ack, (), p, &[]);
-    m.inject(Injection::new(b.finish()?).at_label(p, &format!("op:{req}")).key(format!("ack:{req}")))
+    Ok(Injection::new(b.finish()?).at_label(p, &format!("op:{req}")).key(format!("ack:{req}")))
+}
+
+pub fn ack_status(m: &mut Machine, k: &LeaseKinds, req: &str) -> Result<InjectReceipt, InjectError> {
+    let inj = ack_injection(&m.program().sig, k, req)?;
+    m.inject(inj)
 }
 
 /// The request's outcome, if its status hole holds a final result.
