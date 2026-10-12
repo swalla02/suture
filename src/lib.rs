@@ -7,6 +7,8 @@
 pub mod check;
 pub mod graph;
 pub mod id;
+pub mod journal;
+pub mod machine;
 pub mod net;
 pub mod policy;
 pub mod rng;
@@ -17,6 +19,8 @@ pub mod value;
 pub use check::NetError;
 pub use graph::{Agent, Cause, Endpoint, Graph, GraphError, Hole, HoleOrigin};
 pub use id::{AgentId, Digest, DigestBuilder, HoleId};
+pub use journal::{Journal, JournalError, MemJournal, RecBind, Record};
+pub use machine::{EffectView, Fault, InjectError, InjectReceipt, Limits, Machine, Program, ProgramError, Rounds, RunOutcome, SchedulerKind, Stats};
 pub use net::{Bind, HoleRef, Injection, NetAgent, NetBuilder, NetData, Slot, Var};
 pub use policy::{PatchView, Policy};
 pub use rng::Rng;

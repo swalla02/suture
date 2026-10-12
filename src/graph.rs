@@ -83,6 +83,8 @@ pub enum GraphError {
     WireType(String),
     #[error("label table inconsistent: {0}")]
     Label(String),
+    #[error("ready queue inconsistent: {0}")]
+    Ready(String),
 }
 
 #[derive(Clone, Debug, Default)]
