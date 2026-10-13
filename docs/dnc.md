@@ -95,7 +95,7 @@ A bounded-neighbourhood variant (observing radius-`r` structure) is not implemen
 | Decision safety | yes | alternatives are enumerated by deterministic rules; enactment re-checks eligibility and passes L1–L9. No decision sequence can exceed a capacity, violate region policy, or duplicate a provider. Tested with an adversarial backend |
 | Confluence of the full machine | **no** | different decisions, or the same decisions in a different order, give different networks |
 | Independence from execution order for a fixed policy | **no**, by design | a decision's observation depends on what has already happened; measured as order sensitivity |
-| Termination | bounded by construction | attempts per dependency, recipe switches and conflict retries are capped; the driver also has a round budget |
+| Termination | **not guaranteed by construction** | attempts per dependency, recipe switches and conflict retries are capped, and providers that cannot be built die permanently. But a provider can be re-activated after deactivation, so no structural bound is proven. Every observed run settled (thousands, including the stress tests), and the driver's round budget is the hard cap |
 
 ## 7. Failure semantics of the decision layer
 
@@ -104,7 +104,8 @@ A bounded-neighbourhood variant (observing radius-`r` structure) is not implemen
 | Backend returns an index out of range | the selection is replaced by the fallback policy's choice and counted as `invalid` |
 | Backend error, timeout or unavailability | the batch is answered by the fallback policy and counted as `fallback` |
 | Low confidence (optional threshold on the top score margin) | fallback, counted. Confidence is never treated as correctness: enactment is validated either way |
-| Stale choice: the chosen candidate filled up or died between decision and enactment | the need is re-queued and decided again (optimistic concurrency, bounded retries), counted as `conflict` |
+| Stale choice: the chosen candidate filled up or died between decision and enactment | the need is re-queued with its conflict count incremented and decided again (optimistic concurrency). After `max_conflicts` the need fails back to its owner |
 | Site with exactly one alternative | resolved without a model call, counted as `trivial` (decisions compiled away) |
+| Notifications reordered by the transport (for example a binding's loss overtaking its grant) | the owner treats a loss for a pending dependency with the matching nonce as a loss; the late grant is stale and released. Found by the structural validator during the first experiment run; regression- and stress-tested |
 
 The deterministic fallback is the list-order policy, which is also the "deterministic local rewrite" baseline.

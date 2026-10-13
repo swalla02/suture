@@ -82,7 +82,7 @@ fn gauss(rng: &mut Rng) -> f64 {
 pub fn train(worlds: &[WorldSpec], dep: &DepConfig, cfg: &TrainConfig) -> Trained {
     let mut rng = Rng::new(cfg.seed);
     let mut mu = cfg.init.clone().unwrap_or_else(|| vec![0.0; DIMS]);
-    let mut sigma = vec![cfg.init_std; DIMS];
+    let mut sigma = [cfg.init_std; DIMS];
     let mut best = (f64::MIN, vec![0.0; DIMS]);
     let mut history = vec![];
     let mut runs = 0;

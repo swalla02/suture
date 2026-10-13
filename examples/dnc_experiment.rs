@@ -70,10 +70,18 @@ fn pct(x: f64) -> String {
     format!("{:.1}%", 100.0 * x)
 }
 
+/// Providers to remove `(type, id)`, capacity cuts `(type, id, new capacity)`
+/// and new roots.
+struct Disturbance {
+    kills: Vec<(i64, i64)>,
+    caps: Vec<(i64, i64, i64)>,
+    roots: Vec<RootSpec>,
+}
+
 /// A deterministic disturbance: remove 20% of providers, cut capacity of
 /// another 10%, add two new roots.
-fn disturbance(w: &WorldSpec, seed: u64) -> (Vec<(i64, i64)>, Vec<(i64, i64, i64)>, Vec<RootSpec>) {
-    let mut rng = Rng::new(seed ^ 0xd157_0b);
+fn disturbance(w: &WorldSpec, seed: u64) -> Disturbance {
+    let mut rng = Rng::new(seed ^ 0x00d1_570b);
     let mut ids: Vec<usize> = (0..w.providers.len()).collect();
     rng.shuffle(&mut ids);
     let nk = (w.providers.len() / 5).max(1);
@@ -90,7 +98,7 @@ fn disturbance(w: &WorldSpec, seed: u64) -> (Vec<(i64, i64)>, Vec<(i64, i64, i64
             regions: vec![rng.below(w.regions as u64) as i64],
         })
         .collect();
-    (kills, caps, roots)
+    Disturbance { kills, caps, roots }
 }
 
 fn main() {
@@ -203,7 +211,7 @@ fn main() {
     for s in [&suites[0], &suites[1]] {
         let mut plan_after = vec![];
         for (i, w) in s.worlds.iter().enumerate() {
-            let (kills, caps, roots) = disturbance(w, s.seed0 + i as u64);
+            let Disturbance { kills, caps, roots } = disturbance(w, s.seed0 + i as u64);
             let env = PlanEnv {
                 dead: kills.iter().map(|k| k.1).collect(),
                 capacity: caps.iter().map(|c| (c.1, c.2)).collect(),
@@ -219,7 +227,7 @@ fn main() {
                 let rc = RunConfig { seed, ..RunConfig::default() };
                 let (mut d, r) = run_world(w, backend.as_mut(), &rc);
                 before.push(r.frac);
-                let (kills, caps, roots) = disturbance(w, seed);
+                let Disturbance { kills, caps, roots } = disturbance(w, seed);
                 for (ty, id) in kills {
                     d.deliver(ty, Ctl::Kill { provider: id }).unwrap();
                 }

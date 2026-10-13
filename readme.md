@@ -631,6 +631,36 @@ These questions are deliberately phrased to **drive a choice**, not just prolong
 
 **Test / exit condition:** two distinct applications on the same kernel; published reproducible baseline benchmarks; design-partner evidence of an operational advantage. If the graph is merely an elaborate orchestration visualization, narrow the project or stop.
 
+### P8 — Does decision-native execution add capability beyond its substrate?
+
+**Direction:** keep the model of `docs/dnc.md`:
+- decisions are typed sites whose admissible alternatives are enumerated by deterministic rules from local data;
+- one shared law per kind of site resolves them;
+- a typed token, consumed by an ordinary rule, enacts the choice;
+- every decision is journaled.
+
+Experiment DNC-1 (`docs/dnc-experiment-1.md`) found:
+- decision quality matters under contention (+8–15 points over fixed or random choices on most contended suites);
+- the shared law transfers to unseen sizes and shapes, and reorganizes after disturbances without a coordinator;
+- a *learned* law only matched a handwritten one;
+- a centralized planner was better and cheaper.
+
+**Questions to answer:**
+- **Merges as decisions:** should "resolve one of several pending interactions" become a decision site, that is, a journaled nondeterministic merge, instead of boundary mailboxes? The merge is P1's precise deficiency, and the resolver is already the machine's journaled source of choice.
+- **Information at the site:** which interaction-borne signals (pushed scarcity pressure, observed reliability) must reach a site before a learned law can beat a handwritten one? Is bounded-neighbourhood perception worth giving up causal independence?
+- **Credit during execution:** can outcome information shape decisions at run time, not only through offline training, without becoming an implicit global controller?
+- **Price of the global view:** under what staleness, churn and re-planning cost do local decision dynamics beat centralized re-planning? DNC-1 gave the planner a free, instant global view.
+- **General decision models:** can a zero-shot, Jev-like model reach handwritten quality at these sites without task-specific training, and at what latency once calls are batched per round?
+- **Order sensitivity:** outcomes varied by 5–9 points across execution orders. Is that acceptable, or does the machine need decision-order control, such as deterministic batching or priorities?
+
+**Test / exit condition:** Experiment DNC-2 has four parts:
+1. continuous churn instead of a single disturbance;
+2. a planner that re-plans from *k*-round-stale snapshots;
+3. propagated pressure signals;
+4. a zero-shot decision model alongside trained and handwritten laws.
+
+**Narrow the learning claim** if trained laws still stay within noise of handwritten ones when given richer local information. **Narrow the paradigm claim** if centralized re-planning still wins once its global view has a realistic cost.
+
 ### Current decisions to carry forward
 
 | Decision | Working position | Revisit when |
@@ -644,6 +674,8 @@ These questions are deliberately phrased to **drive a choice**, not just prolong
 | Syntax | **IR first**, Rust-based definitions for v1 | A dedicated DSL measurably improves developer experience |
 | Learned laws | Offline-trained, bounded, validated graph replacements **later** | Deterministic runtime and baseline tests are established |
 | Product | Ordinary service APIs and deployable infrastructure | Real platform teams show no meaningful advantage |
+| Decisions | Typed decision sites resolved by a shared law; tokens consumed by deterministic rules; journaled; no `BIND` primitive | A decision needs information or authority a token cannot carry |
+| Learned decisions | Bounded selection among admissible alternatives first; generative patch synthesis (§3) later | Selection proves insufficient for a task family |
 
 **Immediate next technical artifact:** a short **formal IR + memory-semantics specification** (including three worked reductions) followed by the lease and typed-session example programs. That is the smallest next step that can resolve several foundational questions without introducing another grand abstraction.
 

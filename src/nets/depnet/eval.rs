@@ -39,9 +39,12 @@ pub fn cells(m: &Machine, k: &Kinds) -> BTreeMap<i64, (AgentId, Prov)> {
         .collect()
 }
 
-/// Walks a provider's structural consumer list: the binding keys of its
-/// consumer entries and, for each, the socket at the other end.
-fn consumer_entries(m: &Machine, k: &Kinds, cell: AgentId) -> Result<Vec<([i64; 3], Option<Need>)>, String> {
+/// A consumer entry's binding key and the need held by the socket at the
+/// other end of its channel, if that end is a socket.
+type Entry = ([i64; 3], Option<Need>);
+
+/// Walks a provider's structural consumer list.
+fn consumer_entries(m: &Machine, k: &Kinds, cell: AgentId) -> Result<Vec<Entry>, String> {
     let g = m.graph();
     let mut out = vec![];
     let mut e = g.agent(cell).ok_or("missing cell")?.ports[2];
