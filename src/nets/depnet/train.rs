@@ -37,14 +37,28 @@ pub struct TrainConfig {
     pub iterations: usize,
     pub population: usize,
     pub elite: usize,
+    /// Initial mean of the search distribution (zeros when `None`).
+    pub init: Option<Vec<f64>>,
     pub init_std: f64,
+    /// Extra variance added to the elite variance, decaying linearly to zero;
+    /// prevents the search from collapsing onto a plateau.
+    pub extra_noise: f64,
     pub seed: u64,
     pub threads: usize,
 }
 
 impl Default for TrainConfig {
     fn default() -> Self {
-        TrainConfig { iterations: 20, population: 32, elite: 6, init_std: 1.0, seed: 7, threads: 8 }
+        TrainConfig {
+            iterations: 25,
+            population: 40,
+            elite: 8,
+            init: None,
+            init_std: 1.0,
+            extra_noise: 0.5,
+            seed: 7,
+            threads: 8,
+        }
     }
 }
 
@@ -67,11 +81,12 @@ fn gauss(rng: &mut Rng) -> f64 {
 /// Cross-entropy method over the law's weights. Deterministic in `cfg.seed`.
 pub fn train(worlds: &[WorldSpec], dep: &DepConfig, cfg: &TrainConfig) -> Trained {
     let mut rng = Rng::new(cfg.seed);
-    let (mut mu, mut sigma) = (vec![0.0; DIMS], vec![cfg.init_std; DIMS]);
+    let mut mu = cfg.init.clone().unwrap_or_else(|| vec![0.0; DIMS]);
+    let mut sigma = vec![cfg.init_std; DIMS];
     let mut best = (f64::MIN, vec![0.0; DIMS]);
     let mut history = vec![];
     let mut runs = 0;
-    for _ in 0..cfg.iterations {
+    for it in 0..cfg.iterations {
         let pop: Vec<Vec<f64>> =
             (0..cfg.population).map(|_| (0..DIMS).map(|d| mu[d] + sigma[d] * gauss(&mut rng)).collect()).collect();
         let mut fit = vec![0.0; pop.len()];
@@ -94,10 +109,11 @@ pub fn train(worlds: &[WorldSpec], dep: &DepConfig, cfg: &TrainConfig) -> Traine
         }
         let elite_mean = order.iter().take(cfg.elite).map(|&i| fit[i]).sum::<f64>() / cfg.elite as f64;
         history.push((fit[order[0]], elite_mean));
+        let extra = cfg.extra_noise * (1.0 - (it + 1) as f64 / cfg.iterations as f64);
         for d in 0..DIMS {
             mu[d] = elite.iter().map(|t| t[d]).sum::<f64>() / elite.len() as f64;
             let var = elite.iter().map(|t| (t[d] - mu[d]).powi(2)).sum::<f64>() / elite.len() as f64;
-            sigma[d] = var.sqrt().max(0.05);
+            sigma[d] = (var + extra).sqrt().max(0.05);
         }
     }
     Trained { theta: best.1, fitness: best.0, history, runs }
@@ -112,6 +128,8 @@ mod tests {
     fn training_is_deterministic_and_never_worse_than_its_start() {
         let worlds: Vec<_> = (0..3).map(|s| generate(&GenParams::small(), 50 + s)).collect();
         let cfg = TrainConfig { iterations: 2, population: 6, elite: 2, threads: 3, ..TrainConfig::default() };
+        let warm = TrainConfig { init: Some(vec![0.5; DIMS]), ..cfg.clone() };
+        assert_eq!(train(&worlds, &DepConfig::default(), &warm).history.len(), 2);
         let a = train(&worlds, &DepConfig::default(), &cfg);
         let b = train(&worlds, &DepConfig::default(), &cfg);
         assert_eq!(a.theta, b.theta);

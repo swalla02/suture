@@ -8,7 +8,7 @@ use std::time::Instant;
 use suture::dnc::{DecisionBackend, FirstBackend, NoisyBackend, RandomBackend};
 use suture::nets::depnet::planner::{plan, PlanEnv};
 use suture::nets::depnet::state::Ctl;
-use suture::nets::depnet::train::{law, train, TrainConfig};
+use suture::nets::depnet::train::{law, score, train, TrainConfig};
 use suture::nets::depnet::world::{generate, GenParams, RootSpec, WorldSpec};
 use suture::nets::depnet::{greedy, DepConfig, Depnet, RunConfig, BIND_FEATURES, RECIPE_FEATURES};
 use suture::Rng;
@@ -95,30 +95,42 @@ fn disturbance(w: &WorldSpec, seed: u64) -> (Vec<(i64, i64)>, Vec<(i64, i64, i64
 
 fn main() {
     let t0 = Instant::now();
-    let train_worlds: Vec<WorldSpec> = (0..24).map(|i| generate(&GenParams::contended(), 100 + i)).collect();
+    let dep = DepConfig::default();
+    let train_worlds: Vec<WorldSpec> = (0..32).map(|i| generate(&GenParams::contended(), 100 + i)).collect();
     let tc = TrainConfig::default();
-    let trained = train(&train_worlds, &DepConfig::default(), &tc);
+    let scratch = train(&train_worlds, &dep, &tc);
+    let greedy_theta: Vec<f64> = ["bind", "recipe"].iter().flat_map(|l| greedy().weights(l).unwrap().to_vec()).collect();
+    let refined = train(&train_worlds, &dep, &TrainConfig { init: Some(greedy_theta.clone()), init_std: 0.5, seed: 8, ..tc.clone() });
     println!("## Training\n");
     println!(
-        "CEM: {} iterations x {} candidates on {} small contended worlds = {} machine runs, {:.1}s.\n",
+        "Cross-entropy method, {} iterations x {} candidates, on {} small contended worlds: {} machine runs per training, {:.1}s for both.\n",
         tc.iterations,
         tc.population,
         train_worlds.len(),
-        trained.runs,
+        scratch.runs,
         t0.elapsed().as_secs_f64()
     );
-    println!("| iteration | best | elite mean |\n| --- | --- | --- |");
-    for (i, (b, m)) in trained.history.iter().enumerate() {
-        if i % 4 == 0 || i + 1 == trained.history.len() {
-            println!("| {} | {} | {} |", i + 1, pct(*b), pct(*m));
+    println!("Score on the training worlds (the objective):\n");
+    println!("| law | training score |\n| --- | --- |");
+    let on_train = |make: &dyn Fn(u64) -> Box<dyn DecisionBackend>| score(&train_worlds, &dep, tc.seed, make);
+    println!("| list order (fixed) | {} |", pct(on_train(&|_| Box::new(FirstBackend))));
+    println!("| random | {} |", pct(on_train(&|s| Box::new(RandomBackend::new(s)))));
+    println!("| greedy (handcrafted) | {} |", pct(on_train(&|_| Box::new(greedy()))));
+    println!("| learned from scratch | {} |", pct(scratch.fitness));
+    println!("| learned, refined from greedy | {} |", pct(refined.fitness));
+    println!("\n| iteration | from scratch: best / elite mean | refined: best / elite mean |\n| --- | --- | --- |");
+    for (i, ((b1, m1), (b2, m2))) in scratch.history.iter().zip(&refined.history).enumerate() {
+        if i % 4 == 0 || i + 1 == scratch.history.len() {
+            println!("| {} | {} / {} | {} / {} |", i + 1, pct(*b1), pct(*m1), pct(*b2), pct(*m2));
         }
     }
-    println!("\nLearned weights (bind law, then recipe law):\n");
-    println!("| feature | weight |\n| --- | --- |");
-    for (name, w) in BIND_FEATURES.iter().map(|f| format!("bind.{f}")).chain(RECIPE_FEATURES.iter().map(|f| format!("recipe.{f}"))).zip(&trained.theta) {
-        println!("| {name} | {w:+.2} |");
+    println!("\nWeights (bind law, then recipe law):\n");
+    println!("| feature | greedy | learned from scratch | refined from greedy |\n| --- | --- | --- | --- |");
+    let names = BIND_FEATURES.iter().map(|f| format!("bind.{f}")).chain(RECIPE_FEATURES.iter().map(|f| format!("recipe.{f}")));
+    for (i, name) in names.enumerate() {
+        println!("| {name} | {:+.2} | {:+.2} | {:+.2} |", greedy_theta[i], scratch.theta[i], refined.theta[i]);
     }
-    let theta = trained.theta.clone();
+    let (theta, theta_r) = (scratch.theta.clone(), refined.theta.clone());
 
     let suites = vec![
         suite("contended (held-out, training distribution)", GenParams::contended(), 1000, 40),
@@ -131,7 +143,8 @@ fn main() {
         ("list order (fixed)", Box::new(|_| Box::new(FirstBackend))),
         ("random", Box::new(|s| Box::new(RandomBackend::new(s)))),
         ("greedy (handcrafted)", Box::new(|_| Box::new(greedy()))),
-        ("learned (CEM, frozen)", Box::new(|_| Box::new(law("learned", &theta)))),
+        ("learned (scratch)", Box::new(|_| Box::new(law("learned", &theta)))),
+        ("learned (refined)", Box::new(|_| Box::new(law("refined", &theta_r)))),
     ];
 
     println!("\n## Assembly: satisfied roots by policy\n");
@@ -140,7 +153,7 @@ fn main() {
     for (p, _) in &policies {
         print!(" {p} |");
     }
-    println!(" learned − greedy (paired) |\n| --- | --- |{}--- |", " --- |".repeat(policies.len()));
+    println!(" refined − greedy (paired) |\n| --- | --- |{}--- |", " --- |".repeat(policies.len()));
     let mut cost_rows = vec![];
     for s in &suites {
         let pl: Vec<f64> = s.worlds.iter().enumerate().map(|(i, w)| plan(w, &PlanEnv::default(), 50_000, 8, s.seed0 + i as u64).fraction()).collect();
@@ -157,7 +170,7 @@ fn main() {
             let fr: Vec<f64> = runs.iter().map(|r| r.frac).collect();
             assert!(runs.iter().all(|r| r.violations == 0 && !r.exhausted), "{} {}", s.name, pname);
             print!(" {} ± {} |", pct(mean(&fr)), pct(se(&fr)));
-            if pname.starts_with("learned") {
+            if pname.starts_with("learned (refined") {
                 let n = runs.len() as f64;
                 cost_rows.push((
                     s.name,
@@ -171,13 +184,13 @@ fn main() {
             }
             per_policy.push(fr);
         }
-        let diff: Vec<f64> = per_policy[3].iter().zip(&per_policy[2]).map(|(l, g)| l - g).collect();
+        let diff: Vec<f64> = per_policy[4].iter().zip(&per_policy[2]).map(|(l, g)| l - g).collect();
         let wins = diff.iter().filter(|d| **d > 1e-9).count();
         let losses = diff.iter().filter(|d| **d < -1e-9).count();
         println!(" {:+.1} pts ± {:.1} ({wins} better / {losses} worse) |", 100.0 * mean(&diff), 100.0 * se(&diff));
     }
 
-    println!("\n## Decision cost (learned law)\n");
+    println!("\n## Decision cost (refined learned law)\n");
     println!("| suite | decisions / run | batched calls / run | mean batch | trivial sites / run | reductions / run | rounds / run | ms / run |");
     println!("| --- | --- | --- | --- | --- | --- | --- | --- |");
     for (name, dec, calls, triv, red, rounds, ms) in &cost_rows {
@@ -246,7 +259,7 @@ fn main() {
     }
 
     println!("\n## Uncertain or contradictory decisions\n");
-    println!("The learned law with each decision replaced by a uniformly random admissible one with probability eps (contended held-out suite).\n");
+    println!("The refined learned law with each decision replaced by a uniformly random admissible one with probability eps (contended held-out suite).\n");
     println!("| eps | satisfied |\n| --- | --- |");
     for eps in [0.0, 0.1, 0.3, 0.5, 1.0] {
         let fr: Vec<f64> = suites[0]
@@ -255,7 +268,7 @@ fn main() {
             .enumerate()
             .map(|(i, w)| {
                 let seed = suites[0].seed0 + i as u64;
-                let mut b = NoisyBackend::new(law("learned", &theta), eps, seed);
+                let mut b = NoisyBackend::new(law("refined", &theta_r), eps, seed);
                 run_world(w, &mut b, &RunConfig { seed, ..RunConfig::default() }).1.frac
             })
             .collect();
