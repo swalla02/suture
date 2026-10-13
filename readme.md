@@ -1,6 +1,6 @@
 # Learned Interaction Machine
 
-> **Status:** architecture and research notes, plus a **v0 kernel** (Rust, `src/`) that implements the typed IR, `INTERACT`, journaling and replay, and the two minimal experiments of §7. See [`docs/ir-spec.md`](docs/ir-spec.md) for the formal IR and memory semantics, and [`docs/experiments.md`](docs/experiments.md) for the findings. It is still **not validated as a product**, and there are no learned rules.  
+> **Status:** architecture and research notes, plus a **v0 kernel** (Rust, `src/`) that implements the typed IR, `INTERACT`, journaling and replay, and the two minimal experiments of §7 ([`docs/ir-spec.md`](docs/ir-spec.md), [`docs/experiments.md`](docs/experiments.md)). The thesis has since been clarified as **Decision-Native Computing** (§0.1); its operational model is [`docs/dnc.md`](docs/dnc.md) and its first experiment is [`docs/dnc-experiment-1.md`](docs/dnc-experiment-1.md). Still **not validated as a product**.  
 > **Purpose:** capture the concrete design direction developed in our discussion, including its motivation, proposed primitives, service lifecycle, deployment model, learning hypothesis, and unresolved questions.  
 > **Last updated:** 2026-10-12.
 
@@ -20,6 +20,31 @@ The desired departure from conventional AI software is important:
 **Do not mistake this for:** a chatbot, semantic conditional library, generic task orchestrator, YAML that merely states goals, or an AI-powered exception handler. Those alternatives were explored and explicitly rejected as the core novelty.
 
 **Success is not merely showing that graph rewriting works.** The kernel should support multiple different classes of computation, and learned local transformations should generalize to new graph configurations without violating hard safety and resource constraints.
+
+### 0.1 Clarified thesis: Decision-Native Computing
+
+The inspiration is the arrival of very fast, inexpensive **decision models** such as Jev. These models make bounded judgments: choosing among alternatives, scoring possibilities, deciding a condition. They don't need to generate programs or act as agents. The research question is what happens when such decisions become part of how the machine executes, rather than services that conventional programs call.
+
+> **A program is a persistent network of interacting computational entities. Its execution is the continuous reorganization of that network through local transformations, with decision models resolving certain computational possibilities.**
+
+How this differs from §3's learned-law framing:
+
+| | §3 learned laws (earlier framing) | Decision-Native Computing |
+| --- | --- | --- |
+| What the model produces | a replacement subnetwork (patch synthesis) | a **selection** among admissible alternatives that deterministic rules enumerated |
+| Where it acts | inside an interaction rule | at an explicit, typed **decision site** in the graph |
+| How it takes effect | the patch is installed after validation | a typed **decision token** is consumed by an ordinary deterministic rule |
+| Hard constraints | validate the proposed patch | enforced before (admissible set) and after (enactment validation) the decision |
+
+The model is not a central planner, not a tool router, and not the application. It resolves **local** choice points using bounded local observations. One shared decision law serves every site of its kind, and decisions change the topology, which changes the next decisions. The hypothesis under test:
+
+> A shared, bounded decision mechanism, embedded into local graph-reduction semantics, can enable reusable computational behavior that emerges from the composition of decisions rather than explicitly programmed global procedures.
+
+This is a hypothesis, not a result. Generative patch synthesis (§3) stays a later option, for cases where bounded selection proves insufficient. Two claims are kept apart:
+- the **research claim**: learned local decisions produce useful emergent computation;
+- the **product claim**: this execution model improves production software.
+
+Proving one does not prove the other.
 
 ## 1. Research lineage and what is actually established
 
@@ -630,10 +655,13 @@ These questions are deliberately phrased to **drive a choice**, not just prolong
 src/            kernel: values, signatures, lineage ids, graph, nets + splice resolution,
                 static checks, rules, policies, machine (INTERACT/INJECT/effects), journal,
                 explanation, DOT export
+src/dnc.rs      decision layer: laws, model-independent backends, batched resolver
 src/nets/       programs on the kernel: arith (Peano), combinators, lease (Experiment A),
-                session (Experiment B), session_typed (Experiment B0)
+                session (Experiment B), session_typed (Experiment B0),
+                depnet (Experiment DNC-1: self-organizing dependency network)
 tests/          kernel, journal/replay, explanation, and per-program suites
-docs/           ir-spec.md (formal IR), experiments.md (findings), superpowers/ (design + plan)
+docs/           ir-spec.md (formal IR), experiments.md (findings), dnc.md (decision model),
+                dnc-experiment-1.md (DNC findings), superpowers/ (design + plan)
 ```
 
 ```bash
@@ -641,4 +669,5 @@ cargo test                                      # the full suite
 cargo run --release --example lease_pool        # Experiment A measurements
 cargo run --release --example session           # Experiment B measurements
 cargo run --release --example arith             # Peano demo + throughput
+cargo run --release --example dnc_experiment    # Experiment DNC-1 (training, baselines, disturbances)
 ```

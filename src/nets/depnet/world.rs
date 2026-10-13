@@ -55,6 +55,9 @@ pub struct GenParams {
     pub types_per_layer: usize,
     pub providers_per_type: (usize, usize),
     pub capacity: (i64, i64),
+    /// Providers per leaf type (the scarce bottom layer).
+    pub leaf_providers_per_type: (usize, usize),
+    pub leaf_capacity: (i64, i64),
     /// Recipes per non-leaf provider.
     pub recipes: (usize, usize),
     /// Dependencies per recipe (drawn from the next layer).
@@ -74,6 +77,8 @@ impl GenParams {
             types_per_layer: 2,
             providers_per_type: (2, 3),
             capacity: (1, 3),
+            leaf_providers_per_type: (2, 3),
+            leaf_capacity: (1, 3),
             recipes: (1, 2),
             deps_per_recipe: (0, 2),
             roots: 5,
@@ -89,6 +94,8 @@ impl GenParams {
             types_per_layer: 3,
             providers_per_type: (3, 6),
             capacity: (1, 4),
+            leaf_providers_per_type: (3, 6),
+            leaf_capacity: (1, 4),
             recipes: (1, 3),
             deps_per_recipe: (0, 2),
             roots: 16,
@@ -104,6 +111,51 @@ impl GenParams {
     /// The training shape with tighter capacity.
     pub fn scarce() -> Self {
         GenParams { capacity: (1, 2), roots: 6, ..GenParams::small() }
+    }
+
+    /// Experiment DNC-1 training regime: scarce single-slot leaves, so
+    /// activation cost, reuse and recipe choice have consequences.
+    pub fn contended() -> Self {
+        GenParams {
+            depth: 2,
+            types_per_layer: 2,
+            providers_per_type: (4, 6),
+            capacity: (1, 3),
+            leaf_providers_per_type: (3, 4),
+            leaf_capacity: (1, 1),
+            recipes: (1, 3),
+            deps_per_recipe: (1, 2),
+            roots: 8,
+            needs_per_root: (1, 2),
+            regions: 2,
+            multi_region_roots: 0.3,
+        }
+    }
+    /// Three times the roots, more types, providers and regions.
+    pub fn contended_large() -> Self {
+        GenParams {
+            types_per_layer: 3,
+            providers_per_type: (6, 10),
+            leaf_providers_per_type: (5, 8),
+            leaf_capacity: (1, 2),
+            capacity: (1, 4),
+            roots: 24,
+            needs_per_root: (1, 3),
+            regions: 3,
+            ..GenParams::contended()
+        }
+    }
+    /// One more layer of dependencies than training ever showed.
+    pub fn contended_deep() -> Self {
+        GenParams { depth: 3, ..GenParams::contended() }
+    }
+    /// Fewer leaf providers and more roots than training.
+    pub fn contended_scarce() -> Self {
+        GenParams { leaf_providers_per_type: (2, 3), roots: 10, ..GenParams::contended() }
+    }
+    /// Plentiful single-slot leaves and recipes that may need nothing.
+    pub fn loose() -> Self {
+        GenParams { leaf_providers_per_type: (4, 6), leaf_capacity: (1, 3), deps_per_recipe: (0, 2), ..GenParams::contended() }
     }
 }
 
@@ -141,8 +193,14 @@ pub fn generate(p: &GenParams, seed: u64) -> WorldSpec {
     let mut next_id = 100;
     for (li, layer) in layers.iter().enumerate() {
         let below = layers.get(li + 1);
+        let leaf = below.is_none();
+        let (count, capacity) = if leaf {
+            (p.leaf_providers_per_type, p.leaf_capacity)
+        } else {
+            (p.providers_per_type, p.capacity)
+        };
         for &ty in layer {
-            for _ in 0..range_usize(&mut rng, p.providers_per_type) {
+            for _ in 0..range_usize(&mut rng, count) {
                 let recipes = match below {
                     None => vec![vec![]],
                     Some(below) => (0..range_usize(&mut rng, p.recipes))
@@ -156,7 +214,7 @@ pub fn generate(p: &GenParams, seed: u64) -> WorldSpec {
                     id: next_id,
                     ty,
                     region: rng.below(p.regions as u64) as i64,
-                    capacity: range_i64(&mut rng, p.capacity),
+                    capacity: range_i64(&mut rng, capacity),
                     recipes,
                 });
                 next_id += 1;
