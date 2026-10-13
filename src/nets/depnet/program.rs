@@ -294,7 +294,10 @@ fn handle(mut p: Prov, ctl: &Ctl, cfg: &DepConfig) -> (Prov, Effects) {
             }
         }
         Ctl::DepLost { dep, nonce, provider, .. } => {
-            if is_current(&p, dep, nonce) && p.deps[dep as usize].bound == provider {
+            // The transport may deliver the loss before the grant notification:
+            // a pending dependency with the same nonce lost that very binding.
+            let bound = if is_current(&p, dep, nonce) { p.deps[dep as usize].bound } else { -2 };
+            if bound == provider || bound == -1 {
                 p.deps[dep as usize].bound = -1;
                 p.deps[dep as usize].history.push(provider);
                 dep_failure(&mut p, dep as usize, &mut eff, cfg);

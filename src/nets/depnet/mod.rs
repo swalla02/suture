@@ -9,8 +9,10 @@
 //! whole network; see `docs/dnc.md` for the semantics.
 
 pub mod eval;
+pub mod planner;
 pub mod program;
 pub mod state;
+pub mod train;
 pub mod world;
 
 pub use eval::{evaluate, Eval};
@@ -172,7 +174,8 @@ impl Depnet {
         evaluate(&self.m, &self.k)
     }
 
-    fn route(&mut self, send: &EffectView) -> Result<(), InjectError> {
+    /// Delivers one pending `Send` effect into the mailbox it names.
+    pub fn route(&mut self, send: &EffectView) -> Result<(), InjectError> {
         let dest = send.payload.str(0).map_err(|e| NetError::Value(e.to_string()))?.to_string();
         let mut b = NetBuilder::new(&self.m.program().sig);
         let (p, d, n) = (b.var(), b.var(), b.var());

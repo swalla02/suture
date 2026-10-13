@@ -207,3 +207,77 @@ fn the_kernel_scheduler_does_not_change_the_outcome() {
     }
     assert!(digests.windows(2).all(|w| w[0] == w[1]));
 }
+
+/// Pending routed messages and the control message each one carries.
+fn pending_ctls(d: &Depnet) -> Vec<(EffectView, Option<Ctl>)> {
+    d.m.outbox()
+        .into_iter()
+        .filter(|e| e.kind == d.k.send)
+        .map(|e| {
+            let agent = d.m.graph().agent(e.agent).unwrap();
+            let ctl = match agent.ports[1] {
+                Endpoint::Port(msg, 0) => d.m.graph().agent(msg).and_then(|a| Ctl::from_value(&a.payload).ok()),
+                _ => None,
+            };
+            (e, ctl)
+        })
+        .collect()
+}
+
+#[test]
+fn a_loss_overtaking_its_grant_notification_is_not_lost() {
+    // The transport may deliver a binding's DepLost before its DepBound.
+    let mut d = Depnet::new(&two_leaves(1, 1), &DepConfig::default()).unwrap();
+    // Drive until the root's DepBound notification is in flight.
+    for _ in 0..50 {
+        d.m.run(None);
+        let pending = pending_ctls(&d);
+        if pending.iter().any(|(_, c)| matches!(c, Some(Ctl::DepBound { .. }))) {
+            break;
+        }
+        for (e, _) in &pending {
+            d.route(e).unwrap();
+        }
+        let sites = d.resolver.pending(&d.m);
+        d.resolver.resolve_sites(&mut d.m, &mut FirstBackend, &sites).unwrap();
+    }
+    // Kill the provider before the owner hears about the binding.
+    d.deliver(1, Ctl::Kill { provider: 100 }).unwrap();
+    d.m.run(None);
+    let mut pending = pending_ctls(&d);
+    assert!(pending.iter().any(|(_, c)| matches!(c, Some(Ctl::DepLost { .. }))));
+    // Deliver the loss first.
+    pending.sort_by_key(|(_, c)| !matches!(c, Some(Ctl::DepLost { .. })));
+    for (e, _) in &pending {
+        d.route(e).unwrap();
+    }
+    d.run(&mut FirstBackend, &RunConfig::default());
+    let e = d.evaluate();
+    assert!(e.violations.is_empty(), "{:?}", e.violations);
+    assert_eq!(e.satisfied, 1);
+    assert_eq!(d.provider(1).unwrap().deps[0].bound, 101);
+}
+
+#[test]
+fn asynchrony_reordering_and_disturbances_never_break_the_structure() {
+    for seed in 0..40 {
+        let params = if seed % 2 == 0 { GenParams::contended() } else { GenParams::contended_deep() };
+        let spec = generate(&params, 600 + seed);
+        let rc = RunConfig { seed, route_fraction: 0.3, ..RunConfig::default() };
+        let mut d = Depnet::new(&spec, &DepConfig::default()).unwrap();
+        let mut backend = RandomBackend::new(seed);
+        // Disturb mid-assembly, while messages are still in flight.
+        d.run(&mut backend, &RunConfig { max_rounds: 6, ..rc.clone() });
+        for p in spec.providers.iter().filter(|p| p.id % 4 == (seed % 4) as i64) {
+            d.deliver(p.ty, Ctl::Kill { provider: p.id }).unwrap();
+        }
+        for p in spec.providers.iter().filter(|p| p.id % 5 == 0) {
+            d.deliver(p.ty, Ctl::SetCap { provider: p.id, capacity: 1 }).unwrap();
+        }
+        let st = d.run(&mut backend, &rc);
+        assert!(!st.budget_exhausted, "seed {seed}");
+        let e = d.evaluate();
+        assert!(e.violations.is_empty(), "seed {seed}: {:?}", e.violations);
+        assert!(d.m.faults().is_empty(), "seed {seed}: {:?}", d.m.faults());
+    }
+}
