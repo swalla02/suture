@@ -892,3 +892,38 @@ Slice 1 parses `within` but never acts on it. Slice 2 makes time real: a request
 - **Slice 1 still holds:** the three existing shop scenarios pass unchanged.
 - **Cost:** with one order that has a due timer, moving the clock costs the same number of kernel steps whether there are 1 or 1,000 other orders with nothing due.
 - Every scenario's journal replays to the same state.
+
+## Appendix D. Prototype slice 3: slots (2026-10-15)
+
+Slice 3 adds the first kind of choice: a slot that an owner fills with one of several alternatives, tried in `prefer` order (§3.2). Choices among shared entities (`uses`, pools, `prefer … lowest …`) come in slice 4. The user agreed this split.
+
+### D.1 What runs
+
+- `Delivery is Shipment or Refund` declares a slot; `Order needs Payment, Delivery` needs it like a part.
+- `prefer Delivery: Shipment, then Refund after 2 days` sets the order and the patience.
+- `suture build` prints a warning for a slot with no `prefer`; it then uses declaration order (§3.2).
+- `suture explain` shows each slot's current alternative.
+- The shop grows toward §3.6: Delivery is a Shipment or a Refund. New scenarios: three lost parcels end in a refund, and a French order whose customs form is never filled is refunded after 2 days.
+
+### D.2 Language in slice 3
+
+| Added in slice 3 | Still waits |
+|---|---|
+| `⟨Slot⟩ is ⟨Kind⟩ or ⟨Kind⟩[ or …]` | `uses`, pools, `taking` (slice 4) |
+| `prefer ⟨Slot⟩: ⟨Kind⟩[, then ⟨Kind⟩ [after ⟨duration⟩]]…` | `prefer` criteria `lowest`, `highest`, `those` (slice 4) |
+| a slot in a `needs` list and in noun phrases (`its Delivery is done`) | moving on when a rule refuses on facts that never change |
+| warnings from `suture build` | `decide … with model` backends |
+
+Checks: a slot's name is capitalized and is not a kind; its alternatives are kinds that name the slot's owner, and none of them is also needed directly by that owner; a slot is needed by exactly one owner; a `prefer` names a slot and lists each of its alternatives once; `after` may follow every alternative but the first. A slot has the states `done` and `failed`, and a noun phrase cannot go past it (`its Delivery's …` is an error; name the alternative).
+
+### D.3 Semantics that slice 3 settles
+
+1. **Representation.** A slot is not a node. Its alternatives are ordinary parts of the owner, and the owner records the slot's current alternative. `its Delivery` reads the current part of that alternative; a slot is `done` or `failed` when that part is.
+2. **Filling.** When the slot's need is active and the slot is empty, the choice point picks the first alternative in `prefer` order, and the part is created as for a need (held by rules as in slice 1).
+3. **Moving on.** The slot moves to the next alternative when its current one:
+   - has failed on its last attempt, or timed out (slice 2 never replaces a timed-out part);
+   - or has waited past its patience without going out: a patience timer starts when the alternative's part is created, and when it fires, the slot moves on only if that part is still untouched (never requested). A part that reached the outside world is not abandoned (D9).
+   
+   An untouched part is withdrawn when the slot moves on; a touched one stays (it counts, D9). With no alternative left, the slot stays on its last one, so it is `failed`, and the goal alert explains it.
+4. **The choice point.** Every pick goes through one function, which receives the slot and the alternatives still open and returns one of them. Slice 3 implements it with `prefer`; a `decide … with model` backend replaces it later (§5.7), and the rules still hold whatever it picks.
+5. **Timers.** A patience timer is a host timer like a deadline (C.3.2): the unit asks for it, the host starts it, and its firing is a journaled step.
