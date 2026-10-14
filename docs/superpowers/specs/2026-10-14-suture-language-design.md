@@ -841,3 +841,53 @@ The user asked for a working prototype as early as possible, and for "deeper" st
 - **Japanese order:** no customs form ever appears.
 - Every scenario's journal replays to the same state.
 - The `.st` files contain no control flow.
+
+## Appendix C. Prototype slice 2: deadlines (2026-10-14)
+
+Slice 1 parses `within` but never acts on it. Slice 2 makes time real: a request that gets no answer is sent again and then times out, and a goal that is not met in time raises an alert that explains why. The user chose this over choices and over clearing slice 1's minor findings first, and chose host-side timers (option A below).
+
+### C.1 What runs
+
+- Scenarios gain a step that moves the clock: `when 3 days pass` (also `seconds`, `minutes`, `hours`, `weeks`, singular or plural).
+- Scenarios gain an expectation about alerts: `expect an alert for O1`, and `expect no alert for O1`.
+- `suture run` traces every re-send, every time-out and every alert. `suture explain` also shows each pending request's deadline and the unit's alerts.
+- `examples/shop/orders.scenario` gains three orders: a payment service that never answers, a carrier that answers only after one re-send, and an answer that arrives after its request timed out.
+
+### C.2 Language in slice 2
+
+| Added in slice 2 | Still waits |
+|---|---|
+| `within` on an effect fires | the `attempts` setting (fixed at 3, as in slice 1) |
+| `timed out` is an outcome of every effect: usable in conditions, `define`, `desired` and `when` reactions | `prefer … then … after ⟨duration⟩` (with choices) |
+| `desired within …` raises alerts | alerts sent anywhere but the trace and `explain` |
+| scenario steps `when ⟨n⟩ ⟨unit⟩ pass`, `expect [no] alert for ⟨name⟩` | choices, `uses`, pools, per-group and global rules |
+
+`timed out` is a state name like any other outcome; C.3.2 of slice 1's review rules apply to it: no attribute, mark or outcome may also be called `timed out`.
+
+### C.3 Semantics that slice 2 settles
+
+1. **The clock is an input.** The host owns the clock. It starts at 0 and moves only when a scenario says time passes (later: when a real clock ticks). The units never read it.
+2. **Timers live in the host** (option A). The host keeps one queue of timers ordered by due time, then by the order they were started.
+   - When the clock moves forward by d, the host fires, one at a time and in queue order, every timer due no later than the new time. While a timer fires, the clock reads its due time, so a deadline started by that step is measured from it.
+   - Firing a timer injects one message into its unit. That injection is a journaled step, like an answer, so a replay is identical.
+   - A timer whose reason is gone (its request was answered, its goal met) fires as nothing: the host drops it without a step.
+   - **Cost:** moving the clock does work for the timers that are due, plus a constant. It does not grow with the number of units that have nothing due. This is checked by counting kernel steps (`Stats`), not by timing.
+3. **Deadlines.** When the host hands a request to its adapter, it starts a timer at now + the effect's `within`.
+   - If the timer fires and the part is still requested, the request is sent again with the same idempotency key, and the trace notes the send number ("send 2 of 3").
+   - After 3 sends with no answer, the part fails with outcome `timed out`. It is never replaced automatically (D9), so its need stays unmet, and the goal alert explains it.
+   - An answer that arrives after its part timed out has no open request: it is ignored with a note, as in slice 1.
+   - An answer to a request that was sent again is an answer to that request: same key, any send.
+4. **Goal deadlines.** A goal's deadline runs from the step in which its entity first matched the goal's subject (§3.3).
+   - The unit records which goals it has matched. When a step first matches one that has a `within`, the unit tells the host, which starts that goal's timer from the step's clock time.
+   - If the timer fires and the goal is not met, the unit records an alert. The alert carries the explanation: the goal's read-back, and for each unmet state, the part that is missing, waiting (with the rule), failed or timed out.
+   - A goal alerts at most once per unit. If it is met later, the trace notes it as met late.
+5. **Replay.** Timer injections are journaled, so every scenario's journal still replays to the same state. The host's timer queue is not part of the kernel's state: in slice 2 nothing resumes a host from a journal.
+
+### C.4 Acceptance
+
+- **Payment service never answers:** the request is sent 3 times, 30 seconds apart. Then the Payment is `timed out`, the Shipment never goes out, and after 3 days the order raises an alert whose explanation names the timed-out Payment.
+- **Slow carrier:** the carrier answers after the first re-send. The order settles within its goal, with no alert.
+- **Late answer:** an answer after the time-out is ignored with a note, and the unit is unchanged.
+- **Slice 1 still holds:** the three existing shop scenarios pass unchanged.
+- **Cost:** with one order that has a due timer, moving the clock costs the same number of kernel steps whether there are 1 or 1,000 other orders with nothing due.
+- Every scenario's journal replays to the same state.
