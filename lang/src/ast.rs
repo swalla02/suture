@@ -1,0 +1,185 @@
+//! Unresolved syntax: what the parsers produce and the checker resolves.
+//! Names are kept as written; the checker resolves them (spec B.3.8).
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Loc {
+    pub file: String,
+    pub line: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TypeName {
+    Text,
+    Bool,
+    Money,
+    Count,
+    /// A reference to another kind; in slice 1, only to a part's owner.
+    Kind(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Literal {
+    Text(String),
+    Bool(bool),
+    Money { cents: i64, currency: String },
+    Count(i64),
+}
+
+/// `it`, `its x`, `the Order`, `the order's total`, `its form's order's total`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NounPhrase {
+    pub head: Head,
+    /// The words after the head: `its form's order's total` gives [form, order, total].
+    pub steps: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Head {
+    /// `it`, `its`, `their`, or `the` followed by a lower-case word: the subject.
+    It,
+    /// `the Order`: the subject if it is an Order, otherwise its owner of that kind.
+    The(String),
+}
+
+/// What follows `is`: a literal, a noun phrase, or a bare word that the
+/// checker reads as text or as a state (spec B.3.7).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Term {
+    Lit(Literal),
+    Np(NounPhrase),
+    Word(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CmpOp {
+    AtMost,
+    AtLeast,
+    MoreThan,
+    LessThan,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Cond {
+    /// `x is y`, `x is not y`
+    Is { left: NounPhrase, negated: bool, right: Term },
+    /// `x is at most y`, `x is at least y`, `x is more than y`, `x is less than y`
+    Cmp { left: NounPhrase, op: CmpOp, right: Term },
+    /// `x has a K [that is s]`, `x has no K [that is s]`
+    Has { owner: NounPhrase, negated: bool, kind: String, state: Option<String> },
+    And(Vec<Cond>),
+    Or(Vec<Cond>),
+}
+
+/// `[state] Kind [whose attr is v] [that cond]`. Every filter is about the subject.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Subject {
+    pub kind: String,
+    pub filter: Vec<Cond>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RuleBody {
+    /// `every S's attr …`, `every S is …`: the condition holds for each subject.
+    Every { subject: Subject, cond: Cond },
+    /// `no S has … [unless c]`: the predicate holds for no subject, unless `c` does.
+    No { subject: Subject, pred: Cond, unless: Option<Cond> },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Module {
+    pub name: String,
+    pub version: u32,
+    pub currency: String,
+    pub at: Loc,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AttrDecl {
+    pub name: String,
+    pub ty: TypeName,
+    pub default: Option<Literal>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KindDecl {
+    pub name: String,
+    pub attrs: Vec<AttrDecl>,
+    pub at: Loc,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NeedsDecl {
+    pub owner: String,
+    pub parts: Vec<String>,
+    pub cond: Option<Cond>,
+    pub at: Loc,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectDecl {
+    pub verb: String,
+    pub kind: String,
+    pub adapter: String,
+    pub within_secs: u64,
+    pub sends: Vec<NounPhrase>,
+    pub marks: Option<String>,
+    pub success: String,
+    pub data: Vec<(String, TypeName)>,
+    pub failures: Vec<String>,
+    pub at: Loc,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuleDecl {
+    pub name: String,
+    pub body: RuleBody,
+    /// The sentence as written, for read-backs.
+    pub source: String,
+    pub at: Loc,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DefineDecl {
+    pub kind: String,
+    pub state: String,
+    pub cond: Cond,
+    pub at: Loc,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GoalDecl {
+    pub subject: Subject,
+    pub states: Vec<String>,
+    pub within_secs: Option<u64>,
+    pub source: String,
+    pub at: Loc,
+}
+
+/// `its Order is cancelled`, `the Order is not cancelled`
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Action {
+    pub target: NounPhrase,
+    pub attr: String,
+    pub value: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReactionDecl {
+    pub kind: String,
+    pub outcome: String,
+    pub actions: Vec<Action>,
+    pub at: Loc,
+}
+
+/// Everything parsed from a module's files.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Source {
+    pub module: Option<Module>,
+    pub kinds: Vec<KindDecl>,
+    pub needs: Vec<NeedsDecl>,
+    pub effects: Vec<EffectDecl>,
+    pub rules: Vec<RuleDecl>,
+    pub defines: Vec<DefineDecl>,
+    pub goals: Vec<GoalDecl>,
+    pub reactions: Vec<ReactionDecl>,
+}

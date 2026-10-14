@@ -1,0 +1,319 @@
+//! The controlled-English sentence parsers (spec §3.3 and appendix B.2).
+//! Each pattern has exactly one meaning; the checker resolves the names.
+
+use crate::ast::*;
+use crate::lex::{Cursor, Error, Tok};
+
+/// A literal, if one is next: `"text"`, `3`, `120 EUR`, `12.50 EUR`, `yes`, `no`.
+pub fn literal(c: &mut Cursor) -> Result<Option<Literal>, Error> {
+    match c.peek() {
+        Some(Tok::Str(s)) => {
+            let s = s.clone();
+            c.next();
+            Ok(Some(Literal::Text(s)))
+        }
+        Some(Tok::Num(n)) => {
+            let n = n.clone();
+            c.next();
+            let currency = match c.peek() {
+                Some(Tok::Word(w)) if w.len() == 3 && w.chars().all(|ch| ch.is_ascii_uppercase()) => Some(w.clone()),
+                _ => None,
+            };
+            match currency {
+                Some(currency) => {
+                    c.next();
+                    let cents = money(&n).map_err(|m| c.error(m))?;
+                    Ok(Some(Literal::Money { cents, currency }))
+                }
+                None => n
+                    .parse::<i64>()
+                    .map(|v| Some(Literal::Count(v)))
+                    .map_err(|_| c.error(format!("`{n}` is not a whole number"))),
+            }
+        }
+        Some(Tok::Word(w)) if w == "yes" || w == "true" => {
+            c.next();
+            Ok(Some(Literal::Bool(true)))
+        }
+        Some(Tok::Word(w)) if w == "no" || w == "false" => {
+            c.next();
+            Ok(Some(Literal::Bool(false)))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// An amount in cents: at most two decimals.
+fn money(n: &str) -> Result<i64, String> {
+    let bad = || format!("`{n}` is not an amount with at most two decimals");
+    let (whole, frac) = n.split_once('.').unwrap_or((n, ""));
+    if whole.is_empty() || frac.len() > 2 || frac.contains('.') {
+        return Err(bad());
+    }
+    let w: i64 = whole.parse().map_err(|_| bad())?;
+    let f: i64 = if frac.is_empty() { 0 } else { format!("{frac:0<2}").parse().map_err(|_| bad())? };
+    Ok(w * 100 + f)
+}
+
+pub fn starts_noun_phrase(c: &Cursor) -> bool {
+    ["it", "its", "their", "the"].iter().any(|w| c.is_word(w))
+}
+
+/// `it`, `its x`, `their x`, `the Kind`, `the x`, followed by any number of `'s y`.
+pub fn noun_phrase(c: &mut Cursor) -> Result<NounPhrase, Error> {
+    let mut np = if c.eat_word("it") {
+        NounPhrase { head: Head::It, steps: vec![] }
+    } else if c.eat_word("its") || c.eat_word("their") {
+        NounPhrase { head: Head::It, steps: vec![c.word()?] }
+    } else if c.eat_word("the") {
+        let w = c.word()?;
+        if w.starts_with(char::is_uppercase) {
+            NounPhrase { head: Head::The(w), steps: vec![] }
+        } else {
+            NounPhrase { head: Head::It, steps: vec![w] }
+        }
+    } else {
+        return Err(c.error(format!("expected `it`, `its` or `the`, found {}", c.found())));
+    };
+    while c.eat_poss() {
+        np.steps.push(c.word()?);
+    }
+    Ok(np)
+}
+
+fn it() -> NounPhrase {
+    NounPhrase { head: Head::It, steps: vec![] }
+}
+
+/// What follows `is` or `is not`.
+fn term(c: &mut Cursor) -> Result<Term, Error> {
+    if let Some(l) = literal(c)? {
+        return Ok(Term::Lit(l));
+    }
+    if starts_noun_phrase(c) {
+        return Ok(Term::Np(noun_phrase(c)?));
+    }
+    Ok(Term::Word(c.word()?))
+}
+
+/// What follows a noun phrase: `is [not] t`, `is at most t` and the other
+/// comparisons, `has a K [that is s]`, or `has no K [that is s]`.
+pub fn predicate(c: &mut Cursor, left: NounPhrase) -> Result<Cond, Error> {
+    if c.eat_word("has") {
+        let negated = if c.eat_word("no") {
+            true
+        } else if c.eat_word("a") || c.eat_word("an") {
+            false
+        } else {
+            return Err(c.error(format!("expected `a`, `an` or `no` after `has`, found {}", c.found())));
+        };
+        let kind = c.kind_name()?;
+        let state = if c.eat_word("that") {
+            c.expect_word("is")?;
+            Some(c.word()?)
+        } else {
+            None
+        };
+        return Ok(Cond::Has { owner: left, negated, kind, state });
+    }
+    c.expect_word("is")?;
+    let op = if c.eat_word("at") {
+        if c.eat_word("most") {
+            Some(CmpOp::AtMost)
+        } else {
+            c.expect_word("least")?;
+            Some(CmpOp::AtLeast)
+        }
+    } else if c.eat_word("more") {
+        c.expect_word("than")?;
+        Some(CmpOp::MoreThan)
+    } else if c.eat_word("less") {
+        c.expect_word("than")?;
+        Some(CmpOp::LessThan)
+    } else {
+        None
+    };
+    if let Some(op) = op {
+        return Ok(Cond::Cmp { left, op, right: term(c)? });
+    }
+    let negated = c.eat_word("not");
+    Ok(Cond::Is { left, negated, right: term(c)? })
+}
+
+/// One condition. One that starts with `is` or `has` is about the subject.
+fn simple(c: &mut Cursor) -> Result<Cond, Error> {
+    let left = if c.is_word("is") || c.is_word("has") { it() } else { noun_phrase(c)? };
+    predicate(c, left)
+}
+
+/// Conditions joined by `and` or by `or`; one sentence cannot mix the two.
+/// After a joiner, a bare state shares the previous condition's left side:
+/// `it is cancelled and paid and not refunded`.
+pub fn condition(c: &mut Cursor) -> Result<Cond, Error> {
+    let first = simple(c)?;
+    let joiner = match c.peek() {
+        Some(Tok::Word(w)) if w == "and" || w == "or" => w.clone(),
+        _ => return Ok(first),
+    };
+    let mut parts = vec![first];
+    while c.eat_word(&joiner) {
+        let next = if c.is_word("is") || c.is_word("has") || starts_noun_phrase(c) {
+            simple(c)?
+        } else {
+            let Some(Cond::Is { left, .. }) = parts.last() else {
+                return Err(c.error(format!("expected a condition after `{joiner}`, found {}", c.found())));
+            };
+            let left = left.clone();
+            let negated = c.eat_word("not");
+            Cond::Is { left, negated, right: Term::Word(c.word()?) }
+        };
+        parts.push(next);
+    }
+    if c.is_word("and") || c.is_word("or") {
+        return Err(c.error("one sentence cannot mix `and` with `or`; name a part with `define`"));
+    }
+    Ok(if joiner == "and" { Cond::And(parts) } else { Cond::Or(parts) })
+}
+
+/// `[state] Kind [whose attr is [not] t] [that cond]`.
+pub fn subject(c: &mut Cursor) -> Result<Subject, Error> {
+    let adjective = match c.peek() {
+        Some(Tok::Word(w)) if !w.starts_with(char::is_uppercase) => {
+            let w = w.clone();
+            c.next();
+            Some(w)
+        }
+        _ => None,
+    };
+    let kind = c.kind_name()?;
+    let mut filter = vec![];
+    if let Some(state) = adjective {
+        filter.push(Cond::Is { left: it(), negated: false, right: Term::Word(state) });
+    }
+    if c.eat_word("whose") {
+        let attr = c.word()?;
+        c.expect_word("is")?;
+        let negated = c.eat_word("not");
+        filter.push(Cond::Is { left: NounPhrase { head: Head::It, steps: vec![attr] }, negated, right: term(c)? });
+    }
+    if c.eat_word("that") {
+        filter.push(condition(c)?);
+    }
+    Ok(Subject { kind, filter })
+}
+
+/// `every S's attr …`, `every S is …`, `no S has … [unless cond]`, `no S is … [unless cond]`.
+pub fn rule_body(c: &mut Cursor) -> Result<RuleBody, Error> {
+    if c.eat_word("every") {
+        let subject = subject(c)?;
+        let mut left = it();
+        while c.eat_poss() {
+            left.steps.push(c.word()?);
+        }
+        let cond = predicate(c, left)?;
+        return Ok(RuleBody::Every { subject, cond });
+    }
+    if !c.eat_word("no") {
+        return Err(c.error(format!("a rule starts with `every` or `no`, found {}", c.found())));
+    }
+    let subject = subject(c)?;
+    let pred = predicate(c, it())?;
+    let unless = if c.eat_word("unless") { Some(condition(c)?) } else { None };
+    Ok(RuleBody::No { subject, pred, unless })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lex::tokens;
+
+    fn with<T>(src: &str, f: impl FnOnce(&mut Cursor) -> Result<T, Error>) -> Result<T, Error> {
+        let toks = tokens(src).unwrap();
+        let mut c = Cursor::new(&toks, "t.st", 1);
+        let out = f(&mut c)?;
+        c.expect_end()?;
+        Ok(out)
+    }
+
+    fn np(steps: &[&str]) -> NounPhrase {
+        NounPhrase { head: Head::It, steps: steps.iter().map(|s| s.to_string()).collect() }
+    }
+
+    fn word(w: &str) -> Term {
+        Term::Word(w.into())
+    }
+
+    fn is(left: NounPhrase, negated: bool, right: &str) -> Cond {
+        Cond::Is { left, negated, right: word(right) }
+    }
+
+    #[test]
+    fn literals() {
+        let eur = |cents| Some(Literal::Money { cents, currency: "EUR".into() });
+        assert_eq!(with("120 EUR", literal).unwrap(), eur(12000));
+        assert_eq!(with("12.5 EUR", literal).unwrap(), eur(1250));
+        assert_eq!(with("3", literal).unwrap(), Some(Literal::Count(3)));
+        assert_eq!(with("\"L-77\"", literal).unwrap(), Some(Literal::Text("L-77".into())));
+        assert_eq!(with("no", literal).unwrap(), Some(Literal::Bool(false)));
+        assert!(with("1.234 EUR", literal).is_err());
+    }
+
+    #[test]
+    fn noun_phrases() {
+        assert_eq!(with("its form's order's total", noun_phrase).unwrap(), np(&["form", "order", "total"]));
+        assert_eq!(with("the order's total", noun_phrase).unwrap(), np(&["order", "total"]));
+        assert_eq!(
+            with("the Order's country", noun_phrase).unwrap(),
+            NounPhrase { head: Head::The("Order".into()), steps: vec!["country".into()] }
+        );
+        assert_eq!(with("it", noun_phrase).unwrap(), np(&[]));
+        assert!(with("Order", noun_phrase).is_err());
+    }
+
+    #[test]
+    fn conditions() {
+        assert_eq!(with("its country is France", condition).unwrap(), is(np(&["country"]), false, "France"));
+        assert_eq!(with("it is not cancelled", condition).unwrap(), is(np(&[]), true, "cancelled"));
+        assert_eq!(
+            with("its value is at most its form's order's total", condition).unwrap(),
+            Cond::Cmp { left: np(&["value"]), op: CmpOp::AtMost, right: Term::Np(np(&["form", "order", "total"])) }
+        );
+        assert_eq!(
+            with("has a Shipment that is sent", condition).unwrap(),
+            Cond::Has { owner: np(&[]), negated: false, kind: "Shipment".into(), state: Some("sent".into()) }
+        );
+        assert_eq!(
+            with("it is cancelled and paid and not refunded", condition).unwrap(),
+            Cond::And(vec![is(np(&[]), false, "cancelled"), is(np(&[]), false, "paid"), is(np(&[]), true, "refunded")])
+        );
+        let e = with("it is paid and settled or cancelled", condition).unwrap_err();
+        assert!(e.msg.contains("cannot mix"), "{e}");
+    }
+
+    #[test]
+    fn subjects_and_rule_bodies() {
+        let r = with(
+            "no Order whose country is France has a Shipment that is sent unless its CustomsForm is done",
+            rule_body,
+        )
+        .unwrap();
+        let RuleBody::No { subject, pred, unless } = r else { panic!("not a `no` rule") };
+        assert_eq!(subject.kind, "Order");
+        assert_eq!(subject.filter, vec![is(np(&["country"]), false, "France")]);
+        assert!(matches!(pred, Cond::Has { ref kind, .. } if kind == "Shipment"));
+        assert_eq!(unless, Some(is(np(&["CustomsForm"]), false, "done")));
+
+        let r = with("every Declaration's value is at most its form's order's total", rule_body).unwrap();
+        let RuleBody::Every { subject, cond } = r else { panic!("not an `every` rule") };
+        assert_eq!((subject.kind.as_str(), subject.filter.len()), ("Declaration", 0));
+        assert!(matches!(cond, Cond::Cmp { op: CmpOp::AtMost, .. }));
+
+        let r = with("no cancelled Order has a Shipment that is sent", rule_body).unwrap();
+        let RuleBody::No { subject, unless, .. } = r else { panic!("not a `no` rule") };
+        assert_eq!(subject.filter, vec![is(np(&[]), false, "cancelled")]);
+        assert_eq!(unless, None);
+
+        let e = with("some Order is paid", rule_body).unwrap_err();
+        assert!(e.msg.contains("starts with `every` or `no`"), "{e}");
+    }
+}
