@@ -7,6 +7,7 @@ pub mod ir;
 pub mod lex;
 pub mod parse;
 pub mod readback;
+pub mod scenario;
 pub mod sentence;
 
 pub use lex::{statements, tokens, Cursor, Error, Stmt, Tok};

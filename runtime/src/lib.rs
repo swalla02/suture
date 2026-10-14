@@ -4,4 +4,5 @@
 pub mod host;
 pub mod interp;
 pub mod kernel;
+pub mod scenario;
 pub mod state;
