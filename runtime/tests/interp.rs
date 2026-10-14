@@ -370,7 +370,7 @@ fn a_slot_fills_with_its_first_preferred_alternative() {
     assert_eq!(u.root.slots.get("Delivery").map(String::as_str), Some("Shipment"));
     assert!(has_part(&u, "Shipment"));
     assert!(has_note(&u, "Delivery: trying Shipment"), "{:?}", u.notes);
-    assert_eq!(u.timers, vec![("J1/Delivery:Shipment".to_string(), 2 * 86_400)]);
+    assert_eq!(u.timers, vec![("J1/Delivery:Shipment#1".to_string(), 2 * 86_400)]);
 }
 
 #[test]
@@ -396,7 +396,7 @@ fn patience_moves_an_untouched_alternative_on() {
     let p = shop();
     let (u, asks) = order(&p, "O1", "France", 120);
     let (u, _) = answer(&p, &u, ask(&asks, "payments"), "captured", &[]);
-    let (u, asks) = run(&p, &u, Msg::Patience { id: "O1/Delivery:Shipment".into() });
+    let (u, asks) = run(&p, &u, Msg::Patience { id: "O1/Delivery:Shipment#1".into() });
     assert!(has_note(&u, "Delivery: no Shipment after 2 days, trying Refund"), "{:?}", u.notes);
     assert!(!has_part(&u, "Shipment"), "the untouched Shipment is withdrawn");
     assert_eq!(ask(&asks, "payments").key, "O1/Refund#1");
@@ -407,7 +407,70 @@ fn patience_does_not_abandon_an_alternative_that_went_out() {
     let p = shop();
     let (u, asks) = order(&p, "J1", "Japan", 80);
     let (u, _) = answer(&p, &u, ask(&asks, "payments"), "captured", &[]);
-    let (after, sent) = run(&p, &u, Msg::Patience { id: "J1/Delivery:Shipment".into() });
+    let (after, sent) = run(&p, &u, Msg::Patience { id: "J1/Delivery:Shipment#1".into() });
     assert_eq!(after.root, u.root);
     assert!(after.notes.is_empty() && sent.is_empty(), "{:?}", after.notes);
+}
+
+fn shop_plus(extra: &str) -> Program {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/shop");
+    let mut files: Vec<(String, String)> = ["shop.st", "france.st"]
+        .iter()
+        .map(|f| (f.to_string(), std::fs::read_to_string(format!("{dir}/{f}")).unwrap()))
+        .collect();
+    files.push(("extra.st".into(), extra.into()));
+    suture_lang::compile(&files).unwrap_or_else(|e| panic!("{e:?}"))
+}
+
+#[test]
+fn patience_that_would_break_a_rule_is_held() {
+    let p = shop_plus("rule keep: every Order whose country is France has a Shipment\n");
+    let (u, asks) = order(&p, "O1", "France", 120);
+    let (u, _) = answer(&p, &u, ask(&asks, "payments"), "captured", &[]);
+    let (after, sent) = run(&p, &u, Msg::Patience { id: u.timers[0].0.clone() });
+    assert!(violated(&p, &after.root).is_none());
+    assert_eq!(after.root, u.root);
+    assert!(has_note(&after, "patience held: rule keep"), "{:?}", after.notes);
+    assert!(sent.is_empty());
+}
+
+#[test]
+fn a_slot_filled_again_gets_a_new_patience_timer_and_the_old_one_is_ignored() {
+    let p = program(
+        "kind Order { total: Money, paused: Bool = no, big: Bool = yes }
+kind Ping { order: Order }
+kind A { order: Order }
+kind B { order: Order }
+Order needs Ping
+Order needs Delivery while it is not paused
+Delivery is A or B
+prefer Delivery: A, then B after 1 day
+effect ping Ping via pings within 1 day
+  sends    the order's total
+  reports  up | fails with down
+effect go A via as within 1 day
+  sends    the order's total
+  reports  ok
+effect go B via bs within 1 day
+  sends    the order's total
+  reports  ok
+rule big: no big Order has an A
+when a Ping is down: its Order is paused
+when a Ping is up: its Order is not paused
+",
+    );
+    let (u, asks) = placed(&p, 150);
+    let first = u.timers[0].0.clone();
+    let (u, asks) = answer(&p, &u, ask(&asks, "pings"), "down", &[]);
+    assert!(u.root.slots.is_empty(), "an inactive need empties its slot: {:?}", u.root.slots);
+    let (stale, _) = run(&p, &u, Msg::Patience { id: first.clone() });
+    assert_eq!(stale.root, u.root, "the timer of an emptied slot does nothing");
+    let (u, _) = answer(&p, &u, ask(&asks, "pings"), "up", &[]);
+    let second = u.timers.last().unwrap().0.clone();
+    assert_ne!(second, first);
+    let (ignored, _) = run(&p, &u, Msg::Patience { id: first });
+    assert_eq!(ignored.root, u.root, "an old fill's timer does nothing");
+    let (moved, asks) = run(&p, &u, Msg::Patience { id: second });
+    assert_eq!(moved.root.slots.get("Delivery").map(String::as_str), Some("B"));
+    ask(&asks, "bs");
 }

@@ -925,6 +925,8 @@ Checks: a slot's name is capitalized and is not a kind; its alternatives are kin
    - or has waited past its patience without going out: a patience timer starts when the slot moves to the alternative (so a part that a rule holds back still has one), and when it fires, the slot moves on only if that alternative's part is missing or still untouched (never requested). A part that reached the outside world is not abandoned (D9).
    
    An untouched part is withdrawn when the slot moves on; a touched one stays (it counts, D9). With no alternative left, the slot stays on its last one, so it is `failed`, and the goal alert explains it.
+   
+   If moving on would break a rule, the slot stays where it is, and the trace says so (`patience held: rule …`). When a slot's need stops being active, its untouched part is withdrawn and the slot is emptied; if the need comes back, the slot is filled afresh and its patience starts again. Each fill has its own patience timer, and a timer from an older fill does nothing.
 4. **The choice point.** Every pick goes through one function, which receives the slot and the alternatives still open and returns one of them. Slice 3 implements it with `prefer`; a `decide … with model` backend replaces it later (§5.7), and the rules still hold whatever it picks.
 5. **Timers.** A patience timer is a host timer like a deadline (C.3.2): the unit asks for it, the host starts it, and its firing is a journaled step.
 

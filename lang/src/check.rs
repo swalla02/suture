@@ -547,6 +547,11 @@ impl Checker {
                     self.errors.push(err(at, format!("`{}` is a value; only a node has parts", show(owner))));
                     return None;
                 };
+                if p.slot(kind).is_some() {
+                    let first = p.slot(kind).map(|s| s.alternatives[0].clone()).unwrap_or_default();
+                    self.errors.push(err(at, format!("`has a {kind}`: {kind} is a slot; name an alternative (`has a {first}`) or say `its {kind} is done`")));
+                    return None;
+                }
                 if !p.has_part(&k, kind) {
                     self.errors.push(err(at, format!("a {k} does not need a {kind}")));
                     return None;

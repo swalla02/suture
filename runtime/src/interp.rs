@@ -110,6 +110,12 @@ pub fn step(prog: &Program, unit: &Unit, msg: &Msg) -> Outcome {
             .and_then(|at| prog.effect_of(&node_at(&unit.root, &at).kind).map(|e| ask_for(&unit.label, &unit.root, &at, e)));
         return Outcome { unit: kept, asks: again.into_iter().collect() };
     }
+    if let (Some(r), Msg::Patience { .. }) = (violated(prog, &u.root), msg) {
+        // Moving on would break a rule: the slot stays where it is.
+        let mut kept = unit.clone();
+        kept.notes = vec![format!("patience held: rule {}: {}", r.name, r.paraphrase)];
+        return Outcome { unit: kept, asks: vec![] };
+    }
     Outcome { unit: u, asks }
 }
 
@@ -288,6 +294,7 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
         Hold(String, String),
         Release(String),
         Fill(String, String, String),
+        Unfill(String),
     }
     let key = node_key(&u.label, &u.root, at);
     let change = {
@@ -344,6 +351,10 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
                 };
             } else if change.is_none() && !active && n.held.contains_key(&want) {
                 change = Some(Change::Release(want.clone()));
+            } else if change.is_none() && !active && slot.is_some() && current(n, &want).is_none() {
+                // An inactive need empties its slot; when it is active
+                // again, the slot is filled afresh, with a new patience timer.
+                change = Some(Change::Unfill(need.part.clone()));
             }
             if change.is_some() {
                 break;
@@ -374,6 +385,10 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
             ask_patience(prog, u, &key, &slot, &alt);
             true
         }
+        Some(Change::Unfill(slot)) => {
+            n.slots.remove(&slot);
+            true
+        }
         Some(Change::Remove(i, note)) => {
             n.parts.remove(i);
             u.notes.push(note);
@@ -388,17 +403,25 @@ fn ask_patience(prog: &Program, u: &mut Unit, owner_key: &str, slot: &str, alt: 
     let Some(s) = prog.slot(slot) else { return };
     let Some(i) = s.alternatives.iter().position(|a| a == alt) else { return };
     if let Some(secs) = s.patience[i] {
-        u.timers.push((format!("{owner_key}/{slot}:{alt}"), secs));
+        let fill = u.timers.len() + 1;
+        u.timers.push((format!("{owner_key}/{slot}:{alt}#{fill}"), secs));
     }
 }
 
-/// The slot a patience timer is for, if it should move on now: its owner's
+/// The slot a patience timer (`O1/Delivery:Shipment#1`, the number counting
+/// the unit's fills) is for, if it should move on now: its owner's
 /// position, the slot, the alternative it waited on and the next one. It
 /// moves on only while that alternative is still current and its part has
 /// not reached the outside world (appendix D.3.3).
 pub fn patience_due<'p>(prog: &'p Program, unit: &Unit, id: &str) -> Option<(Vec<usize>, &'p str, String, String)> {
-    let (left, alt) = id.rsplit_once(':')?;
+    let (base, _) = id.rsplit_once('#')?;
+    let (left, alt) = base.rsplit_once(':')?;
     let (owner_key, slot) = left.rsplit_once('/')?;
+    // Only the latest fill of this slot counts; an older timer is stale.
+    let latest = unit.timers.iter().rev().find(|(t, _)| t.starts_with(&format!("{left}:")))?;
+    if latest.0 != id {
+        return None;
+    }
     let at = positions(&unit.root).into_iter().find(|at| node_key(&unit.label, &unit.root, at) == owner_key)?;
     let n = node_at(&unit.root, &at);
     if n.slots.get(slot).map(String::as_str) != Some(alt) {

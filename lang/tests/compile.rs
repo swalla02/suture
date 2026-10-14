@@ -150,3 +150,9 @@ fn slot_mistakes_are_errors() {
     let e = errors(&format!("{base}O needs D\nD is A or B\nprefer D: lowest n\n"));
     assert!(e.iter().any(|m| m.contains("slice 4")), "{e:?}");
 }
+
+#[test]
+fn has_a_slot_is_an_error() {
+    let e = errors("kind O { }\nkind A { o: O }\nkind B { o: O }\nO needs D\nD is A or B\nprefer D: A, then B\ndefine: an O is going when it has a D\n");
+    assert!(e.iter().any(|m| m.contains("D is a slot; name an alternative")), "{e:?}");
+}
