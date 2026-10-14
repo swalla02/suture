@@ -784,3 +784,60 @@ This probe was throwaway code (not kept) against the kernel and DNC-1's depnet. 
 | History | read from the code, not measured | The in-memory journal and the idempotency keys are never trimmed, and recovery replays from the first record. |
 
 These findings shape D7, the kernel changes of §5.1, the keyed pools and free lists of §5.2, and the cost tests of §7.4.
+
+## Appendix B. Prototype slice 1: conditional depth (2026-10-14)
+
+The user asked for a working prototype as early as possible, and for "deeper" structure: structure that appears only in some contexts and carries its own rules. The example is a customs form that only orders to France get, with an excise section that only alcohol gets. Slice 1 builds that case end to end, before the choice machinery. It replaces plan 2's original scope (the whole front end), and later plans widen it.
+
+### B.1 What runs
+
+- `suture build <dir>` compiles every `.st` file in a directory, writes the program file, and prints each rule's read-back.
+- `suture run <dir> --scenario <file>` runs scenarios against simulated services and prints a trace of every step.
+- `suture explain <dir> --scenario <file> <name>` runs the scenarios, then explains one unit.
+- `examples/shop/` holds `shop.st`, `france.st` and `orders.scenario`.
+
+### B.2 Language in slice 1
+
+| In slice 1 | Waits for slice 2 or later |
+|---|---|
+| `module`; `kind` with `Text`, `Bool`, `Money`, `Count`, owner references and literal defaults | formula attributes |
+| `needs … while …` | `is … or …`, `uses`, `prefer`, pools |
+| `effect` with `sends`, `marks`, `reports`, `fails with`; `within` is parsed | deadlines that fire, `timed out` |
+| `rule`, local tier only | per-group and global rules |
+| `define`, `desired` (its `within` is parsed) | goal alerts |
+| `when ⟨Kind⟩ is ⟨outcome⟩` reactions | admitted events, `admit`, roles |
+| scenarios with `when a new …`, `answers`, `expect` | `given` |
+| errors with file and line | closest-pattern suggestions (§3.5) |
+
+### B.3 Semantics that slice 1 settles
+
+1. **Units.** A root entity, together with everything it owns through `needs`, runs as one engine agent (a unit) with one mailbox.
+   - Every event for a unit is one checked, journaled step: its creation, or an answer.
+   - All rules inside a unit are local.
+   - This refines §5.2's "one agent per entity". Shared entities become their own units in slice 2.
+   - A unit must fit the payload limit (4096 bytes).
+2. **A part without an effect is done** when all its active needs are done.
+3. **Unknown values.** An attribute that has no value yet (an answer not given) never breaks a rule. It makes a `while`, `define` or `desired` condition false.
+4. **Refused answers.** If recording an answer would break a rule, the answer is refused.
+   - The unit keeps its previous state, and the trace shows the rule's read-back.
+   - The same request goes out again with the same idempotency key, so the person can correct their answer.
+5. **Waiting.** A part's request that a rule refuses waits. Every later step of its unit checks it again; inside a unit, this re-check is §5.2's Watch.
+6. **Host loop order.** run → take new effects → route internal messages → commit → dispatch outside requests. This corrects §5.4, which committed after dispatching, to match `ir-spec.md` §8.2.
+7. **Text comparisons.** In `⟨np⟩ is ⟨word⟩`, a bare word is a text literal when ⟨np⟩ is a `Text` attribute (`its country is France`). Otherwise the word names a state.
+8. **Names.** A step in a noun phrase is resolved in this order:
+   - an attribute of the node (lower-case);
+   - one of its parts (a capitalized kind it needs);
+   - its owner, written either as the owner attribute (`form`) or as the owner's kind (`Order`).
+
+### B.4 Acceptance
+
+- `shop.st` and `france.st` compile, and every rule prints a read-back.
+- **French order with alcohol:**
+  - the customs form appears;
+  - an over-declared value is refused, showing the read-back;
+  - the excise section appears only for alcohol;
+  - shipping waits for the payment and for the form;
+  - the order settles.
+- **Japanese order:** no customs form ever appears.
+- Every scenario's journal replays to the same state.
+- The `.st` files contain no control flow.
