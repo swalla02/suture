@@ -60,7 +60,7 @@ pub fn step(prog: &Program, unit: &Unit, msg: &Msg) -> Outcome {
             if let Err(refusal) = answer(prog, &mut u, key, outcome, data) {
                 let mut kept = unit.clone();
                 kept.notes = vec![refusal.note];
-                asks.extend(refusal.again);
+                asks.extend(refusal.again.map(|a| *a));
                 return Outcome { unit: kept, asks };
             }
         }
@@ -73,7 +73,7 @@ pub fn step(prog: &Program, unit: &Unit, msg: &Msg) -> Outcome {
 /// Why an answer was not recorded, and the request to send again, if any.
 struct Refusal {
     note: String,
-    again: Option<Ask>,
+    again: Option<Box<Ask>>,
 }
 
 fn answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[(String, Val)]) -> Result<(), Refusal> {
@@ -85,7 +85,7 @@ fn answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[(Strin
     };
     let kind = node_at(&u.root, &at).kind.clone();
     let effect = prog.effect_of(&kind).expect("a requested part has an effect");
-    let again = Some(ask_for(&u.label, &u.root, &at, effect));
+    let again = Some(Box::new(ask_for(&u.label, &u.root, &at, effect)));
     let refuse = |why: String| Refusal { note: format!("refused an answer for {key}: {why}"), again: again.clone() };
     let success = outcome == effect.success;
     if !success && !effect.failures.iter().any(|f| f == outcome) {

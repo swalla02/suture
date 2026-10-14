@@ -165,14 +165,6 @@ impl<'a> Cursor<'a> {
         self.toks.get(self.pos + k)
     }
 
-    pub fn next(&mut self) -> Option<&'a Tok> {
-        let t = self.toks.get(self.pos);
-        if t.is_some() {
-            self.pos += 1;
-        }
-        t
-    }
-
     pub fn at_end(&self) -> bool {
         self.pos >= self.toks.len()
     }
@@ -244,6 +236,19 @@ impl<'a> Cursor<'a> {
     /// The next token, for error messages.
     pub fn found(&self) -> String {
         self.peek().map_or_else(|| "the end of the statement".to_string(), |t| format!("`{t}`"))
+    }
+}
+
+/// Moving past one token at a time; the parsers call `next` to consume one.
+impl<'a> Iterator for Cursor<'a> {
+    type Item = &'a Tok;
+
+    fn next(&mut self) -> Option<&'a Tok> {
+        let t = self.toks.get(self.pos);
+        if t.is_some() {
+            self.pos += 1;
+        }
+        t
     }
 }
 

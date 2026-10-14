@@ -169,8 +169,11 @@ fn field(c: &mut Cursor) -> Result<NounPhrase, Error> {
     Ok(np)
 }
 
+/// An effect's success outcome, the data it carries, and its failure outcomes.
+type Outcomes = (String, Vec<(String, TypeName)>, Vec<String>);
+
 /// `ok [with a: T, b: T] [| fails with x, y]`
-fn outcomes(c: &mut Cursor) -> Result<(String, Vec<(String, TypeName)>, Vec<String>), Error> {
+fn outcomes(c: &mut Cursor) -> Result<Outcomes, Error> {
     let success = c.word()?;
     let mut data = vec![];
     if c.eat_word("with") {
