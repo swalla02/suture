@@ -3,6 +3,8 @@
 
 pub mod ast;
 pub mod lex;
+pub mod parse;
 pub mod sentence;
 
 pub use lex::{statements, tokens, Cursor, Error, Stmt, Tok};
+pub use parse::parse_file;
