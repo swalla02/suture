@@ -92,6 +92,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "suture-cli"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "suture-lang",
+ "suture-runtime",
+]
+
+[[package]]
 name = "suture-lang"
 version = "0.1.0"
 dependencies = [

@@ -289,6 +289,11 @@ pub fn in_state(prog: &Program, root: &Node, at: &[usize], state: &str) -> bool 
     prog.defines.iter().any(|d| d.kind == n.kind && d.state == state && eval(prog, root, at, &d.cond) == T::Yes)
 }
 
+/// Whether a condition is known to hold at the node at `at`.
+pub fn holds(prog: &Program, root: &Node, at: &[usize], c: &Cond) -> bool {
+    eval(prog, root, at, c) == T::Yes
+}
+
 /// The first rule the unit's state breaks, if any. A rule applies to a node
 /// only when its filter is known to hold.
 pub fn violated<'p>(prog: &'p Program, root: &Node) -> Option<&'p Rule> {

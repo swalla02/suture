@@ -1,0 +1,16 @@
+[package]
+name = "suture-cli"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "The suture command"
+publish = false
+
+[[bin]]
+name = "suture"
+path = "src/main.rs"
+
+[dependencies]
+suture-lang = { path = "../lang" }
+suture-runtime = { path = "../runtime" }
+serde_json = "1"
