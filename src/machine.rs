@@ -42,7 +42,8 @@ pub struct Program {
     pub rules: Arc<RuleTable>,
     pub policies: Arc<Vec<Arc<dyn Policy>>>,
     pub limits: Limits,
-    /// Set by `with_fingerprint`, for example to a compiled program file's hash.
+    /// Set by `with_fingerprint`, for example to a compiled program file's
+    /// hash; mixed into the fingerprint, never a replacement for it.
     fixed_fingerprint: Option<Digest>,
 }
 
@@ -78,22 +79,27 @@ impl Program {
         self
     }
 
-    /// Pins the fingerprint, for example to a compiled program file's hash.
+    /// Pins a hash into the fingerprint, for example a compiled program
+    /// file's. The structure is still covered (see [`Program::fingerprint`]).
     pub fn with_fingerprint(mut self, d: Digest) -> Program {
         self.fixed_fingerprint = Some(d);
         self
     }
 
-    /// What journal `Version` records identify this program by. That is the
-    /// pinned fingerprint, or else a digest of the signature, the rule table's
-    /// structure, the policy names and the limits. Rule versions and rule code
-    /// are left out, because replay checks them step by step (`RuleVersion`,
-    /// `Divergence`).
+    /// What journal `Version` records identify this program by: a digest of
+    /// the signature, the rule table's structure, the policy names and the
+    /// limits, combined with the pinned hash when one is set. Rule versions
+    /// and rule code are left out, because replay checks them step by step
+    /// (`RuleVersion`, `Divergence`).
     pub fn fingerprint(&self) -> Digest {
-        if let Some(d) = self.fixed_fingerprint {
-            return d;
-        }
-        let mut d = DigestBuilder::new("program");
+        let mut d = match self.fixed_fingerprint {
+            Some(pin) => {
+                let mut d = DigestBuilder::new("program/pinned");
+                d.u128(pin.0);
+                d
+            }
+            None => DigestBuilder::new("program"),
+        };
         self.sig.encode_structure(&mut d);
         self.rules.encode_structure(&mut d);
         d.u64(self.policies.len() as u64);

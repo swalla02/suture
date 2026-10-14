@@ -323,3 +323,17 @@ fn fingerprints_cover_signature_and_rule_table() {
         assert!(matches!(err, RecoveryError::Version { .. }), "variant {v}: {err}");
     }
 }
+
+#[test]
+fn a_pinned_fingerprint_still_covers_structure() {
+    let pinned = mini().prog.with_fingerprint(Digest(42));
+    let changed = mini().prog.with_policy(AllowAll).with_fingerprint(Digest(42));
+    assert_ne!(pinned.fingerprint(), changed.fingerprint(), "same pin, different structure");
+    let m0 = mini();
+    let mut m = Machine::new(m0.prog.clone().with_fingerprint(Digest(42)));
+    m.inject(sum(&m0, 1, 1, "a")).unwrap();
+    m.run(None);
+    m.commit().unwrap();
+    let err = Machine::recover(changed, m.into_journal()).err().expect("must refuse");
+    assert!(matches!(err, RecoveryError::Version { .. }), "{err}");
+}

@@ -263,7 +263,7 @@ Each pair reduces at most once, so `(l, r)` is unique and identities are unique 
 
 `append` buffers records. `COMMIT` makes them durable atomically. `FileJournal` appends JSON lines and a commit marker, then calls `fsync`. Opening a journal truncates any torn or uncommitted tail.
 
-A journal starts with `Header` (format 2) and then `Version`. Its hash is the program's fingerprint: a pinned hash such as a compiled program file's, or else a digest of the signature, the rule table's structure, the policy names and the limits.
+A journal starts with `Header` (format 2) and then `Version`. Its hash is the program's fingerprint: a digest of the signature, the rule table's structure, the policy names and the limits, combined with a pinned hash (such as a compiled program file's) when one is set. A pin never replaces the structure, so a changed runtime under an unchanged program file is still refused.
 
 **Recovery** replays the committed records in order, using the same code paths with journaling disabled:
 - `Version` must match the running program's name, version and fingerprint, or recovery fails with `Version`.
