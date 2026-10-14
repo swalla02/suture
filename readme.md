@@ -2,7 +2,19 @@
 
 > **Status:** architecture and research notes, plus a **v0 kernel** (Rust, `src/`) that implements the typed IR, `INTERACT`, journaling and replay, and the two minimal experiments of §7 ([`docs/ir-spec.md`](docs/ir-spec.md), [`docs/experiments.md`](docs/experiments.md)). The thesis has since been clarified as **Decision-Native Computing** (§0.1); its operational model is [`docs/dnc.md`](docs/dnc.md) and its first experiment is [`docs/dnc-experiment-1.md`](docs/dnc-experiment-1.md). Still **not validated as a product**.  
 > **Purpose:** capture the concrete design direction developed in our discussion, including its motivation, proposed primitives, service lifecycle, deployment model, learning hypothesis, and unresolved questions.  
-> **Last updated:** 2026-10-12.
+> **Last updated:** 2026-10-14.
+
+## Try the language prototype
+
+Suture is becoming a language. You declare what exists, what each thing needs, the rules that must always hold and the goals to reach, and the runtime does the rest. See the [language spec](docs/superpowers/specs/2026-10-14-suture-language-design.md); its appendix B describes this first prototype slice.
+
+```
+cargo run --release -p suture-cli -- build examples/shop
+cargo run --release -p suture-cli -- run examples/shop --scenario examples/shop/orders.scenario
+cargo run --release -p suture-cli -- explain examples/shop --scenario examples/shop/orders.scenario O1
+```
+
+`examples/shop/france.st` shows conditional depth. Only orders to France grow a customs form, and only alcohol grows an excise section with its own rules. Nothing in `shop.st` mentions France.
 
 ## 0. The thesis
 
