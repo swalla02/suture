@@ -261,7 +261,7 @@ Each pair reduces at most once, so `(l, r)` is unique and identities are unique 
 | `Fault` | l, r, rule?, error |
 | `Commit` | — |
 
-`append` buffers records. `COMMIT` makes them durable atomically. `FileJournal` appends JSON lines and a commit marker, then calls `fsync`. Opening a journal truncates any torn or uncommitted tail.
+`append` buffers records. `COMMIT` makes them durable atomically. `FileJournal` appends JSON lines and a commit marker, then calls `fsync`. Opening a journal truncates any torn or uncommitted tail. Opening never cuts off committed data it cannot read: a committed record this build cannot parse, or a header with a newer format, is refused with `JournalError::Format`, and the file is left untouched.
 
 A journal starts with `Header` (format 2) and then `Version`. Its hash is the program's fingerprint: a digest of the signature, the rule table's structure, the policy names and the limits, combined with a pinned hash (such as a compiled program file's) when one is set. A pin never replaces the structure, so a changed runtime under an unchanged program file is still refused.
 

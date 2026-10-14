@@ -112,16 +112,30 @@ pub struct FileJournal {
     fail_after: Option<usize>,
 }
 
+fn parse_line(line: &[u8]) -> Option<Result<Record, serde_json::Error>> {
+    line.strip_suffix(b"\n").map(serde_json::from_slice::<Record>)
+}
+
 /// Parses complete lines up to the last commit marker. Returns the records
-/// and the byte length of the committed prefix.
-fn committed_prefix(bytes: &[u8]) -> (Vec<Record>, usize) {
+/// and the byte length of the committed prefix. A torn tail (an incomplete
+/// last line, or anything after the last commit marker) is left out. A
+/// complete line this build cannot read that a later commit marker covers is
+/// not a torn tail: it is refused, so that nothing committed is cut off.
+fn committed_prefix(bytes: &[u8]) -> Result<(Vec<Record>, usize), JournalError> {
+    let lines: Vec<&[u8]> = bytes.split_inclusive(|&b| b == b'\n').collect();
     let (mut records, mut pending) = (Vec::new(), Vec::new());
     let (mut offset, mut keep) = (0, 0);
-    for line in bytes.split_inclusive(|&b| b == b'\n') {
-        if !line.ends_with(b"\n") {
-            break;
-        }
-        let Ok(rec) = serde_json::from_slice::<Record>(&line[..line.len() - 1]) else { break };
+    for (i, line) in lines.iter().enumerate() {
+        let rec = match parse_line(line) {
+            None => break,
+            Some(Ok(rec)) => rec,
+            Some(Err(e)) => {
+                if lines[i + 1..].iter().any(|l| matches!(parse_line(l), Some(Ok(Record::Commit)))) {
+                    return Err(JournalError::Format(format!("unreadable committed record at byte {offset}: {e}")));
+                }
+                break;
+            }
+        };
         offset += line.len();
         let is_commit = rec == Record::Commit;
         pending.push(rec);
@@ -130,7 +144,7 @@ fn committed_prefix(bytes: &[u8]) -> (Vec<Record>, usize) {
             keep = offset;
         }
     }
-    (records, keep)
+    Ok((records, keep))
 }
 
 impl FileJournal {
@@ -138,7 +152,12 @@ impl FileJournal {
         let mut file = OpenOptions::new().read(true).write(true).create(true).truncate(false).open(path)?;
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
-        let (records, keep) = committed_prefix(&bytes);
+        let (records, keep) = committed_prefix(&bytes)?;
+        if let Some(Record::Header { format, .. }) = records.first() {
+            if *format > FORMAT {
+                return Err(JournalError::Format(format!("journal format {format} is newer than this build's {FORMAT}")));
+            }
+        }
         if keep != bytes.len() {
             file.set_len(keep as u64)?;
             file.sync_all()?;
@@ -205,7 +224,7 @@ impl Journal for FileJournal {
     fn durable(&self) -> Result<Vec<Record>, JournalError> {
         let mut bytes = Vec::new();
         File::open(&self.path)?.read_to_end(&mut bytes)?;
-        Ok(committed_prefix(&bytes).0)
+        Ok(committed_prefix(&bytes)?.0)
     }
 
     fn crash(&mut self) {
