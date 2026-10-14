@@ -922,8 +922,17 @@ Checks: a slot's name is capitalized and is not a kind; its alternatives are kin
 2. **Filling.** When the slot's need is active and the slot is empty, the choice point picks the first alternative in `prefer` order, and the part is created as for a need (held by rules as in slice 1).
 3. **Moving on.** The slot moves to the next alternative when its current one:
    - has failed on its last attempt, or timed out (slice 2 never replaces a timed-out part);
-   - or has waited past its patience without going out: a patience timer starts when the alternative's part is created, and when it fires, the slot moves on only if that part is still untouched (never requested). A part that reached the outside world is not abandoned (D9).
+   - or has waited past its patience without going out: a patience timer starts when the slot moves to the alternative (so a part that a rule holds back still has one), and when it fires, the slot moves on only if that alternative's part is missing or still untouched (never requested). A part that reached the outside world is not abandoned (D9).
    
    An untouched part is withdrawn when the slot moves on; a touched one stays (it counts, D9). With no alternative left, the slot stays on its last one, so it is `failed`, and the goal alert explains it.
 4. **The choice point.** Every pick goes through one function, which receives the slot and the alternatives still open and returns one of them. Slice 3 implements it with `prefer`; a `decide … with model` backend replaces it later (§5.7), and the rules still hold whatever it picks.
 5. **Timers.** A patience timer is a host timer like a deadline (C.3.2): the unit asks for it, the host starts it, and its firing is a journaled step.
+
+### D.4 Acceptance
+
+- The shop compiles with `Delivery is Shipment or Refund` and `prefer Delivery: Shipment, then Refund after 2 days`, with no warnings; a slot without `prefer` compiles with a warning.
+- **Three lost parcels:** Delivery moves to a Refund, which is paid, and the order settles.
+- **A customs form that never comes:** the Shipment waits on rule `hold`; after 2 days it is withdrawn, the Refund is paid, and the order settles.
+- **Patience never abandons a part that went out:** a Shipment already sent stays, whatever its patience.
+- The slice 1 and slice 2 scenarios still pass. One expectation changed on purpose: an order whose payment never comes no longer keeps an unsent Shipment after 2 days (its Delivery moves to a Refund, which waits on rule `refund`).
+- Every scenario's journal replays to the same state.

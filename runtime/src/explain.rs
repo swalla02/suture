@@ -3,7 +3,7 @@
 use suture_lang::ir::Program;
 
 use crate::interp::{duration, holds, in_state, request_key, ATTEMPTS};
-use crate::state::{Status, Unit};
+use crate::state::{Node, Status, Unit};
 
 /// One line for the unit, one per goal, and one per part, indented by depth.
 /// `due` gives the seconds left before a pending request's deadline, by key.
@@ -24,10 +24,20 @@ pub fn explain(prog: &Program, unit: &Unit, due: impl Fn(&str) -> Option<u64>) -
             format!("  goal not met yet: {} (not yet {})", g.source, missing.join(", "))
         });
     }
+    slots(prog, &unit.root, 1, &mut out);
     for (i, _) in unit.root.parts.iter().enumerate() {
         part(prog, unit, &[i], &due, &mut out);
     }
     out
+}
+
+/// One line per slot the node fills: its current alternative, and which of
+/// its alternatives that is.
+fn slots(prog: &Program, n: &Node, depth: usize, out: &mut Vec<String>) {
+    for (slot, alt) in &n.slots {
+        let (i, of) = prog.slot(slot).map_or((0, 0), |s| (s.alternatives.iter().position(|a| a == alt).map_or(0, |i| i + 1), s.alternatives.len()));
+        out.push(format!("{}{slot}: {alt} ({i} of {of})", "  ".repeat(depth)));
+    }
 }
 
 fn part(prog: &Program, unit: &Unit, at: &[usize], due: &impl Fn(&str) -> Option<u64>, out: &mut Vec<String>) {
@@ -50,6 +60,7 @@ fn part(prog: &Program, unit: &Unit, at: &[usize], due: &impl Fn(&str) -> Option
     let attrs: Vec<String> = n.attrs.iter().map(|(k, v)| format!("{k} {}", v.show(&prog.currency))).collect();
     let attrs = if attrs.is_empty() { String::new() } else { format!(" — {}", attrs.join(", ")) };
     out.push(format!("{}{}{attempt}: {what}{attrs}", "  ".repeat(depth), n.kind));
+    slots(prog, n, depth + 1, out);
     for i in 0..n.parts.len() {
         let mut child = at.to_vec();
         child.push(i);

@@ -114,6 +114,8 @@ pub struct Node {
     pub waiting: Option<String>,
     /// The needs whose next part waits on a rule: the part's kind, and the rule.
     pub held: BTreeMap<String, String>,
+    /// Each slot it fills, and the alternative it is on (appendix D.3.1).
+    pub slots: BTreeMap<String, String>,
     /// Its parts, every attempt kept, in the order they were created.
     pub parts: Vec<Node>,
 }
@@ -129,12 +131,13 @@ impl Node {
             Value::from(i64::from(self.sends)),
             text(self.waiting.as_deref().unwrap_or("")),
             Value::list(self.held.iter().map(|(part, rule)| Value::tuple([text(part), text(rule)]))),
+            Value::list(self.slots.iter().map(|(slot, alt)| Value::tuple([text(slot), text(alt)]))),
             Value::list(self.parts.iter().map(Node::to_value)),
         ])
     }
 
     fn from_value(v: &Value) -> Result<Node, String> {
-        let [kind, attrs, status, outcome, attempt, sends, waiting, held, parts] = fields::<9>(v, "node")?;
+        let [kind, attrs, status, outcome, attempt, sends, waiting, held, slots, parts] = fields::<10>(v, "node")?;
         let mut map = BTreeMap::new();
         for a in items(attrs)? {
             let [k, x] = fields::<2>(a, "attribute")?;
@@ -144,6 +147,11 @@ impl Node {
         for h in items(held)? {
             let [part, rule] = fields::<2>(h, "held need")?;
             held_by.insert(string(part)?, string(rule)?);
+        }
+        let mut slot_alts = BTreeMap::new();
+        for x in items(slots)? {
+            let [slot, alt] = fields::<2>(x, "slot")?;
+            slot_alts.insert(string(slot)?, string(alt)?);
         }
         let some = |s: String| if s.is_empty() { None } else { Some(s) };
         Ok(Node {
@@ -155,6 +163,7 @@ impl Node {
             sends: u32::try_from(int(sends)?).map_err(|e| e.to_string())?,
             waiting: some(string(waiting)?),
             held: held_by,
+            slots: slot_alts,
             parts: items(parts)?.iter().map(Node::from_value).collect::<Result<_, _>>()?,
         })
     }
@@ -174,6 +183,9 @@ pub struct Unit {
     pub matched: Vec<u32>,
     /// The goals that raised an alert, by index (appendix C.3.4).
     pub alerts: Vec<u32>,
+    /// The patience timers this unit asked for: an id and a duration
+    /// (appendix D.3.5). The host starts each id once.
+    pub timers: Vec<(String, u64)>,
 }
 
 impl Unit {
@@ -185,11 +197,17 @@ impl Unit {
             indexes(&self.met),
             indexes(&self.matched),
             indexes(&self.alerts),
+            Value::list(self.timers.iter().map(|(id, secs)| Value::tuple([text(id), Value::from(*secs as i64)]))),
         ])
     }
 
     pub fn from_value(v: &Value) -> Result<Unit, String> {
-        let [label, root, notes, met, matched, alerts] = fields::<6>(v, "unit")?;
+        let [label, root, notes, met, matched, alerts, timers] = fields::<7>(v, "unit")?;
+        let mut wanted = vec![];
+        for t in items(timers)? {
+            let [id, secs] = fields::<2>(t, "timer")?;
+            wanted.push((string(id)?, u64::try_from(int(secs)?).map_err(|e| e.to_string())?));
+        }
         Ok(Unit {
             label: string(label)?,
             root: Node::from_value(root)?,
@@ -197,6 +215,7 @@ impl Unit {
             met: indexes_from(met)?,
             matched: indexes_from(matched)?,
             alerts: indexes_from(alerts)?,
+            timers: wanted,
         })
     }
 }
@@ -210,6 +229,8 @@ pub enum Msg {
     Answer { key: String, outcome: String, data: Vec<(String, Val)> },
     /// A goal's deadline has come (appendix C.3.4).
     GoalDue { goal: u32 },
+    /// A slot's patience ran out (appendix D.3.3).
+    Patience { id: String },
 }
 
 impl Msg {
@@ -220,6 +241,7 @@ impl Msg {
                 Value::tuple([Value::from(1i64), text(key), text(outcome), pairs_value(data)])
             }
             Msg::GoalDue { goal } => Value::tuple([Value::from(2i64), Value::from(i64::from(*goal))]),
+            Msg::Patience { id } => Value::tuple([Value::from(3i64), text(id)]),
         }
     }
 
@@ -233,6 +255,10 @@ impl Msg {
             Some(Ok(2)) => {
                 let [_, goal] = fields::<2>(v, "goal message")?;
                 Ok(Msg::GoalDue { goal: u32::try_from(int(goal)?).map_err(|e| e.to_string())? })
+            }
+            Some(Ok(3)) => {
+                let [_, id] = fields::<2>(v, "patience message")?;
+                Ok(Msg::Patience { id: string(id)? })
             }
             _ => Err(format!("not a message: {v}")),
         }
@@ -357,6 +383,7 @@ mod tests {
             sends: 1,
             waiting: None,
             held: BTreeMap::new(),
+            slots: BTreeMap::new(),
             parts: vec![],
         };
         let root = Node {
@@ -368,9 +395,18 @@ mod tests {
             sends: 1,
             waiting: Some("hold".into()),
             held: BTreeMap::from([("Shipment".to_string(), "paid".to_string())]),
+            slots: BTreeMap::from([("Delivery".to_string(), "Shipment".to_string())]),
             parts: vec![part],
         };
-        Unit { label: "O1".into(), root, notes: vec!["placed".into()], met: vec![0], matched: vec![0], alerts: vec![0] }
+        Unit {
+            label: "O1".into(),
+            root,
+            notes: vec!["placed".into()],
+            met: vec![0],
+            matched: vec![0],
+            alerts: vec![0],
+            timers: vec![("O1/Delivery:Shipment".into(), 172_800)],
+        }
     }
 
     #[test]
@@ -381,6 +417,8 @@ mod tests {
         assert_eq!(Msg::from_value(&m.to_value()).unwrap(), m);
         assert_eq!(Msg::from_value(&Msg::Create.to_value()).unwrap(), Msg::Create);
         assert_eq!(Msg::from_value(&Msg::GoalDue { goal: 2 }.to_value()).unwrap(), Msg::GoalDue { goal: 2 });
+        let patience = Msg::Patience { id: "O1/Delivery:Shipment".into() };
+        assert_eq!(Msg::from_value(&patience.to_value()).unwrap(), patience);
         let a = Ask {
             adapter: "payments".into(),
             verb: "capture".into(),

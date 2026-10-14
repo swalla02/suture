@@ -4,6 +4,7 @@
 
 use suture_lang::ir::{Body, Cond, Effect, Op, Operand, Path, Program, Rule, Step, TIMED_OUT};
 
+use crate::choice::choose;
 use crate::state::{Ask, Msg, Node, Status, Unit, Val};
 
 /// The most attempts of a part before its need gives up (spec §3.2).
@@ -33,7 +34,7 @@ pub fn new_unit(prog: &Program, label: &str, kind: &str, given: &[(String, Val)]
         }
         root.attrs.insert(name.clone(), v.clone());
     }
-    let unit = Unit { label: label.to_string(), root, notes: vec![], met: vec![], matched: vec![], alerts: vec![] };
+    let unit = Unit { label: label.to_string(), root, notes: vec![], met: vec![], matched: vec![], alerts: vec![], timers: vec![] };
     if let Some(r) = violated(prog, &step(prog, &unit, &Msg::Create).unit.root) {
         return Err(format!("refused by rule {}: {}", r.name, r.paraphrase));
     }
@@ -54,6 +55,7 @@ fn blank(prog: &Program, kind: &str, attempt: u32) -> Node {
         sends: 0,
         waiting: None,
         held: Default::default(),
+        slots: Default::default(),
         parts: vec![],
     }
 }
@@ -73,6 +75,11 @@ pub fn step(prog: &Program, unit: &Unit, msg: &Msg) -> Outcome {
         Msg::GoalDue { goal } => {
             goal_due(prog, &mut u, *goal);
             return Outcome { unit: u, asks };
+        }
+        Msg::Patience { id } => {
+            if !patience(prog, &mut u, id) {
+                return Outcome { unit: u, asks };
+            }
         }
         Msg::Answer { key, outcome, .. } if outcome == TIMED_OUT => {
             if let Err(refusal) = deadline(prog, &mut u, key, &mut asks) {
@@ -270,7 +277,9 @@ fn settle(prog: &Program, u: &mut Unit, asks: &mut Vec<Ask>) {
 /// Creates a part an active need lacks, replaces one that failed, or
 /// withdraws one whose need is no longer active and that has not reached the
 /// outside world (spec §3.2, D9). A part whose creation would break a rule
-/// waits on that rule, as a request does (appendix B.3.5). Makes at most one
+/// waits on that rule, as a request does (appendix B.3.5). A slot's need
+/// works on its current alternative: an empty slot is filled, and one whose
+/// alternative failed for good moves on (appendix D.3). Makes at most one
 /// change.
 fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
     enum Change {
@@ -278,7 +287,9 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
         Remove(usize, String),
         Hold(String, String),
         Release(String),
+        Fill(String, String, String),
     }
+    let key = node_key(&u.label, &u.root, at);
     let change = {
         let n = node_at(&u.root, at);
         if n.status == Status::Failed {
@@ -287,16 +298,38 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
         let mut change = None;
         for need in prog.needs.iter().filter(|need| need.owner == n.kind) {
             let active = need.cond.as_ref().is_none_or(|c| eval(prog, &u.root, at, c) == T::Yes);
-            let add = match current(n, &need.part).map(|i| (i, &n.parts[i])) {
-                None if active => Some((blank(prog, &need.part, 1), format!("needs {}", need.part))),
+            let slot = prog.slot(&need.part);
+            let want = match slot {
+                None => need.part.clone(),
+                Some(s) => match n.slots.get(&s.name) {
+                    Some(alt) => alt.clone(),
+                    None if active => {
+                        change = choose(s, None).map(|first| Change::Fill(s.name.clone(), first.clone(), format!("{}: trying {first}", s.name)));
+                        if change.is_some() {
+                            break;
+                        }
+                        continue;
+                    }
+                    None => continue,
+                },
+            };
+            let add = match current(n, &want).map(|i| (i, &n.parts[i])) {
+                None if active => Some((blank(prog, &want, 1), format!("needs {want}"))),
                 Some((_, p))
                     if active && p.status == Status::Failed && p.attempt < ATTEMPTS && p.outcome.as_deref() != Some(TIMED_OUT) =>
                 {
-                    let note = format!("{} {}: attempt {}", need.part, p.outcome.as_deref().unwrap_or("failed"), p.attempt + 1);
-                    Some((blank(prog, &need.part, p.attempt + 1), note))
+                    let note = format!("{want} {}: attempt {}", p.outcome.as_deref().unwrap_or("failed"), p.attempt + 1);
+                    Some((blank(prog, &want, p.attempt + 1), note))
+                }
+                Some((_, p)) if active && p.status == Status::Failed => {
+                    // Failed for good: a slot moves on to its next alternative.
+                    if let Some((s, next)) = slot.and_then(|s| choose(s, Some(&want)).map(|next| (s, next))) {
+                        change = Some(Change::Fill(s.name.clone(), next.clone(), format!("{}: {want} failed, trying {next}", s.name)));
+                    }
+                    None
                 }
                 Some((i, p)) if !active && untouched(p) => {
-                    change = Some(Change::Remove(i, format!("{} withdrawn", need.part)));
+                    change = Some(Change::Remove(i, format!("{want} withdrawn")));
                     None
                 }
                 _ => None,
@@ -305,12 +338,12 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
                 let mut t = u.root.clone();
                 node_at_mut(&mut t, at).parts.push(part.clone());
                 change = match newly_broken(prog, &u.root, &t) {
-                    Some(r) if n.held.get(&need.part) == Some(&r.name) => None,
-                    Some(r) => Some(Change::Hold(need.part.clone(), r.name.clone())),
+                    Some(r) if n.held.get(&want) == Some(&r.name) => None,
+                    Some(r) => Some(Change::Hold(want.clone(), r.name.clone())),
                     None => Some(Change::Add(part, note)),
                 };
-            } else if change.is_none() && !active && n.held.contains_key(&need.part) {
-                change = Some(Change::Release(need.part.clone()));
+            } else if change.is_none() && !active && n.held.contains_key(&want) {
+                change = Some(Change::Release(want.clone()));
             }
             if change.is_some() {
                 break;
@@ -335,6 +368,12 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
             n.held.remove(&part);
             true
         }
+        Some(Change::Fill(slot, alt, note)) => {
+            n.slots.insert(slot.clone(), alt.clone());
+            u.notes.push(note);
+            ask_patience(prog, u, &key, &slot, &alt);
+            true
+        }
         Some(Change::Remove(i, note)) => {
             n.parts.remove(i);
             u.notes.push(note);
@@ -342,6 +381,51 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
         }
         None => false,
     }
+}
+
+/// Asks the host for the alternative's patience timer, if it has patience.
+fn ask_patience(prog: &Program, u: &mut Unit, owner_key: &str, slot: &str, alt: &str) {
+    let Some(s) = prog.slot(slot) else { return };
+    let Some(i) = s.alternatives.iter().position(|a| a == alt) else { return };
+    if let Some(secs) = s.patience[i] {
+        u.timers.push((format!("{owner_key}/{slot}:{alt}"), secs));
+    }
+}
+
+/// The slot a patience timer is for, if it should move on now: its owner's
+/// position, the slot, the alternative it waited on and the next one. It
+/// moves on only while that alternative is still current and its part has
+/// not reached the outside world (appendix D.3.3).
+pub fn patience_due<'p>(prog: &'p Program, unit: &Unit, id: &str) -> Option<(Vec<usize>, &'p str, String, String)> {
+    let (left, alt) = id.rsplit_once(':')?;
+    let (owner_key, slot) = left.rsplit_once('/')?;
+    let at = positions(&unit.root).into_iter().find(|at| node_key(&unit.label, &unit.root, at) == owner_key)?;
+    let n = node_at(&unit.root, &at);
+    if n.slots.get(slot).map(String::as_str) != Some(alt) {
+        return None;
+    }
+    if current(n, alt).is_some_and(|i| !untouched(&n.parts[i])) {
+        return None;
+    }
+    let s = prog.slot(slot)?;
+    let next = choose(s, Some(alt))?;
+    Some((at, s.name.as_str(), alt.to_string(), next))
+}
+
+/// Moves a slot on when its patience ran out: an untouched part is withdrawn.
+fn patience(prog: &Program, u: &mut Unit, id: &str) -> bool {
+    let Some((at, slot, alt, next)) = patience_due(prog, u, id) else { return false };
+    let secs = prog.slot(slot).and_then(|s| s.patience[s.alternatives.iter().position(|a| *a == alt)?]).unwrap_or(0);
+    let key = node_key(&u.label, &u.root, &at);
+    let n = node_at_mut(&mut u.root, &at);
+    if let Some(i) = current(n, &alt) {
+        n.parts.remove(i);
+    }
+    n.held.remove(&alt);
+    n.slots.insert(slot.to_string(), next.clone());
+    u.notes.push(format!("{slot}: no {alt} after {}, trying {next}", duration(secs)));
+    ask_patience(prog, u, &key, slot, &next);
+    true
 }
 
 /// A part with no effect of its own is done once every active need of it is
@@ -376,7 +460,8 @@ fn needs_done(prog: &Program, root: &Node, at: &[usize]) -> bool {
     let n = node_at(root, at);
     prog.needs.iter().filter(|need| need.owner == n.kind).all(|need| {
         let active = need.cond.as_ref().is_none_or(|c| eval(prog, root, at, c) == T::Yes);
-        !active || current(n, &need.part).is_some_and(|i| n.parts[i].status == Status::Done)
+        let want = if prog.slot(&need.part).is_some() { n.slots.get(&need.part).cloned() } else { Some(need.part.clone()) };
+        !active || want.and_then(|w| current(n, &w)).is_some_and(|i| n.parts[i].status == Status::Done)
     })
 }
 
@@ -620,6 +705,11 @@ fn locate(root: &Node, from: &[usize], steps: &[Step]) -> Option<Vec<usize>> {
                 let i = current(node_at(root, &at), k)?;
                 at.push(i);
             }
+            Step::Slot(s) => {
+                let n = node_at(root, &at);
+                let i = current(n, n.slots.get(s)?)?;
+                at.push(i);
+            }
             Step::Attr(_) => return None,
         }
     }
@@ -643,6 +733,11 @@ fn ask_for(label: &str, root: &Node, at: &[usize], e: &Effect) -> Ask {
         key: request_key(label, root, at),
         sends,
     }
+}
+
+/// A node's key: the unit's label for the root, its request key for a part.
+fn node_key(label: &str, root: &Node, at: &[usize]) -> String {
+    if at.is_empty() { label.to_string() } else { request_key(label, root, at) }
 }
 
 /// `O1/CustomsForm#1/Declaration#1`: the unit, then each part from the root

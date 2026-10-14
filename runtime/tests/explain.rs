@@ -21,6 +21,7 @@ fn explain_says_why_an_order_waits() {
         "{text}"
     );
     assert!(text.contains("  Shipment: waiting: rule hold"), "{text}");
+    assert!(text.contains("  Delivery: Shipment (1 of 2)"), "{text}");
     assert!(text.contains("    Declaration: requested from forms"), "{text}");
 }
 

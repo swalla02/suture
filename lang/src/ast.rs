@@ -107,6 +107,23 @@ pub struct KindDecl {
     pub at: Loc,
 }
 
+/// `Delivery is Shipment or Refund` (appendix D).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SlotDecl {
+    pub name: String,
+    pub alternatives: Vec<String>,
+    pub at: Loc,
+}
+
+/// `prefer Delivery: Shipment, then Refund after 2 days`: each alternative,
+/// with the patience written after it (how long to wait on the one before).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreferDecl {
+    pub choice: String,
+    pub order: Vec<(String, Option<u64>)>,
+    pub at: Loc,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NeedsDecl {
     pub owner: String,
@@ -182,4 +199,6 @@ pub struct Source {
     pub defines: Vec<DefineDecl>,
     pub goals: Vec<GoalDecl>,
     pub reactions: Vec<ReactionDecl>,
+    pub slots: Vec<SlotDecl>,
+    pub prefers: Vec<PreferDecl>,
 }

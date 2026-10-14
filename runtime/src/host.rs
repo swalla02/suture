@@ -28,6 +28,8 @@ pub struct Host {
     started: u64,
     /// The goal timers already started, by unit and goal.
     goal_timers: BTreeSet<(String, u32)>,
+    /// The patience timers already started, by id.
+    patience_timers: BTreeSet<String>,
     /// Requests whose deadline passed, so every late answer is noted, not an error.
     expired: Vec<Ask>,
 }
@@ -38,6 +40,8 @@ enum Timer {
     Deadline(HoleId),
     /// A goal's deadline for a unit.
     Goal(String, u32),
+    /// A slot's patience, for a unit (appendix D.3.5).
+    Patience(String, String),
 }
 
 impl Host {
@@ -54,6 +58,7 @@ impl Host {
             timers: BTreeMap::new(),
             started: 0,
             goal_timers: BTreeSet::new(),
+            patience_timers: BTreeSet::new(),
             expired: vec![],
         }
     }
@@ -163,16 +168,31 @@ impl Host {
                 if !applies || unit.met.contains(&goal) || unit.alerts.contains(&goal) {
                     return Ok(());
                 }
-                let (to, next) = (b.var(), b.var());
-                b.agent(self.kinds.msg, Msg::GoalDue { goal }.to_value(), to, &[next]);
-                let net = b.finish().map_err(|e| e.to_string())?;
-                self.machine.inject(Injection::new(net).at_label(to, &label).new_hole(next, Some(&label))).map_err(|e| e.to_string())?;
-                self.machine.run(None);
-                let noted = self.note(&label);
-                let pumped = self.pump();
-                noted.and(pumped)
+                self.tell(&label, &Msg::GoalDue { goal })
+            }
+            Timer::Patience(label, id) => {
+                let Some(unit) = self.unit(&label) else { return Ok(()) };
+                if interp::patience_due(&self.prog, &unit, &id).is_none() {
+                    return Ok(());
+                }
+                self.tell(&label, &Msg::Patience { id })
             }
         }
+    }
+
+    /// Delivers a message from the host straight to a unit's mailbox, as a
+    /// journaled step, and notes what the unit did.
+    fn tell(&mut self, label: &str, msg: &Msg) -> Result<(), String> {
+        let sig = self.machine.program().sig.clone();
+        let mut b = NetBuilder::new(&sig);
+        let (to, next) = (b.var(), b.var());
+        b.agent(self.kinds.msg, msg.to_value(), to, &[next]);
+        let net = b.finish().map_err(|e| e.to_string())?;
+        self.machine.inject(Injection::new(net).at_label(to, label).new_hole(next, Some(label))).map_err(|e| e.to_string())?;
+        self.machine.run(None);
+        let noted = self.note(label);
+        let pumped = self.pump();
+        noted.and(pumped)
     }
 
     /// A unit's current state, read from the graph.
@@ -248,6 +268,11 @@ impl Host {
         };
         for n in &unit.notes {
             self.trace.push(format!("{label:<4}{n}"));
+        }
+        for (id, secs) in &unit.timers {
+            if self.patience_timers.insert(id.clone()) {
+                self.schedule(self.now + secs, Timer::Patience(label.to_string(), id.clone()));
+            }
         }
         for &g in &unit.matched {
             let within = self.prog.goals.get(g as usize).and_then(|x| x.within_secs);

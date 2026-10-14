@@ -49,6 +49,9 @@ fn build(dir: &Path) -> Result<bool, String> {
         prog.rules.len(),
         prog.goals.len()
     );
+    for w in &prog.warnings {
+        println!("warning: {w}");
+    }
     for r in &prog.rules {
         println!("\nrule {}: {}", r.name, r.source);
         println!("  understood as:   {}", r.formula);

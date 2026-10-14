@@ -5,7 +5,7 @@
 use crate::ast::{self, CmpOp, Head, Literal, Loc, NounPhrase, Source, Term, TypeName};
 use crate::ir::{
     Action, Attr, Body, Cond, Define, Effect, Goal, Kind, Lit, Need, Op, Operand, OwnerRef, Path, Program, Reaction,
-    Rule, Step, Ty, TIMED_OUT,
+    Rule, Slot, Step, Ty, TIMED_OUT,
 };
 use crate::lex::Error;
 use crate::readback;
@@ -75,9 +75,13 @@ impl Checker {
             defines: vec![],
             goals: vec![],
             reactions: vec![],
+            slots: vec![],
+            warnings: vec![],
         };
         self.kinds(src, &mut p);
+        self.slots(src, &mut p);
         let conds = self.owners(src, &mut p);
+        self.prefers(src, &mut p);
         self.effects(src, &mut p);
         self.state_names(src, &p);
         self.defines(src, &mut p);
@@ -152,31 +156,23 @@ impl Checker {
                 continue;
             }
             for part in &n.parts {
-                let Some(decl) = src.kinds.iter().find(|k| k.name == *part) else {
-                    self.errors.push(err(&n.at, format!("unknown kind {part}")));
-                    continue;
-                };
-                let owner_type = TypeName::Kind(n.owner.clone());
-                let refs: Vec<&str> = decl.attrs.iter().filter(|a| a.ty == owner_type).map(|a| a.name.as_str()).collect();
-                if refs.len() != 1 {
-                    self.errors.push(err(
-                        &n.at,
-                        format!("{part} needs exactly one attribute of kind {} to name its owner; it has {}", n.owner, refs.len()),
-                    ));
-                    continue;
-                }
                 if p.needs.iter().any(|x| x.owner == n.owner && x.part == *part) {
                     self.errors.push(err(&n.at, format!("{} needs {part} twice; give one need, with its conditions joined by `or`", n.owner)));
                     continue;
                 }
-                let kind = p.kinds.iter_mut().find(|k| k.name == *part).expect("declared kinds are compiled");
-                if let Some(o) = &kind.owner {
-                    if o.kind != n.owner {
-                        self.errors.push(err(&n.at, format!("{part} is already a part of {}; a part has one owner", o.kind)));
+                if let Some(i) = p.slots.iter().position(|s| s.name == *part) {
+                    if !p.slots[i].owner.is_empty() && p.slots[i].owner != n.owner {
+                        self.errors.push(err(&n.at, format!("the slot {part} is already needed by {}; a slot has one owner", p.slots[i].owner)));
                         continue;
                     }
+                    p.slots[i].owner = n.owner.clone();
+                    let alternatives = p.slots[i].alternatives.clone();
+                    if !alternatives.iter().all(|a| self.link(src, p, &n.at, &n.owner, a)) {
+                        continue;
+                    }
+                } else if !self.link(src, p, &n.at, &n.owner, part) {
+                    continue;
                 }
-                kind.owner = Some(OwnerRef { attr: refs[0].to_string(), kind: n.owner.clone() });
                 if let Some(c) = &n.cond {
                     conds.push((p.needs.len(), n.owner.clone(), &n.at, c));
                 }
@@ -208,6 +204,81 @@ impl Checker {
             }
         }
         conds
+    }
+
+    /// Makes `part` a part of `owner`: it must name its owner with exactly one
+    /// attribute, and a part has one owner.
+    fn link(&mut self, src: &Source, p: &mut Program, at: &Loc, owner: &str, part: &str) -> bool {
+        let Some(decl) = src.kinds.iter().find(|k| k.name == part) else {
+            self.errors.push(err(at, format!("unknown kind {part}")));
+            return false;
+        };
+        let owner_type = TypeName::Kind(owner.to_string());
+        let refs: Vec<&str> = decl.attrs.iter().filter(|a| a.ty == owner_type).map(|a| a.name.as_str()).collect();
+        if refs.len() != 1 {
+            self.errors.push(err(at, format!("{part} needs exactly one attribute of kind {owner} to name its owner; it has {}", refs.len())));
+            return false;
+        }
+        let kind = p.kinds.iter_mut().find(|k| k.name == part).expect("declared kinds are compiled");
+        if let Some(o) = &kind.owner {
+            if o.kind != owner {
+                self.errors.push(err(at, format!("{part} is already a part of {}; a part has one owner", o.kind)));
+                return false;
+            }
+        }
+        kind.owner = Some(OwnerRef { attr: refs[0].to_string(), kind: owner.to_string() });
+        true
+    }
+
+    /// Slots, before needs give them owners (appendix D.2).
+    fn slots(&mut self, src: &Source, p: &mut Program) {
+        for s in &src.slots {
+            if p.kind(&s.name).is_some() || p.slot(&s.name).is_some() {
+                self.errors.push(err(&s.at, format!("{} is already declared; a slot needs a name of its own", s.name)));
+                continue;
+            }
+            let n = s.alternatives.len();
+            p.slots.push(Slot { name: s.name.clone(), owner: String::new(), alternatives: s.alternatives.clone(), patience: vec![None; n] });
+        }
+    }
+
+    /// Each slot's `prefer` order and patience, or a warning without one.
+    fn prefers(&mut self, src: &Source, p: &mut Program) {
+        for (s, decl) in p.slots.iter().zip(&src.slots) {
+            if s.owner.is_empty() {
+                self.errors.push(err(&decl.at, format!("no kind needs the slot {}", s.name)));
+            }
+            for a in &s.alternatives {
+                if p.needs.iter().any(|n| n.owner == s.owner && n.part == *a) {
+                    self.errors.push(err(&decl.at, format!("{a} is an alternative of {}, so {} cannot also need it directly", s.name, s.owner)));
+                }
+            }
+        }
+        for pr in &src.prefers {
+            let Some(i) = p.slots.iter().position(|s| s.name == pr.choice) else {
+                self.errors.push(err(&pr.at, format!("prefer {}: there is no slot called {}", pr.choice, pr.choice)));
+                continue;
+            };
+            let s = &p.slots[i];
+            let mut listed: Vec<&String> = pr.order.iter().map(|(k, _)| k).collect();
+            listed.sort();
+            let mut want: Vec<&String> = s.alternatives.iter().collect();
+            want.sort();
+            if listed != want {
+                self.errors.push(err(&pr.at, format!("prefer {} must list each of {} once", s.name, s.alternatives.join(", "))));
+                continue;
+            }
+            let alternatives: Vec<String> = pr.order.iter().map(|(k, _)| k.clone()).collect();
+            let mut patience: Vec<Option<u64>> = pr.order.iter().skip(1).map(|(_, after)| *after).collect();
+            patience.push(None);
+            p.slots[i].alternatives = alternatives;
+            p.slots[i].patience = patience;
+        }
+        for s in &p.slots {
+            if !src.prefers.iter().any(|pr| pr.choice == s.name) {
+                p.warnings.push(format!("{} has no `prefer`; its alternatives are tried in the order declared: {}", s.name, s.alternatives.join(", ")));
+            }
+        }
     }
 
     fn effects(&mut self, src: &Source, p: &mut Program) {
@@ -438,7 +509,16 @@ impl Checker {
                 steps.push(Step::Attr(w.clone()));
                 return Some((Path { steps }, End::Value(a.ty)));
             }
-            if p.needs.iter().any(|n| n.owner == cur && n.part == *w) {
+            if p.slot(w).is_some() && p.needs.iter().any(|n| n.owner == cur && n.part == *w) {
+                if np.steps.get(i + 1).is_some() {
+                    let first = p.slot(w).map(|s| s.alternatives[0].clone()).unwrap_or_default();
+                    self.errors.push(err(at, format!("`{}`: {w} is a slot; name its alternative, such as its {first}", show(np))));
+                    return None;
+                }
+                steps.push(Step::Slot(w.clone()));
+                return Some((Path { steps }, End::Node(w.clone())));
+            }
+            if p.has_part(&cur, w) {
                 steps.push(Step::Part(w.clone()));
                 cur = w.clone();
                 continue;
@@ -467,7 +547,7 @@ impl Checker {
                     self.errors.push(err(at, format!("`{}` is a value; only a node has parts", show(owner))));
                     return None;
                 };
-                if !p.needs.iter().any(|n| n.owner == k && n.part == *kind) {
+                if !p.has_part(&k, kind) {
                     self.errors.push(err(at, format!("a {k} does not need a {kind}")));
                     return None;
                 }

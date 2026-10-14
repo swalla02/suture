@@ -362,3 +362,52 @@ when a Shipment is timed out: its Order is cancelled
     assert!(has_note(&u, "reaction held: rule late"), "{:?}", u.notes);
     assert!(violated(&p, &u.root).is_none());
 }
+
+#[test]
+fn a_slot_fills_with_its_first_preferred_alternative() {
+    let p = shop();
+    let (u, _) = order(&p, "J1", "Japan", 80);
+    assert_eq!(u.root.slots.get("Delivery").map(String::as_str), Some("Shipment"));
+    assert!(has_part(&u, "Shipment"));
+    assert!(has_note(&u, "Delivery: trying Shipment"), "{:?}", u.notes);
+    assert_eq!(u.timers, vec![("J1/Delivery:Shipment".to_string(), 2 * 86_400)]);
+}
+
+#[test]
+fn three_lost_parcels_move_the_delivery_to_a_refund() {
+    let p = shop();
+    let (u, asks) = order(&p, "J1", "Japan", 80);
+    let (mut u, mut asks) = answer(&p, &u, ask(&asks, "payments"), "captured", &[]);
+    for _ in 0..3 {
+        let parcel = ask(&asks, "carriers").clone();
+        (u, asks) = answer(&p, &u, &parcel, "lost", &[]);
+    }
+    assert_eq!(u.root.slots.get("Delivery").map(String::as_str), Some("Refund"));
+    assert!(has_note(&u, "Delivery: Shipment failed, trying Refund"), "{:?}", u.notes);
+    let refund = ask(&asks, "payments").clone();
+    assert_eq!(refund.key, "J1/Refund#1");
+    let (u, _) = answer(&p, &u, &refund, "refunded", &[]);
+    assert!(root_is(&p, &u, "settled"), "{:?}", u.notes);
+    assert!(has_note(&u, "goal met"), "{:?}", u.notes);
+}
+
+#[test]
+fn patience_moves_an_untouched_alternative_on() {
+    let p = shop();
+    let (u, asks) = order(&p, "O1", "France", 120);
+    let (u, _) = answer(&p, &u, ask(&asks, "payments"), "captured", &[]);
+    let (u, asks) = run(&p, &u, Msg::Patience { id: "O1/Delivery:Shipment".into() });
+    assert!(has_note(&u, "Delivery: no Shipment after 2 days, trying Refund"), "{:?}", u.notes);
+    assert!(!has_part(&u, "Shipment"), "the untouched Shipment is withdrawn");
+    assert_eq!(ask(&asks, "payments").key, "O1/Refund#1");
+}
+
+#[test]
+fn patience_does_not_abandon_an_alternative_that_went_out() {
+    let p = shop();
+    let (u, asks) = order(&p, "J1", "Japan", 80);
+    let (u, _) = answer(&p, &u, ask(&asks, "payments"), "captured", &[]);
+    let (after, sent) = run(&p, &u, Msg::Patience { id: "J1/Delivery:Shipment".into() });
+    assert_eq!(after.root, u.root);
+    assert!(after.notes.is_empty() && sent.is_empty(), "{:?}", after.notes);
+}

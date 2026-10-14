@@ -24,7 +24,7 @@ fn run_passes_the_shop_scenarios() {
     assert!(out.contains("payments: no answer within 30 seconds"), "{out}");
     assert!(out.contains("alert: not met within 3 days"), "{out}");
     assert!(out.contains("ignored a late answer for L1/Payment#1"), "{out}");
-    assert_eq!(out.matches("  passed").count(), 6, "{out}");
+    assert_eq!(out.matches("  passed").count(), 8, "{out}");
 }
 
 #[test]
@@ -39,4 +39,15 @@ fn bad_arguments_print_the_usage() {
     let (ok, out) = suture(&["frobnicate"]);
     assert!(!ok);
     assert!(out.contains("usage:"), "{out}");
+}
+
+#[test]
+fn build_prints_warnings() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("warn");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "module w version 1, currency EUR\nkind O { }\nkind A { o: O }\nkind B { o: O }\nO needs D\nD is A or B\n";
+    std::fs::write(dir.join("w.st"), src).unwrap();
+    let (ok, out) = suture(&["build", dir.to_str().unwrap()]);
+    assert!(ok, "{out}");
+    assert!(out.contains("warning: D has no `prefer`"), "{out}");
 }

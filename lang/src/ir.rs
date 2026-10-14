@@ -15,6 +15,20 @@ pub struct Program {
     pub defines: Vec<Define>,
     pub goals: Vec<Goal>,
     pub reactions: Vec<Reaction>,
+    pub slots: Vec<Slot>,
+    /// What `suture build` warns about; the program still runs.
+    pub warnings: Vec<String>,
+}
+
+/// A slot an owner fills with one of its alternatives (appendix D).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Slot {
+    pub name: String,
+    pub owner: String,
+    /// In `prefer` order.
+    pub alternatives: Vec<String>,
+    /// For each alternative, how long to wait on it before moving on, if at all.
+    pub patience: Vec<Option<u64>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,6 +149,8 @@ pub struct Path {
 pub enum Step {
     Attr(String),
     Part(String),
+    /// A slot: its current alternative's current part (appendix D.3.1).
+    Slot(String),
     Owner,
 }
 
@@ -174,6 +190,18 @@ impl Program {
         self.kinds.iter().find(|k| k.name == name)
     }
 
+    pub fn slot(&self, name: &str) -> Option<&Slot> {
+        self.slots.iter().find(|s| s.name == name)
+    }
+
+    /// Whether `owner` has parts of kind `part`: needed directly, or as an
+    /// alternative of a slot it needs.
+    pub fn has_part(&self, owner: &str, part: &str) -> bool {
+        self.needs.iter().any(|n| {
+            n.owner == owner && (n.part == part || self.slot(&n.part).is_some_and(|s| s.alternatives.iter().any(|a| a == part)))
+        })
+    }
+
     pub fn effect_of(&self, kind: &str) -> Option<&Effect> {
         self.effects.iter().find(|e| e.kind == kind)
     }
@@ -183,6 +211,9 @@ impl Program {
     /// them), `done` and `failed`.
     pub fn states(&self, kind: &str) -> Vec<String> {
         let mut out: Vec<String> = vec![];
+        if self.slot(kind).is_some() {
+            return vec!["done".into(), "failed".into()];
+        }
         if let Some(k) = self.kind(kind) {
             out.extend(k.attrs.iter().filter(|a| a.ty == Ty::Bool).map(|a| a.name.clone()));
         }

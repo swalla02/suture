@@ -26,7 +26,7 @@ scenario "a payment service that never answers":
   when   a new Order S1 with country Japan and total 60 EUR
   and    90 seconds pass
   expect S1's Payment is timed out
-  expect S1's Shipment is not sent
+  expect S1 is not settled
   when   3 days pass
   expect an alert for S1
   expect S1 is not paid
@@ -46,3 +46,21 @@ scenario "an answer after the time-out":
   and    payments answers captured
   expect L1's Payment is timed out
   expect L1 is not paid
+
+scenario "three lost parcels":
+  when   a new Order P1 with country Japan and total 90 EUR
+  and    payments answers captured
+  and    carriers answers lost
+  and    carriers answers lost
+  and    carriers answers lost
+  and    payments answers refunded
+  expect P1's Refund is refunded
+  expect P1 is settled
+
+scenario "a customs form that never comes":
+  when   a new Order F2 with country France and total 30 EUR
+  and    payments answers captured
+  and    2 days pass
+  and    payments answers refunded
+  expect F2's Refund is refunded
+  expect F2 is settled

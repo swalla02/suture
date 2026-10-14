@@ -16,7 +16,7 @@ fn scenarios() -> Vec<Scenario> {
 fn the_shop_scenarios_pass() {
     let p = shop();
     let all = scenarios();
-    assert_eq!(all.len(), 6);
+    assert_eq!(all.len(), 8);
     for sc in all {
         let r = run(&p, &sc);
         assert!(r.passed(), "{}: {:?}\n{}", r.title, r.failures, r.host.trace.join("\n"));
@@ -59,7 +59,7 @@ fn expectations_name_real_states() {
 #[test]
 fn time_passes_in_scenarios() {
     let p = shop();
-    let src = "scenario \"silent payments\":\n  when   a new Order J1 with country Japan and total 80 EUR\n  and    90 seconds pass\n  expect J1's Payment is timed out\n  expect no alert for J1\n  when   3 days pass\n  expect an alert for J1\n  expect J1's Shipment is not sent\n";
+    let src = "scenario \"silent payments\":\n  when   a new Order J1 with country Japan and total 80 EUR\n  and    90 seconds pass\n  expect J1's Payment is timed out\n  expect no alert for J1\n  when   3 days pass\n  expect an alert for J1\n  expect J1 is not settled\n";
     let sc = &parse_scenarios("t.scenario", src).unwrap()[0];
     let r = run(&p, sc);
     assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));

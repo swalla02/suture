@@ -131,7 +131,7 @@ fn step_names(p: &Program, kind: &str, path: &Path) -> Vec<(String, bool)> {
     for s in &path.steps {
         match s {
             Step::Attr(a) => out.push((a.clone(), false)),
-            Step::Part(k) => {
+            Step::Part(k) | Step::Slot(k) => {
                 out.push((k.clone(), true));
                 cur = k.clone();
             }

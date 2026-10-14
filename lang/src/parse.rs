@@ -27,9 +27,11 @@ fn statement(st: &Stmt, out: &mut Source) -> Result<(), Error> {
         "define" => define(st, at, out),
         "desired" => goal(st, at, out),
         "when" => reaction(st, at, out),
+        "prefer" => prefer(st, at, out),
+        w if w.starts_with(char::is_uppercase) && matches!(st.lines[0].get(1), Some(Tok::Word(x)) if x == "is") => slot(st, at, out),
         w if w.starts_with(char::is_uppercase) => needs(st, at, out),
         _ => Err(st.error(format!(
-            "unknown statement `{first}`: expected module, kind, effect, rule, define, desired, when, or `Kind needs …`"
+            "unknown statement `{first}`: expected module, kind, effect, rule, define, desired, when, prefer, `Kind needs …` or `Slot is …`"
         ))),
     }
 }
@@ -154,6 +156,48 @@ fn needs(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     let cond = if c.eat_word("while") { Some(condition(&mut c)?) } else { None };
     c.expect_end()?;
     out.needs.push(NeedsDecl { owner, parts, cond, at });
+    Ok(())
+}
+
+/// `Delivery is Shipment or Refund [or …]`
+fn slot(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
+    let toks = st.tokens();
+    let mut c = Cursor::new(&toks, &st.file, st.line);
+    let name = c.kind_name()?;
+    c.expect_word("is")?;
+    let mut alternatives = vec![c.kind_name()?];
+    c.expect_word("or")?;
+    alternatives.push(c.kind_name()?);
+    while c.eat_word("or") {
+        alternatives.push(c.kind_name()?);
+    }
+    c.expect_end()?;
+    out.slots.push(SlotDecl { name, alternatives, at });
+    Ok(())
+}
+
+/// `prefer Delivery: Shipment, then Refund after 2 days`
+fn prefer(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
+    let toks = st.tokens();
+    let mut c = Cursor::new(&toks, &st.file, st.line);
+    c.expect_word("prefer")?;
+    let choice = c.kind_name()?;
+    c.expect_sym(':')?;
+    let criterion = |c: &mut Cursor| {
+        if c.is_word("lowest") || c.is_word("highest") || c.is_word("those") {
+            return Err(c.error("`lowest`, `highest` and `those` choose among shared entities, which come in slice 4"));
+        }
+        c.kind_name()
+    };
+    let mut order = vec![(criterion(&mut c)?, None)];
+    while c.eat_sym(',') {
+        c.expect_word("then")?;
+        let k = criterion(&mut c)?;
+        let after = if c.eat_word("after") { Some(duration(&mut c)?) } else { None };
+        order.push((k, after));
+    }
+    c.expect_end()?;
+    out.prefers.push(PreferDecl { choice, order, at });
     Ok(())
 }
 
