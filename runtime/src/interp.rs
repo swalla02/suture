@@ -92,12 +92,14 @@ pub fn step(prog: &Program, unit: &Unit, msg: &Msg) -> Outcome {
     }
     settle(prog, &mut u, &mut asks);
     goals(prog, &mut u);
-    if let (Some(r), Msg::Answer { key, .. }) = (violated(prog, &u.root), msg) {
+    if let (Some(r), Msg::Answer { key, outcome, .. }) = (violated(prog, &u.root), msg) {
         // A consequence no pass guards, such as a withdrawn part, would
         // break a rule: refuse the answer and ask again (appendix B.3.4).
+        // A deadline is not an answer, so nothing is asked again for it.
         let mut kept = unit.clone();
         kept.notes = vec![format!("refused by rule {}: {}", r.name, r.paraphrase)];
         let again = open_request(&unit.root, &unit.label, key)
+            .filter(|_| outcome != TIMED_OUT)
             .and_then(|at| prog.effect_of(&node_at(&unit.root, &at).kind).map(|e| ask_for(&unit.label, &unit.root, &at, e)));
         return Outcome { unit: kept, asks: again.into_iter().collect() };
     }
@@ -184,9 +186,18 @@ fn deadline(prog: &Program, u: &mut Unit, key: &str, asks: &mut Vec<Ask>) -> Res
     n.status = Status::Failed;
     n.outcome = Some(TIMED_OUT.to_string());
     u.notes.push(format!("{kind} timed out after {ATTEMPTS} sends"));
+    // A time-out is a fact: it is always recorded. Reactions that would
+    // break a rule are held back instead.
+    let mut t = u.root.clone();
     let mut notes = vec![];
-    react(prog, &mut u.root, &at, &kind, TIMED_OUT, &mut notes);
-    u.notes.extend(notes);
+    react(prog, &mut t, &at, &kind, TIMED_OUT, &mut notes);
+    match newly_broken(prog, &u.root, &t) {
+        Some(r) => u.notes.push(format!("reaction held: rule {}: {}", r.name, r.paraphrase)),
+        None => {
+            u.root = t;
+            u.notes.extend(notes);
+        }
+    }
     Ok(())
 }
 

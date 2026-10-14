@@ -148,3 +148,14 @@ fn an_adapter_cannot_report_timed_out() {
     assert!(err.contains("only the runtime reports `timed out`"), "{err}");
     assert_eq!(h.pending().len(), 1);
 }
+
+#[test]
+fn every_late_answer_is_ignored() {
+    let mut h = Host::new(shop());
+    japanese(&mut h, "J1");
+    h.pass(90).unwrap();
+    for _ in 0..3 {
+        h.answer("payments", "captured", &[], None).unwrap();
+    }
+    assert_eq!(h.trace.iter().filter(|l| l.contains("ignored a late answer for J1/Payment#1")).count(), 3);
+}

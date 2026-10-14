@@ -875,6 +875,7 @@ Slice 1 parses `within` but never acts on it. Slice 2 makes time real: a request
 3. **Deadlines.** When the host hands a request to its adapter, it starts a timer at now + the effect's `within`.
    - If the timer fires and the part is still requested, the request is sent again with the same idempotency key, and the trace notes the send number ("send 2 of 3").
    - After 3 sends with no answer, the part fails with outcome `timed out`. It is never replaced automatically (D9), so its need stays unmet, and the goal alert explains it.
+   - A time-out is a fact, so it is always recorded. A `when … is timed out` reaction that would break a rule is held back, and the trace says so (`reaction held: rule …`). Nothing is ever asked again for a time-out.
    - An answer that arrives after its part timed out has no open request: it is ignored with a note, as in slice 1.
    - An answer to a request that was sent again is an answer to that request: same key, any send.
 4. **Goal deadlines.** A goal's deadline runs from the step in which its entity first matched the goal's subject (§3.3).

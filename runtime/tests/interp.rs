@@ -328,3 +328,37 @@ fn a_goal_met_after_its_alert_is_noted_late() {
     let (u, _) = answer(&p, &u, ask(&asks, "carriers"), "delivered", &[]);
     assert!(has_note(&u, "goal met late: every Order"), "{:?}", u.notes);
 }
+
+#[test]
+fn a_time_out_is_recorded_even_when_its_reaction_would_break_a_rule() {
+    let p = program(
+        "kind Order { total: Money, cancelled: Bool = no }
+kind Payment { order: Order }
+kind Shipment { order: Order }
+Order needs Payment, Shipment
+effect capture Payment via payments within 30 seconds
+  sends    the order's total
+  reports  captured | fails with declined
+effect send Shipment via carriers within 1 hour
+  sends    the order's total
+  marks    sent
+  reports  delivered | fails with lost
+rule paid: no Order has a Shipment that is sent unless its Payment is captured
+rule late: no cancelled Order has a Shipment that is sent
+when a Shipment is timed out: its Order is cancelled
+",
+    );
+    let (u, asks) = placed(&p, 50);
+    let (mut u, asks) = answer(&p, &u, ask(&asks, "payments"), "captured", &[]);
+    let ship = ask(&asks, "carriers").clone();
+    let mut sent = vec![];
+    for _ in 0..3 {
+        (u, sent) = time_out(&p, &u, &ship);
+    }
+    assert!(sent.is_empty(), "no fourth send: {sent:?}");
+    let s = u.root.parts.iter().find(|n| n.kind == "Shipment").unwrap();
+    assert_eq!(s.outcome.as_deref(), Some(TIMED_OUT));
+    assert!(!root_is(&p, &u, "cancelled"));
+    assert!(has_note(&u, "reaction held: rule late"), "{:?}", u.notes);
+    assert!(violated(&p, &u.root).is_none());
+}

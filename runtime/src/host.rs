@@ -28,7 +28,7 @@ pub struct Host {
     started: u64,
     /// The goal timers already started, by unit and goal.
     goal_timers: BTreeSet<(String, u32)>,
-    /// Requests whose deadline passed, so a late answer is noted, not an error.
+    /// Requests whose deadline passed, so every late answer is noted, not an error.
     expired: Vec<Ask>,
 }
 
@@ -85,10 +85,9 @@ impl Host {
         }
         let matches = |a: &Ask| a.adapter == adapter && target.is_none_or(|t| a.label == t);
         let Some(i) = self.pending.iter().position(|(a, _)| matches(a)) else {
-            let Some(j) = self.expired.iter().position(matches) else {
+            let Some(ask) = self.expired.iter().rfind(|a| matches(a)).cloned() else {
                 return Err(format!("{adapter} has no pending request{}", target.map(|t| format!(" for {t}")).unwrap_or_default()));
             };
-            let ask = self.expired.remove(j);
             self.trace.push(format!("      {adapter}: {outcome}   ({})", ask.key));
             self.trace.push(format!("{:<4}ignored a late answer for {}: it timed out", ask.label, ask.key));
             return Ok(());
