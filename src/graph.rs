@@ -85,6 +85,8 @@ pub enum GraphError {
     Label(String),
     #[error("ready queue inconsistent: {0}")]
     Ready(String),
+    #[error("effect index inconsistent: {0}")]
+    Outbox(String),
 }
 
 #[derive(Clone, Debug, Default)]

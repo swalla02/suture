@@ -1,7 +1,7 @@
 //! The machine: graph + program + journal. `INTERACT` is the only internal
 //! computation; the host acts through `INJECT`, the outbox, and `COMMIT`.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
@@ -151,6 +151,8 @@ pub struct Stats {
     pub created: u64,
     pub max_agents: usize,
     pub per_rule: BTreeMap<String, u64>,
+    /// Queue entries examined by `take_new_effects`, stale ones included.
+    pub effects_examined: u64,
 }
 
 /// A resolved wire end during installation: a port of a new agent, or an
@@ -190,6 +192,10 @@ pub struct Machine {
     stats: Stats,
     sched: SchedulerKind,
     rng: Rng,
+    /// Effect holes still waiting for an answer: the outbox index.
+    pending_effects: BTreeSet<HoleId>,
+    /// Effect holes created since the last `take_new_effects`.
+    new_effects: Vec<HoleId>,
 }
 
 fn norm(a: AgentId, b: AgentId) -> (AgentId, AgentId) {
@@ -236,6 +242,8 @@ impl Machine {
             stats: Stats::default(),
             sched: SchedulerKind::Fifo,
             rng: Rng::new(0),
+            pending_effects: BTreeSet::new(),
+            new_effects: Vec::new(),
         };
         let header =
             Record::Header { program: m.prog.name().to_string(), version: m.prog.version(), format: FORMAT };
@@ -299,26 +307,47 @@ impl Machine {
     }
 
     /// Pending effects (effect agents still waiting at their outbox hole),
-    /// sorted by hole identity.
+    /// sorted by hole identity. Reads the outbox index, never the whole
+    /// graph; hosts that poll should use [`Machine::take_new_effects`].
     pub fn outbox(&self) -> Vec<EffectView> {
-        self.graph
-            .holes_sorted()
-            .into_iter()
-            .filter_map(|(h, hole)| {
-                let HoleOrigin::Effect { agent } = hole.origin else { return None };
-                if hole.peer != Endpoint::Port(agent, 0) {
-                    return None;
-                }
-                let a = self.graph.agent(agent)?;
-                Some(EffectView {
-                    agent,
-                    hole: h,
-                    kind: a.kind,
-                    kind_name: self.prog.sig.kind(a.kind).name.clone(),
-                    payload: a.payload.clone(),
-                })
-            })
-            .collect()
+        self.pending_effects.iter().filter_map(|&h| self.effect_view(h)).collect()
+    }
+
+    /// The effects created since the last call that are still pending,
+    /// sorted by hole identity. Examines only those queue entries (counted in
+    /// `Stats::effects_examined`), however many effects are pending.
+    pub fn take_new_effects(&mut self) -> Vec<EffectView> {
+        let mut batch = std::mem::take(&mut self.new_effects);
+        self.stats.effects_examined += batch.len() as u64;
+        batch.sort();
+        batch.into_iter().filter(|h| self.pending_effects.contains(h)).filter_map(|h| self.effect_view(h)).collect()
+    }
+
+    fn effect_view(&self, h: HoleId) -> Option<EffectView> {
+        let hole = self.graph.hole(h)?;
+        let HoleOrigin::Effect { agent } = hole.origin else { return None };
+        if hole.peer != Endpoint::Port(agent, 0) {
+            return None;
+        }
+        let a = self.graph.agent(agent)?;
+        Some(EffectView {
+            agent,
+            hole: h,
+            kind: a.kind,
+            kind_name: self.prog.sig.kind(a.kind).name.clone(),
+            payload: a.payload.clone(),
+        })
+    }
+
+    /// Indexes a new effect hole and queues it for `take_new_effects`. A host
+    /// that only reads `outbox()` never drains the queue, so the queue is
+    /// pruned to pending effects whenever it outgrows them.
+    fn note_effect(&mut self, h: HoleId) {
+        self.pending_effects.insert(h);
+        self.new_effects.push(h);
+        if self.new_effects.len() > 2 * self.pending_effects.len() + 1024 {
+            self.new_effects.retain(|h| self.pending_effects.contains(h));
+        }
     }
 
     /// Sorted keys of the conserved agents of `class` currently in the graph.
@@ -356,6 +385,17 @@ impl Machine {
         queued.sort();
         if active != queued {
             return Err(GraphError::Ready(format!("active {active:?} vs queued {queued:?}")));
+        }
+        let effects: Vec<HoleId> = self
+            .graph
+            .holes_sorted()
+            .into_iter()
+            .filter(|(_, h)| matches!(h.origin, HoleOrigin::Effect { .. }))
+            .map(|(id, _)| id)
+            .collect();
+        let indexed: Vec<HoleId> = self.pending_effects.iter().copied().collect();
+        if effects != indexed {
+            return Err(GraphError::Outbox(format!("holes {effects:?} vs index {indexed:?}")));
         }
         Ok(())
     }
@@ -587,6 +627,7 @@ impl Machine {
                 let hole = Hole { peer: Endpoint::Port(ids[i], 0), label: None, origin: HoleOrigin::Effect { agent: ids[i] } };
                 self.graph.insert_hole(h, hole);
                 self.graph.set_end(Endpoint::Port(ids[i], 0), Endpoint::Hole(h));
+                self.note_effect(h);
                 self.stats.effects += 1;
             }
         }
@@ -715,6 +756,7 @@ impl Machine {
     fn apply_inject(&mut self, seq: u64, net: &NetData, plan: &InjectPlan) {
         for h in &plan.consumed {
             self.graph.remove_hole(*h);
+            self.pending_effects.remove(h);
         }
         let placeholder = Endpoint::Hole(HoleId(0));
         for (_, h, label) in &plan.created {

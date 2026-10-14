@@ -196,6 +196,10 @@ A rule creates an effect agent `e` with `Emit`. `e.0` is wired to a fresh hole `
 
 - **Dispatch discipline.** A host dispatches an effect only after `COMMIT`. Delivery is at least once. The effect's hole identity is stable across crash and replay (§10), so adapters deduplicate on it.
 - **Authority.** A rule can only emit the effect kinds its authority lists (L6). Adapters must still authorize independently: the provider in Experiment A re-checks residency and keeps its own ledger.
+- **Effect queue.** The machine indexes pending effects by hole and queues each new one.
+  - `take_new_effects()` returns the effects created since its last call that are still pending, sorted by hole. It examines only those entries, counted in `Stats::effects_examined`.
+  - `outbox()` lists every pending effect from the same index, in hole order, without scanning the graph.
+  - After recovery, every pending effect is queued again, so a host dispatches it again. Adapters deduplicate on the hole identity.
 
 ### 8.3 Observation
 

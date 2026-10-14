@@ -173,3 +173,69 @@ impl Policy for NoResultAbove {
         Ok(())
     }
 }
+
+/// Orders waiting on an outside payment: `Place(id) >< Start` emits
+/// `Capture(id)`, with an `Order(id)` waiting on its reply. The host answers
+/// by injecting `Answer` at the effect's hole: `Answer >< Capture` gives
+/// `Paid(id)`, and `Paid >< Order` settles both.
+pub struct Orders {
+    pub prog: Program,
+    pub place: KindId,
+    pub start: KindId,
+    pub capture: KindId,
+    pub order: KindId,
+    pub answer: KindId,
+    pub paid: KindId,
+}
+
+pub fn orders() -> Orders {
+    let mut b = SigBuilder::new("orders", 1);
+    let (ord, pay, res) = (b.polarized("Ord"), b.polarized("Pay"), b.polarized("Res"));
+    let place = b.kind("Place", ord.pos()).payload(ValueType::Int).done();
+    let start = b.kind("Start", ord.neg()).done();
+    let capture = b.kind("Capture", pay.neg()).aux("reply", res.pos()).payload(ValueType::Int).effect().done();
+    let order = b.kind("Order", res.neg()).payload(ValueType::Int).done();
+    let answer = b.kind("Answer", pay.pos()).done();
+    let paid = b.kind("Paid", res.pos()).payload(ValueType::Int).done();
+    let mut t = RuleTable::new();
+    t.def("place", place, start, move |cx| {
+        let id = cx.left().clone();
+        let r = cx.var();
+        cx.effect(capture, id.clone(), &[r]);
+        cx.agent(order, id, r, &[]);
+        Ok(())
+    })
+    .emits(&[capture]);
+    t.def("answer", answer, capture, move |cx| {
+        let [reply] = cx.right_aux();
+        cx.agent(paid, cx.right().clone(), reply, &[]);
+        Ok(())
+    });
+    t.def("settle", paid, order, |_cx| Ok(()));
+    Orders { prog: Program::new(b.build().unwrap(), t).unwrap(), place, start, capture, order, answer, paid }
+}
+
+/// Places orders `first .. first + n` and reduces until quiescent, leaving
+/// one pending `Capture` effect per order.
+pub fn place(m: &mut Machine, o: &Orders, first: i64, n: usize) {
+    let ids: Vec<i64> = (first..first + n as i64).collect();
+    for batch in ids.chunks(10_000) {
+        let mut b = NetBuilder::new(&o.prog.sig);
+        for &id in batch {
+            let v = b.var();
+            b.agent(o.place, id, v, &[]);
+            b.agent(o.start, (), v, &[]);
+        }
+        m.inject(Injection::new(b.finish().unwrap())).unwrap();
+    }
+    m.run(None);
+}
+
+/// Answers the pending effect at `hole` and reduces until quiescent.
+pub fn answer(m: &mut Machine, o: &Orders, hole: HoleId) {
+    let mut b = NetBuilder::new(&o.prog.sig);
+    let v = b.var();
+    b.agent(o.answer, (), v, &[]);
+    m.inject(Injection::new(b.finish().unwrap()).at_hole(v, hole)).unwrap();
+    m.run(None);
+}
