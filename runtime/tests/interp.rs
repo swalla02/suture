@@ -1,5 +1,5 @@
 use suture_lang::ir::Program;
-use suture_runtime::interp::{in_state, new_unit, step};
+use suture_runtime::interp::{in_state, new_unit, step, violated};
 use suture_runtime::state::{Ask, Msg, Unit, Val};
 
 fn shop() -> Program {
@@ -47,7 +47,7 @@ fn a_french_order_grows_a_customs_form() {
     assert!(has_note(&u, "needs Declaration"), "{:?}", u.notes);
     assert!(has_note(&u, "Shipment waits: rule hold"), "{:?}", u.notes);
     assert_eq!(asks.len(), 2, "{asks:?}");
-    assert_eq!(ask(&asks, "forms").key, "O1/CustomsForm/Declaration#1");
+    assert_eq!(ask(&asks, "forms").key, "O1/CustomsForm#1/Declaration#1");
     assert_eq!(ask(&asks, "payments").sends, vec![("total".to_string(), Val::Money(12000))]);
 }
 
@@ -81,7 +81,7 @@ fn alcohol_opens_the_excise_section_and_the_form_releases_shipping() {
     let data = [("value", Val::Money(10000)), ("contents", Val::Text("alcohol".into()))];
     let (u, asks) = answer(&p, &u, ask(&asks, "forms"), "filled", &data);
     let excise = ask(&asks, "forms").clone();
-    assert_eq!(excise.key, "O1/CustomsForm/Excise#1");
+    assert_eq!(excise.key, "O1/CustomsForm#1/Excise#1");
     let (u, again) = answer(&p, &u, &excise, "filled", &[("licence", Val::Text(String::new()))]);
     assert!(has_note(&u, "refused by rule licence"), "{:?}", u.notes);
     assert_eq!(again, vec![excise.clone()]);
@@ -140,4 +140,126 @@ fn a_lost_parcel_is_shipped_again() {
     let (u, asks) = answer(&p, &u, &first, "lost", &[]);
     assert!(has_note(&u, "Shipment lost: attempt 2"), "{:?}", u.notes);
     assert_eq!(ask(&asks, "carriers").key, "J1/Shipment#2");
+}
+
+fn program(src: &str) -> Program {
+    let files = vec![("t.st".to_string(), format!("module t version 1, currency EUR\n{src}"))];
+    suture_lang::compile(&files).unwrap_or_else(|e| panic!("{e:?}"))
+}
+
+const PAY: &str = "kind Order { total: Money }
+kind Payment { order: Order }
+effect capture Payment via payments within 30 seconds
+  sends    the order's total
+  reports  captured | fails with declined
+";
+
+fn placed(p: &Program, euros: i64) -> (Unit, Vec<Ask>) {
+    let u = new_unit(p, "O1", "Order", &[("total".to_string(), Val::Money(euros * 100))]).unwrap();
+    run(p, &u, Msg::Create)
+}
+
+#[test]
+fn a_part_waits_while_creating_it_would_break_a_rule() {
+    let p = program(&format!(
+        "{PAY}kind Shipment {{ order: Order }}
+Order needs Payment, Shipment
+effect send Shipment via carriers within 7 days
+  sends    the order's total
+  reports  delivered | fails with lost
+rule paid: no Order has a Shipment unless its Payment is captured
+"
+    ));
+    let (u, asks) = placed(&p, 50);
+    assert!(violated(&p, &u.root).is_none());
+    assert!(!has_part(&u, "Shipment"), "{:?}", u.root);
+    assert!(has_note(&u, "Shipment waits: rule paid"), "{:?}", u.notes);
+    let (u, asks) = answer(&p, &u, ask(&asks, "payments"), "captured", &[]);
+    assert!(has_part(&u, "Shipment"), "{:?}", u.notes);
+    ask(&asks, "carriers");
+}
+
+#[test]
+fn a_part_waits_to_be_done_while_a_rule_forbids_it() {
+    let p = program(&format!(
+        "{PAY}kind Form {{ order: Order }}
+kind Entry {{ form: Form }}
+Order needs Payment, Form
+Form needs Entry
+effect ask Entry via forms within 3 days
+  sends    the form's order's total
+  reports  filled
+rule early: no Order has a Form that is done unless its Payment is captured
+"
+    ));
+    let (u, asks) = placed(&p, 50);
+    let pay = ask(&asks, "payments").clone();
+    let (u, _) = answer(&p, &u, ask(&asks, "forms"), "filled", &[]);
+    assert!(violated(&p, &u.root).is_none());
+    assert!(has_note(&u, "Entry filled"), "the outside fact is kept: {:?}", u.notes);
+    assert!(has_note(&u, "Form waits: rule early"), "{:?}", u.notes);
+    let (u, _) = answer(&p, &u, &pay, "captured", &[]);
+    assert!(has_note(&u, "Form done"), "{:?}", u.notes);
+}
+
+#[test]
+fn creating_a_unit_that_breaks_a_rule_is_refused() {
+    let p = program(&format!("{PAY}Order needs Payment\nrule cap: every Order's total is at most 500 EUR\n"));
+    let err = new_unit(&p, "O1", "Order", &[("total".to_string(), Val::Money(60_000))]).unwrap_err();
+    assert!(err.contains("refused by rule cap"), "{err}");
+}
+
+#[test]
+fn a_replaced_owner_gives_its_parts_new_request_keys() {
+    let p = program(&format!(
+        "{PAY}kind Shipment {{ order: Order }}
+kind Label {{ shipment: Shipment }}
+Order needs Payment, Shipment
+Shipment needs Label
+effect print Label via labels within 1 days
+  sends    the shipment's order's total
+  reports  printed
+effect send Shipment via carriers within 7 days
+  sends    the order's total
+  reports  delivered | fails with lost
+"
+    ));
+    let (u, asks) = placed(&p, 50);
+    let label1 = ask(&asks, "labels").clone();
+    assert_eq!(label1.key, "O1/Shipment#1/Label#1");
+    let (u, asks) = answer(&p, &u, &label1, "printed", &[]);
+    let (u, asks) = answer(&p, &u, ask(&asks, "carriers"), "lost", &[]);
+    assert_eq!(ask(&asks, "labels").key, "O1/Shipment#2/Label#1");
+    let (again, sent) = answer(&p, &u, &label1, "printed", &[]);
+    assert_eq!(again.root, u.root, "a duplicate of the first label's answer must not apply to the second");
+    assert!(has_note(&again, "no open request"), "{:?}", again.notes);
+    assert!(sent.is_empty());
+}
+
+#[test]
+fn a_withdrawal_that_would_break_a_rule_refuses_the_answer() {
+    let p = program(
+        "kind Order { total: Money, cancelled: Bool = no }
+kind Payment { order: Order }
+kind Shipment { order: Order }
+Order needs Payment, Shipment while it is not cancelled
+effect capture Payment via payments within 30 seconds
+  sends    the order's total
+  reports  captured | fails with declined
+effect send Shipment via carriers within 7 days
+  sends    the order's total
+  marks    sent
+  reports  delivered | fails with lost
+rule keep: every Order has a Shipment
+rule paid: no Order has a Shipment that is sent unless its Payment is captured
+when a Payment is declined: its Order is cancelled
+",
+    );
+    let (u, asks) = placed(&p, 50);
+    let pay = ask(&asks, "payments").clone();
+    let (after, again) = answer(&p, &u, &pay, "declined", &[]);
+    assert!(violated(&p, &after.root).is_none());
+    assert_eq!(after.root, u.root);
+    assert!(has_note(&after, "refused by rule keep"), "{:?}", after.notes);
+    assert_eq!(again, vec![pay]);
 }

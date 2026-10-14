@@ -106,8 +106,11 @@ pub struct Node {
     pub outcome: Option<String>,
     /// Which attempt of its need this part is, from 1.
     pub attempt: u32,
-    /// The rule its request is waiting on, if any.
+    /// The rule its request is waiting on, if any. A part with no effect uses
+    /// it for the rule that keeps it from being done.
     pub waiting: Option<String>,
+    /// The needs whose next part waits on a rule: the part's kind, and the rule.
+    pub held: BTreeMap<String, String>,
     /// Its parts, every attempt kept, in the order they were created.
     pub parts: Vec<Node>,
 }
@@ -121,16 +124,22 @@ impl Node {
             text(self.outcome.as_deref().unwrap_or("")),
             Value::from(i64::from(self.attempt)),
             text(self.waiting.as_deref().unwrap_or("")),
+            Value::list(self.held.iter().map(|(part, rule)| Value::tuple([text(part), text(rule)]))),
             Value::list(self.parts.iter().map(Node::to_value)),
         ])
     }
 
     fn from_value(v: &Value) -> Result<Node, String> {
-        let [kind, attrs, status, outcome, attempt, waiting, parts] = fields::<7>(v, "node")?;
+        let [kind, attrs, status, outcome, attempt, waiting, held, parts] = fields::<8>(v, "node")?;
         let mut map = BTreeMap::new();
         for a in items(attrs)? {
             let [k, x] = fields::<2>(a, "attribute")?;
             map.insert(string(k)?, Val::from_value(x)?);
+        }
+        let mut held_by = BTreeMap::new();
+        for h in items(held)? {
+            let [part, rule] = fields::<2>(h, "held need")?;
+            held_by.insert(string(part)?, string(rule)?);
         }
         let some = |s: String| if s.is_empty() { None } else { Some(s) };
         Ok(Node {
@@ -140,6 +149,7 @@ impl Node {
             outcome: some(string(outcome)?),
             attempt: u32::try_from(int(attempt)?).map_err(|e| e.to_string())?,
             waiting: some(string(waiting)?),
+            held: held_by,
             parts: items(parts)?.iter().map(Node::from_value).collect::<Result<_, _>>()?,
         })
     }
@@ -219,7 +229,7 @@ pub struct Ask {
     pub kind: String,
     /// The unit the answer goes back to.
     pub label: String,
-    /// The idempotency key: the unit, the part's path and its attempt.
+    /// The idempotency key: the unit, then each part down to this one with its attempt.
     pub key: String,
     pub sends: Vec<(String, Val)>,
 }
@@ -319,6 +329,7 @@ mod tests {
             outcome: None,
             attempt: 1,
             waiting: None,
+            held: BTreeMap::new(),
             parts: vec![],
         };
         let root = Node {
@@ -328,6 +339,7 @@ mod tests {
             outcome: None,
             attempt: 1,
             waiting: Some("hold".into()),
+            held: BTreeMap::from([("Shipment".to_string(), "paid".to_string())]),
             parts: vec![part],
         };
         Unit { label: "O1".into(), root, notes: vec!["placed".into()], met: vec![0] }

@@ -1,5 +1,7 @@
+use suture::Machine;
 use suture_lang::ir::Program;
 use suture_runtime::host::Host;
+use suture_runtime::kernel;
 use suture_runtime::interp::in_state;
 use suture_runtime::state::Val;
 
@@ -53,4 +55,31 @@ fn answers_with_no_pending_request_are_errors_not_panics() {
     assert!(err.contains("payments has no pending request"), "{err}");
     let err = h.create("Payment", "P1", &[]).unwrap_err();
     assert!(err.contains("is a part of Order"), "{err}");
+}
+
+#[test]
+fn a_faulted_step_is_journaled_and_replays() {
+    let mut h = Host::new(shop());
+    french(&mut h);
+    let big = data(&[("value", Val::Money(100)), ("contents", Val::Text("x".repeat(3_600)))]);
+    h.answer("forms", "filled", &big, None).unwrap_err();
+    let (digest, faults) = (h.machine.digest(), h.machine.faults().len());
+    assert_eq!(faults, 1);
+    let (kernel_program, _) = kernel::program(h.prog.clone());
+    let replayed = Machine::recover(kernel_program, h.machine.into_journal()).unwrap();
+    assert_eq!((replayed.digest(), replayed.faults().len()), (digest, faults));
+}
+
+#[test]
+fn an_answer_too_large_to_deliver_keeps_its_request() {
+    let mut h = Host::new(shop());
+    french(&mut h);
+    let huge = data(&[("value", Val::Money(100)), ("contents", Val::Text("x".repeat(5_000)))]);
+    let err = h.answer("forms", "filled", &huge, None).unwrap_err();
+    assert!(err.contains("limit 4096"), "{err}");
+    assert!(!h.trace.iter().any(|l| l.contains("xxxx")), "the trace must not say it was delivered");
+    assert!(h.pending().iter().any(|a| a.adapter == "forms"));
+    let fine = data(&[("value", Val::Money(100)), ("contents", Val::Text("books".into()))]);
+    h.answer("forms", "filled", &fine, None).unwrap();
+    assert!(h.trace.iter().any(|l| l.contains("Declaration filled")), "{:?}", h.trace);
 }

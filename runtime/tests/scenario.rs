@@ -44,3 +44,14 @@ fn impossible_scenario_steps_fail_the_report() {
     assert!(r.failures[1].contains("there is no unit X1"), "{:?}", r.failures);
     assert!(r.failures[2].contains("is a part of Order"), "{:?}", r.failures);
 }
+
+#[test]
+fn expectations_name_real_states() {
+    let p = shop();
+    let src = "scenario \"typos\":\n  when   a new Order D1 with country Japan and total 50 EUR\n  expect D1 is not payed\n  expect D1 is setled\n";
+    let sc = &parse_scenarios("t.scenario", src).unwrap()[0];
+    let r = run(&p, sc);
+    assert_eq!(r.failures.len(), 2, "{:?}", r.failures);
+    assert!(r.failures[0].contains("Order has no state payed"), "{:?}", r.failures);
+    assert!(r.failures[1].contains("Order has no state setled"), "{:?}", r.failures);
+}

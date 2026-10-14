@@ -43,8 +43,9 @@ impl Host {
         let net = b.finish().map_err(|e| e.to_string())?;
         self.machine.inject(Injection::new(net).new_hole(rest, Some(label))).map_err(|e| e.to_string())?;
         self.machine.run(None);
-        self.note(label)?;
-        self.pump()
+        let noted = self.note(label);
+        let pumped = self.pump();
+        noted.and(pumped)
     }
 
     /// The adapter answers its oldest pending request, or the oldest for `target`.
@@ -54,17 +55,19 @@ impl Host {
             .iter()
             .position(|(a, _)| a.adapter == adapter && target.is_none_or(|t| a.label == t))
             .ok_or_else(|| format!("{adapter} has no pending request{}", target.map(|t| format!(" for {t}")).unwrap_or_default()))?;
-        let (ask, hole) = self.pending.remove(i);
-        let shown: Vec<String> = data.iter().map(|(k, v)| format!("{k} {}", v.show(&self.prog.currency))).collect();
-        let tail = if shown.is_empty() { String::new() } else { format!(", {}", shown.join(", ")) };
-        self.trace.push(format!("      {adapter}: {outcome}{tail}   ({})", ask.key));
+        let hole = self.pending[i].1;
         let sig = self.machine.program().sig.clone();
         let mut b = NetBuilder::new(&sig);
         let meet = b.var();
         b.agent(self.kinds.answer, answer_value(outcome, data), meet, &[]);
         let net = b.finish().map_err(|e| e.to_string())?;
         let inj = Injection::new(net).at_hole(meet, hole).key(format!("answer:{:032x}", hole.0));
+        // An answer that cannot be delivered leaves its request waiting (spec §5.5).
         self.machine.inject(inj).map_err(|e| e.to_string())?;
+        let (ask, _) = self.pending.remove(i);
+        let shown: Vec<String> = data.iter().map(|(k, v)| format!("{k} {}", v.show(&self.prog.currency))).collect();
+        let tail = if shown.is_empty() { String::new() } else { format!(", {}", shown.join(", ")) };
+        self.trace.push(format!("      {adapter}: {outcome}{tail}   ({})", ask.key));
         self.pump()
     }
 
@@ -85,23 +88,31 @@ impl Host {
 
     /// Runs until nothing is left to do. Internal messages are routed as they
     /// appear. Then the journal is committed, and only after that are new
-    /// outside requests handed to adapters (`ir-spec.md` §8.2).
+    /// outside requests handed to adapters (`ir-spec.md` §8.2). A step that
+    /// faulted is committed too, so the journal replays it; the first error
+    /// is returned once everything else is done.
     fn pump(&mut self) -> Result<(), String> {
+        let mut first_error = None;
         loop {
             self.machine.run(None);
             let effects = self.machine.take_new_effects();
             let mut outside = vec![];
             for e in &effects {
-                if e.kind == self.kinds.send {
-                    self.route(e.hole, &e.payload)?;
+                let done = if e.kind == self.kinds.send {
+                    self.route(e.hole, &e.payload)
                 } else if e.kind == self.kinds.ask {
-                    outside.push((Ask::from_value(&e.payload)?, e.hole));
+                    Ask::from_value(&e.payload).map(|a| outside.push((a, e.hole)))
+                } else {
+                    Ok(())
+                };
+                if let Err(x) = done {
+                    first_error.get_or_insert(x);
                 }
             }
             self.machine.commit().map_err(|e| e.to_string())?;
             self.pending.extend(outside);
             if effects.is_empty() {
-                return Ok(());
+                return first_error.map_or(Ok(()), Err);
             }
         }
     }

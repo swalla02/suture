@@ -66,6 +66,10 @@ fn values(prog: &Program, pairs: &[(String, Literal)]) -> Result<Vec<(String, Va
 
 fn expect(host: &Host, name: &str, state: &str, negated: bool) -> Result<(), String> {
     let unit = host.unit(name).ok_or_else(|| format!("there is no unit {name}"))?;
+    let states = host.prog.states(&unit.root.kind);
+    if !states.iter().any(|s| s == state) {
+        return Err(format!("{} has no state {state}; its states are {}", unit.root.kind, states.join(", ")));
+    }
     if in_state(&host.prog, &unit.root, &[], state) == negated {
         return Err(format!("expected {name} is {}{state}", if negated { "not " } else { "" }));
     }

@@ -33,7 +33,11 @@ pub fn new_unit(prog: &Program, label: &str, kind: &str, given: &[(String, Val)]
         }
         root.attrs.insert(name.clone(), v.clone());
     }
-    Ok(Unit { label: label.to_string(), root, notes: vec![], met: vec![] })
+    let unit = Unit { label: label.to_string(), root, notes: vec![], met: vec![] };
+    if let Some(r) = violated(prog, &step(prog, &unit, &Msg::Create).unit.root) {
+        return Err(format!("refused by rule {}: {}", r.name, r.paraphrase));
+    }
+    Ok(unit)
 }
 
 fn blank(prog: &Program, kind: &str, attempt: u32) -> Node {
@@ -41,7 +45,16 @@ fn blank(prog: &Program, kind: &str, attempt: u32) -> Node {
         .kind(kind)
         .map(|k| k.attrs.iter().filter_map(|a| a.default.as_ref().map(|d| (a.name.clone(), Val::from_lit(d)))).collect())
         .unwrap_or_default();
-    Node { kind: kind.to_string(), attrs, status: Status::Idle, outcome: None, attempt, waiting: None, parts: vec![] }
+    Node {
+        kind: kind.to_string(),
+        attrs,
+        status: Status::Idle,
+        outcome: None,
+        attempt,
+        waiting: None,
+        held: Default::default(),
+        parts: vec![],
+    }
 }
 
 /// One step: apply the message, then settle the unit (create, replace and
@@ -67,7 +80,21 @@ pub fn step(prog: &Program, unit: &Unit, msg: &Msg) -> Outcome {
     }
     settle(prog, &mut u, &mut asks);
     goals(prog, &mut u);
+    if let (Some(r), Msg::Answer { key, .. }) = (violated(prog, &u.root), msg) {
+        // A consequence no pass guards, such as a withdrawn part, would
+        // break a rule: refuse the answer and ask again (appendix B.3.4).
+        let mut kept = unit.clone();
+        kept.notes = vec![format!("refused by rule {}: {}", r.name, r.paraphrase)];
+        let again = open_request(&unit.root, &unit.label, key)
+            .and_then(|at| prog.effect_of(&node_at(&unit.root, &at).kind).map(|e| ask_for(&unit.label, &unit.root, &at, e)));
+        return Outcome { unit: kept, asks: again.into_iter().collect() };
+    }
     Outcome { unit: u, asks }
+}
+
+/// The position of the requested part whose key is `key`, if it is still open.
+fn open_request(root: &Node, label: &str, key: &str) -> Option<Vec<usize>> {
+    positions(root).into_iter().find(|at| node_at(root, at).status == Status::Requested && request_key(label, root, at) == key)
 }
 
 /// Why an answer was not recorded, and the request to send again, if any.
@@ -77,10 +104,7 @@ struct Refusal {
 }
 
 fn answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[(String, Val)]) -> Result<(), Refusal> {
-    let open = positions(&u.root)
-        .into_iter()
-        .find(|at| node_at(&u.root, at).status == Status::Requested && request_key(&u.label, &u.root, at) == key);
-    let Some(at) = open else {
+    let Some(at) = open_request(&u.root, &u.label, key) else {
         return Err(Refusal { note: format!("ignored an answer for {key}: no open request"), again: None });
     };
     let kind = node_at(&u.root, &at).kind.clone();
@@ -151,11 +175,15 @@ fn settle(prog: &Program, u: &mut Unit, asks: &mut Vec<Ask>) {
 
 /// Creates a part an active need lacks, replaces one that failed, or
 /// withdraws one whose need is no longer active and that has not reached the
-/// outside world (spec §3.2, D9). Makes at most one change.
+/// outside world (spec §3.2, D9). A part whose creation would break a rule
+/// waits on that rule, as a request does (appendix B.3.5). Makes at most one
+/// change.
 fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
     enum Change {
         Add(Node, String),
         Remove(usize, String),
+        Hold(String, String),
+        Release(String),
     }
     let change = {
         let n = node_at(&u.root, at);
@@ -165,16 +193,28 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
         let mut change = None;
         for need in prog.needs.iter().filter(|need| need.owner == n.kind) {
             let active = need.cond.as_ref().is_none_or(|c| eval(prog, &u.root, at, c) == T::Yes);
-            match current(n, &need.part).map(|i| (i, &n.parts[i])) {
-                None if active => change = Some(Change::Add(blank(prog, &need.part, 1), format!("needs {}", need.part))),
+            let add = match current(n, &need.part).map(|i| (i, &n.parts[i])) {
+                None if active => Some((blank(prog, &need.part, 1), format!("needs {}", need.part))),
                 Some((_, p)) if active && p.status == Status::Failed && p.attempt < ATTEMPTS => {
                     let note = format!("{} {}: attempt {}", need.part, p.outcome.as_deref().unwrap_or("failed"), p.attempt + 1);
-                    change = Some(Change::Add(blank(prog, &need.part, p.attempt + 1), note));
+                    Some((blank(prog, &need.part, p.attempt + 1), note))
                 }
                 Some((i, p)) if !active && untouched(p) => {
                     change = Some(Change::Remove(i, format!("{} withdrawn", need.part)));
+                    None
                 }
-                _ => {}
+                _ => None,
+            };
+            if let Some((part, note)) = add {
+                let mut t = u.root.clone();
+                node_at_mut(&mut t, at).parts.push(part.clone());
+                change = match newly_broken(prog, &u.root, &t) {
+                    Some(r) if n.held.get(&need.part) == Some(&r.name) => None,
+                    Some(r) => Some(Change::Hold(need.part.clone(), r.name.clone())),
+                    None => Some(Change::Add(part, note)),
+                };
+            } else if change.is_none() && !active && n.held.contains_key(&need.part) {
+                change = Some(Change::Release(need.part.clone()));
             }
             if change.is_some() {
                 break;
@@ -185,8 +225,18 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
     let n = node_at_mut(&mut u.root, at);
     match change {
         Some(Change::Add(part, note)) => {
+            n.held.remove(&part.kind);
             n.parts.push(part);
             u.notes.push(note);
+            true
+        }
+        Some(Change::Hold(part, rule)) => {
+            u.notes.push(format!("{part} waits: rule {rule}"));
+            n.held.insert(part, rule);
+            true
+        }
+        Some(Change::Release(part)) => {
+            n.held.remove(&part);
             true
         }
         Some(Change::Remove(i, note)) => {
@@ -199,16 +249,30 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
 }
 
 /// A part with no effect of its own is done once every active need of it is
-/// done (appendix B.3.2). A root is never done; its goals describe it.
+/// done (appendix B.3.2), unless being done would break a rule: then it waits
+/// on that rule. A root is never done; its goals describe it.
 fn done_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
     let n = node_at(&u.root, at);
     if at.is_empty() || n.status != Status::Idle || prog.effect_of(&n.kind).is_some() || !needs_done(prog, &u.root, at) {
         return false;
     }
-    let kind = n.kind.clone();
-    node_at_mut(&mut u.root, at).status = Status::Done;
-    u.notes.push(format!("{kind} done"));
-    true
+    let (kind, waiting) = (n.kind.clone(), n.waiting.clone());
+    let mut t = u.root.clone();
+    node_at_mut(&mut t, at).status = Status::Done;
+    match newly_broken(prog, &u.root, &t) {
+        Some(r) if waiting.as_deref() == Some(r.name.as_str()) => false,
+        Some(r) => {
+            node_at_mut(&mut u.root, at).waiting = Some(r.name.clone());
+            u.notes.push(format!("{kind} waits: rule {}", r.name));
+            true
+        }
+        None => {
+            node_at_mut(&mut t, at).waiting = None;
+            u.root = t;
+            u.notes.push(format!("{kind} done"));
+            true
+        }
+    }
 }
 
 /// Whether every active need of the node at `at` has a current part that is done.
@@ -297,18 +361,27 @@ pub fn holds(prog: &Program, root: &Node, at: &[usize], c: &Cond) -> bool {
 /// The first rule the unit's state breaks, if any. A rule applies to a node
 /// only when its filter is known to hold.
 pub fn violated<'p>(prog: &'p Program, root: &Node) -> Option<&'p Rule> {
-    let all = positions(root);
-    prog.rules.iter().find(|r| {
-        all.iter().any(|at| {
-            node_at(root, at).kind == r.subject
-                && r.filter.iter().all(|f| eval(prog, root, at, f) == T::Yes)
-                && match &r.body {
-                    Body::Every(c) => eval(prog, root, at, c) == T::No,
-                    Body::No { pred, unless } => {
-                        eval(prog, root, at, pred) == T::Yes && unless.as_ref().is_none_or(|u| eval(prog, root, at, u) != T::Yes)
-                    }
+    prog.rules.iter().find(|r| broken(prog, root, r))
+}
+
+/// The first rule that a change from `before` to `after` breaks: one that
+/// `after` breaks and `before` does not. A rule already broken while parts
+/// are still being created (such as `every Order has a Shipment`) does not
+/// hold back the change that mends it.
+fn newly_broken<'p>(prog: &'p Program, before: &Node, after: &Node) -> Option<&'p Rule> {
+    prog.rules.iter().find(|r| broken(prog, after, r) && !broken(prog, before, r))
+}
+
+fn broken(prog: &Program, root: &Node, r: &Rule) -> bool {
+    positions(root).iter().any(|at| {
+        node_at(root, at).kind == r.subject
+            && r.filter.iter().all(|f| eval(prog, root, at, f) == T::Yes)
+            && match &r.body {
+                Body::Every(c) => eval(prog, root, at, c) == T::No,
+                Body::No { pred, unless } => {
+                    eval(prog, root, at, pred) == T::Yes && unless.as_ref().is_none_or(|u| eval(prog, root, at, u) != T::Yes)
                 }
-        })
+            }
     })
 }
 
@@ -468,14 +541,14 @@ fn ask_for(label: &str, root: &Node, at: &[usize], e: &Effect) -> Ask {
     }
 }
 
-/// `O1/CustomsForm/Declaration#1`: the unit, the kinds from the root down to
-/// the part, and its attempt.
+/// `O1/CustomsForm#1/Declaration#1`: the unit, then each part from the root
+/// down with its attempt, so the parts of a replaced owner get new keys.
 pub fn request_key(label: &str, root: &Node, at: &[usize]) -> String {
-    let mut kinds = vec![];
+    let mut steps = vec![];
     let mut n = root;
     for &i in at {
         n = &n.parts[i];
-        kinds.push(n.kind.as_str());
+        steps.push(format!("{}#{}", n.kind, n.attempt));
     }
-    format!("{label}/{}#{}", kinds.join("/"), n.attempt)
+    format!("{label}/{}", steps.join("/"))
 }

@@ -72,3 +72,27 @@ fn unknown_names_and_types_are_errors() {
     let e = errors("kind A { m: Money }\nrule r: every A's m is at most 5 USD\n");
     assert!(e.iter().any(|m| m.contains("not in this module's currency")), "{e:?}");
 }
+
+#[test]
+fn states_with_the_same_name_are_errors() {
+    let base = "kind O { }\nkind P { o: O, n: Count, sent: Bool }\nO needs P\n";
+    let e = errors(&format!("{base}effect send P via c within 1 days\n  sends its n\n  marks sent\n  reports done\n"));
+    assert!(e.iter().any(|m| m.contains("P has an attribute called sent")), "{e:?}");
+    assert!(e.iter().any(|m| m.contains("`done` is a state of every kind")), "{e:?}");
+    let e = errors("kind O { }\nkind P { o: O, n: Count }\nO needs P\neffect send P via c within 1 days\n  sends its n\n  marks captured\n  reports captured | fails with captured\n");
+    assert!(e.iter().any(|m| m.contains("P's effect uses the name captured twice")), "{e:?}");
+    let e = errors("kind O { failed: Bool }\n");
+    assert!(e.iter().any(|m| m.contains("`failed` is a state of every kind")), "{e:?}");
+}
+
+#[test]
+fn an_ownership_loop_is_reported_not_followed_forever() {
+    let e = errors("kind A { b: B, n: Count }\nkind B { a: A }\nkind Zed { n: Count }\nA needs B\nB needs A\nrule r: every A's n is at most the Zed's n\n");
+    assert!(e.iter().any(|m| m.contains("needs loop")), "{e:?}");
+}
+
+#[test]
+fn a_part_needed_twice_is_an_error() {
+    let e = errors("kind O { c: Bool = no }\nkind P { o: O }\nO needs P\nO needs P while it is c\n");
+    assert!(e.iter().any(|m| m.contains("O needs P twice")), "{e:?}");
+}

@@ -79,6 +79,7 @@ impl Checker {
         self.kinds(src, &mut p);
         let conds = self.owners(src, &mut p);
         self.effects(src, &mut p);
+        self.state_names(src, &p);
         self.defines(src, &mut p);
         for (i, owner, at, cond) in conds {
             let c = self.cond(&p, at, &owner, cond);
@@ -104,6 +105,10 @@ impl Checker {
                     continue;
                 }
                 seen.push(&a.name);
+                if a.name == "done" || a.name == "failed" {
+                    self.errors.push(err(&k.at, format!("{}.{}: `{}` is a state of every kind", k.name, a.name, a.name)));
+                    continue;
+                }
                 let Some(ty) = value_type(&a.ty) else { continue }; // an owner reference: see `owners`
                 let default = match &a.default {
                     None => None,
@@ -158,6 +163,10 @@ impl Checker {
                         &n.at,
                         format!("{part} needs exactly one attribute of kind {} to name its owner; it has {}", n.owner, refs.len()),
                     ));
+                    continue;
+                }
+                if p.needs.iter().any(|x| x.owner == n.owner && x.part == *part) {
+                    self.errors.push(err(&n.at, format!("{} needs {part} twice; give one need, with its conditions joined by `or`", n.owner)));
                     continue;
                 }
                 let kind = p.kinds.iter_mut().find(|k| k.name == *part).expect("declared kinds are compiled");
@@ -249,6 +258,26 @@ impl Checker {
                 data,
                 failures: e.failures.clone(),
             });
+        }
+    }
+
+    /// A state name has one meaning in a kind (appendix B.3): its effect's
+    /// marks and outcomes may not repeat each other, an attribute, `done` or
+    /// `failed`.
+    fn state_names(&mut self, src: &Source, p: &Program) {
+        for e in &src.effects {
+            let Some(kind) = p.kind(&e.kind) else { continue };
+            let mut seen: Vec<&str> = vec![];
+            for name in e.marks.iter().chain(std::iter::once(&e.success)).chain(&e.failures) {
+                if name == "done" || name == "failed" {
+                    self.errors.push(err(&e.at, format!("`{name}` is a state of every kind; {}'s effect cannot mark or report it", e.kind)));
+                } else if kind.attr(name).is_some() {
+                    self.errors.push(err(&e.at, format!("{} has an attribute called {name}, so its effect cannot also mark or report {name}", e.kind)));
+                } else if seen.contains(&name.as_str()) {
+                    self.errors.push(err(&e.at, format!("{}'s effect uses the name {name} twice", e.kind)));
+                }
+                seen.push(name);
+            }
         }
     }
 
@@ -385,12 +414,14 @@ impl Checker {
         let mut cur = from.to_string();
         if let Head::The(k) = &np.head {
             while cur != *k {
+                // A valid chain of owners is shorter than the number of kinds;
+                // a longer walk is going round a needs loop, reported elsewhere.
                 match p.kind(&cur).and_then(|x| x.owner.as_ref()) {
-                    Some(o) => {
+                    Some(o) if steps.len() < p.kinds.len() => {
                         steps.push(Step::Owner);
                         cur = o.kind.clone();
                     }
-                    None => {
+                    _ => {
                         self.errors.push(err(at, format!("`the {k}`: a {from} is not part of a {k}")));
                         return None;
                     }
