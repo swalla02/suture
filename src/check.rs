@@ -42,6 +42,8 @@ pub enum NetError {
     MintRequired(String),
     #[error("patch has {agents} agents, limit {limit}")]
     TooLarge { agents: usize, limit: usize },
+    #[error("payload of {kind} is {bytes} bytes, limit {limit}")]
+    PayloadTooLarge { kind: String, bytes: usize, limit: usize },
     #[error("{0}")]
     Value(String),
 }
@@ -52,6 +54,8 @@ pub(crate) struct PatchSpec<'a> {
     pub consumed: [(KindId, &'a Value); 2],
     pub may_emit: &'a [KindId],
     pub max_agents: usize,
+    /// Maximum encoded payload size of each created agent, in bytes.
+    pub max_payload: usize,
 }
 
 /// The type a connecting endpoint must have; for self-dual types the
@@ -60,7 +64,13 @@ pub(crate) fn dual(p: PortType) -> PortType {
     PortType { ty: p.ty, pol: if p.pol == Polarity::Pos { Polarity::Neg } else { Polarity::Pos } }
 }
 
-fn check_agents(sig: &Signature, net: &NetData, max_agents: usize, may_emit: Option<&[KindId]>) -> Result<(), NetError> {
+fn check_agents(
+    sig: &Signature,
+    net: &NetData,
+    max_agents: usize,
+    max_payload: usize,
+    may_emit: Option<&[KindId]>,
+) -> Result<(), NetError> {
     if net.agents.len() > max_agents {
         return Err(NetError::TooLarge { agents: net.agents.len(), limit: max_agents });
     }
@@ -74,6 +84,10 @@ fn check_agents(sig: &Signature, net: &NetData, max_agents: usize, may_emit: Opt
         }
         if !d.payload.admits(&a.payload) {
             return Err(NetError::Payload { kind: d.name.clone(), value: a.payload.to_string() });
+        }
+        let bytes = a.payload.encoded_len();
+        if bytes > max_payload {
+            return Err(NetError::PayloadTooLarge { kind: d.name.clone(), bytes, limit: max_payload });
         }
         if a.ports[1..].contains(&Slot::Emit) {
             return Err(NetError::EmitOnNonEffect(d.name.clone()));
@@ -108,7 +122,7 @@ fn fmt_multiset(m: &[(String, Value)]) -> String {
 
 /// Full static legality of a rule's patch. Returns the context-free wiring.
 pub(crate) fn check_patch(sig: &Signature, net: &NetData, spec: &PatchSpec) -> Result<Resolved, NetError> {
-    check_agents(sig, net, spec.max_agents, Some(spec.may_emit))?;
+    check_agents(sig, net, spec.max_agents, spec.max_payload, Some(spec.may_emit))?;
     let k = spec.iface.len();
     if (net.vars as usize) < k {
         return Err(NetError::UnknownVar(net.vars));
@@ -152,8 +166,14 @@ pub(crate) fn check_patch(sig: &Signature, net: &NetData, spec: &PatchSpec) -> R
 }
 
 /// Context-free legality of an injected net (wiring is checked at inject time).
-pub(crate) fn check_inject_static(sig: &Signature, net: &NetData, mint: bool, max_agents: usize) -> Result<(), NetError> {
-    check_agents(sig, net, max_agents, None)?;
+pub(crate) fn check_inject_static(
+    sig: &Signature,
+    net: &NetData,
+    mint: bool,
+    max_agents: usize,
+    max_payload: usize,
+) -> Result<(), NetError> {
+    check_agents(sig, net, max_agents, max_payload, None)?;
     if !mint {
         if let Some(a) = net.agents.iter().find(|a| sig.kind(a.kind).conserved.is_some()) {
             return Err(NetError::MintRequired(sig.kind(a.kind).name.clone()));
@@ -210,7 +230,7 @@ mod tests {
             iface: &iface,
             consumed: [(f.s, &Value::Unit), (f.add, &Value::Unit)],
             may_emit: &[],
-            max_agents: 16,
+            max_agents: 16, max_payload: 4096,
         };
         let mut b = NetBuilder::with_vars(&f.sig, 3);
         b.link(Var(1), Var(2)); // x never used by the RHS
@@ -225,7 +245,7 @@ mod tests {
     #[test]
     fn static_wire_types() {
         let f = fx();
-        let spec = PatchSpec { iface: &[], consumed: [(f.z, &Value::Unit), (f.era, &Value::Unit)], may_emit: &[], max_agents: 16 };
+        let spec = PatchSpec { iface: &[], consumed: [(f.z, &Value::Unit), (f.era, &Value::Unit)], may_emit: &[], max_agents: 16, max_payload: 4096 };
         let mut b = NetBuilder::new(&f.sig);
         let v = b.var();
         b.agent(f.z, (), v, &[]);
@@ -237,7 +257,7 @@ mod tests {
     fn interface_types_preserved() {
         let f = fx();
         let iface = [f.nat.neg(), f.nat.neg(), f.nat.pos()];
-        let spec = PatchSpec { iface: &iface, consumed: [(f.s, &Value::Unit), (f.add, &Value::Unit)], may_emit: &[], max_agents: 16 };
+        let spec = PatchSpec { iface: &iface, consumed: [(f.s, &Value::Unit), (f.add, &Value::Unit)], may_emit: &[], max_agents: 16, max_payload: 4096 };
         let mut b = NetBuilder::with_vars(&f.sig, 3);
         b.agent(f.z, (), Var(1), &[]); // a producer where Add.y (a consumer) was
         b.link(Var(0), Var(2));
@@ -249,7 +269,7 @@ mod tests {
     fn add_s_patch_is_valid() {
         let f = fx();
         let iface = [f.nat.neg(), f.nat.neg(), f.nat.pos()];
-        let spec = PatchSpec { iface: &iface, consumed: [(f.s, &Value::Unit), (f.add, &Value::Unit)], may_emit: &[], max_agents: 16 };
+        let spec = PatchSpec { iface: &iface, consumed: [(f.s, &Value::Unit), (f.add, &Value::Unit)], may_emit: &[], max_agents: 16, max_payload: 4096 };
         let mut b = NetBuilder::with_vars(&f.sig, 3);
         let r1 = b.var();
         b.agent(f.add, (), Var(0), &[Var(1), r1]);
@@ -263,7 +283,7 @@ mod tests {
     fn pass_through_link() {
         let f = fx();
         let iface = [f.nat.neg(), f.nat.pos()]; // Z >< Add(y, r)
-        let spec = PatchSpec { iface: &iface, consumed: [(f.z, &Value::Unit), (f.add, &Value::Unit)], may_emit: &[], max_agents: 16 };
+        let spec = PatchSpec { iface: &iface, consumed: [(f.z, &Value::Unit), (f.add, &Value::Unit)], may_emit: &[], max_agents: 16, max_payload: 4096 };
         let mut b = NetBuilder::with_vars(&f.sig, 2);
         b.link(Var(0), Var(1));
         let r = check_patch(&f.sig, &b.finish().unwrap(), &spec).unwrap();
@@ -277,7 +297,7 @@ mod tests {
             iface: &[],
             consumed: [(f.z, &Value::Unit), (f.era, &Value::Unit)],
             may_emit: may,
-            max_agents: 16,
+            max_agents: 16, max_payload: 4096,
         };
         let mut b = NetBuilder::new(&f.sig);
         let (p, o) = (b.var(), b.var());
@@ -299,7 +319,7 @@ mod tests {
         let net = b.finish().unwrap();
         assert_eq!(check_patch(&f.sig, &net, &spec(&[])).unwrap_err(), NetError::EffectNotAuthorized("Ask".into()));
         let ask = [f.ask];
-        let ok = PatchSpec { iface: &[], consumed: [(f.z, &Value::Unit), (f.era, &Value::Unit)], may_emit: &ask, max_agents: 16 };
+        let ok = PatchSpec { iface: &[], consumed: [(f.z, &Value::Unit), (f.era, &Value::Unit)], may_emit: &ask, max_agents: 16, max_payload: 4096 };
         assert_eq!(check_patch(&f.sig, &net, &ok).unwrap().conns.len(), 1);
     }
 
@@ -307,7 +327,7 @@ mod tests {
     fn conservation() {
         let f = fx();
         let one = tup![1];
-        let spec = PatchSpec { iface: &[], consumed: [(f.lease, &one), (f.era, &Value::Unit)], may_emit: &[], max_agents: 16 };
+        let spec = PatchSpec { iface: &[], consumed: [(f.lease, &one), (f.era, &Value::Unit)], may_emit: &[], max_agents: 16, max_payload: 4096 };
         let net = |keys: &[i64]| {
             let mut b = NetBuilder::new(&f.sig);
             for &k in keys {
@@ -326,7 +346,7 @@ mod tests {
     #[test]
     fn payload_schema_and_size() {
         let f = fx();
-        let spec = PatchSpec { iface: &[], consumed: [(f.z, &Value::Unit), (f.era, &Value::Unit)], may_emit: &[], max_agents: 1 };
+        let spec = PatchSpec { iface: &[], consumed: [(f.z, &Value::Unit), (f.era, &Value::Unit)], may_emit: &[], max_agents: 1, max_payload: 4096 };
         let mut b = NetBuilder::new(&f.sig);
         let v = b.var();
         b.agent(f.z, (), v, &[]);
@@ -347,12 +367,26 @@ mod tests {
         let v = b.var();
         b.agent(f.lease, tup![1], v, &[]);
         let net = b.finish().unwrap();
-        assert_eq!(check_inject_static(&f.sig, &net, false, 16).unwrap_err(), NetError::MintRequired("Lease".into()));
-        assert!(check_inject_static(&f.sig, &net, true, 16).is_ok());
+        assert_eq!(check_inject_static(&f.sig, &net, false, 16, 4096).unwrap_err(), NetError::MintRequired("Lease".into()));
+        assert!(check_inject_static(&f.sig, &net, true, 16, 4096).is_ok());
         let mut b = NetBuilder::new(&f.sig);
         let (p, o) = (b.var(), b.var());
         b.agent(f.ask, (), p, &[o]);
         let net = b.finish().unwrap();
-        assert_eq!(check_inject_static(&f.sig, &net, true, 16).unwrap_err(), NetError::EffectInInject("Ask".into()));
+        assert_eq!(check_inject_static(&f.sig, &net, true, 16, 4096).unwrap_err(), NetError::EffectInInject("Ask".into()));
+    }
+
+    #[test]
+    fn payload_size_limit() {
+        let f = fx();
+        let mut b = NetBuilder::new(&f.sig);
+        let v = b.var();
+        b.agent(f.lease, tup![1], v, &[]); // tuple tag + length + one int: 18 bytes
+        let net = b.finish().unwrap();
+        assert!(check_inject_static(&f.sig, &net, true, 16, 18).is_ok(), "exactly at the limit");
+        assert_eq!(
+            check_inject_static(&f.sig, &net, true, 16, 17).unwrap_err(),
+            NetError::PayloadTooLarge { kind: "Lease".into(), bytes: 18, limit: 17 }
+        );
     }
 }

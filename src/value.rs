@@ -91,6 +91,17 @@ impl Value {
         }
     }
 
+    /// The length of [`Value::encode`]'s output, computed without encoding.
+    pub fn encoded_len(&self) -> usize {
+        match self {
+            Value::Unit => 1,
+            Value::Bool(_) => 2,
+            Value::Int(_) => 9,
+            Value::Str(s) => 9 + s.len(),
+            Value::Tuple(xs) | Value::List(xs) => 9 + xs.iter().map(Value::encoded_len).sum::<usize>(),
+        }
+    }
+
     /// Appends a canonical, tagged, length-prefixed encoding of the value.
     /// Distinct values always have distinct encodings.
     pub fn encode(&self, out: &mut Vec<u8>) {
@@ -287,5 +298,28 @@ mod tests {
     fn display_is_compact() {
         assert_eq!(tup![1, "eu", vlist![2, 3]].to_string(), r#"(1, "eu", [2, 3])"#);
         assert_eq!(Value::Unit.to_string(), "()");
+    }
+}
+
+#[cfg(test)]
+mod size_tests {
+    use super::*;
+    use crate::{tup, vlist};
+
+    #[test]
+    fn encoded_len_matches_encode() {
+        let values = [
+            Value::Unit,
+            Value::Bool(true),
+            Value::Int(-5),
+            Value::Str("héllo".into()),
+            tup![1, "ab", vlist![true, ()]],
+            Value::list([]),
+        ];
+        for v in values {
+            let mut buf = vec![];
+            v.encode(&mut buf);
+            assert_eq!(v.encoded_len(), buf.len(), "{v}");
+        }
     }
 }

@@ -121,7 +121,7 @@ The first `ar(κₗ) + ar(κᵣ)` variables are **interface variables**. Variabl
 - **L5 Wire typing.** Every wire inside the patch, after following links, connects compatible types.
 - **L6 Effects.** `Emit` appears only in the principal slot of an effect kind. Effect kinds appear only with `Emit`. Each emitted kind is in the rule's effect authority.
 - **L7 Conservation.** For each conserved class, the multiset of keys of the consumed pair equals the multiset of keys of the created agents.
-- **L8 Bounded work.** The patch has at most `Limits::max_patch_agents` agents (256 by default).
+- **L8 Bounded work.** The patch has at most `Limits::max_patch_agents` agents (256 by default), and each payload encodes to at most `Limits::max_payload_bytes` bytes (4096 by default). Collections belong in the graph as agents, not inside payloads.
 
 Then:
 
@@ -170,7 +170,7 @@ A scheduler chooses which ready pair to reduce next: FIFO, LIFO, seeded random, 
 - `B` binds some of `N`'s variables to the boundary. A binding is either `Hole(h | label)`, which consumes an existing hole, or `New(label?)`, which creates a hole.
 
 Validity:
-- **I1.** L1–L3, and L8 against `Limits::max_inject_agents`, hold with bindings counted as uses.
+- **I1.** L1–L3, and L8 against `Limits::max_inject_agents` and `Limits::max_payload_bytes`, hold with bindings counted as uses.
 - **I2.** Each existing hole is bound at most once. Each referenced hole and label exists.
 - **I3.** New labels are distinct, and each is either free or held by a hole this inject consumes. That case is *label transfer*, the way a stream tail advances.
 - **I4.** `N` contains no effect agents. Conserved agents require `mint`.

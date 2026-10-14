@@ -24,11 +24,14 @@ pub struct Limits {
     pub max_patch_agents: usize,
     /// Maximum agents a single inject may create.
     pub max_inject_agents: usize,
+    /// Maximum encoded size of one agent's payload, in bytes. Collections
+    /// belong in the graph as agents, not inside payloads.
+    pub max_payload_bytes: usize,
 }
 
 impl Default for Limits {
     fn default() -> Self {
-        Limits { max_patch_agents: 256, max_inject_agents: 1 << 20 }
+        Limits { max_patch_agents: 256, max_inject_agents: 1 << 20, max_payload_bytes: 4096 }
     }
 }
 
@@ -575,6 +578,7 @@ impl Machine {
             consumed: [(la.kind, &la.payload), (ra.kind, &ra.payload)],
             may_emit: &rule.may_emit,
             max_agents: self.prog.limits.max_patch_agents,
+            max_payload: self.prog.limits.max_payload_bytes,
         };
         check_patch(sig, net, &spec).map_err(|e| e.to_string())?;
         let view = PatchView {
@@ -677,7 +681,8 @@ impl Machine {
 
     fn plan_inject(&self, inj: &Injection, seq: u64) -> Result<InjectPlan, InjectError> {
         let sig = &*self.prog.sig;
-        check_inject_static(sig, &inj.net, inj.mint, self.prog.limits.max_inject_agents)?;
+        let limits = &self.prog.limits;
+        check_inject_static(sig, &inj.net, inj.mint, limits.max_inject_agents, limits.max_payload_bytes)?;
         let mut targets = Vec::with_capacity(inj.binds.len());
         let mut consumed: Vec<HoleId> = vec![];
         let mut labels: Vec<&str> = vec![];
