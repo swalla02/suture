@@ -862,7 +862,7 @@ Slice 1 parses `within` but never acts on it. Slice 2 makes time real: a request
 | `desired within …` raises alerts | alerts sent anywhere but the trace and `explain` |
 | scenario steps `when ⟨n⟩ ⟨unit⟩ pass`, `expect [no] alert for ⟨name⟩` | choices, `uses`, pools, per-group and global rules |
 
-`timed out` is a state name like any other outcome; C.3.2 of slice 1's review rules apply to it: no attribute, mark or outcome may also be called `timed out`.
+`timed out` is a state name like any other outcome. Slice 1's checker gives each state name one meaning per kind, so no attribute, mark or other outcome may also be called `timed out`.
 
 ### C.3 Semantics that slice 2 settles
 
