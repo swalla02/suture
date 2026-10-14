@@ -269,3 +269,57 @@ fn a_format_1_journal_is_refused() {
     let err = Machine::recover(mini().prog, Box::new(FileJournal::open(&path).unwrap())).err().expect("must refuse");
     assert!(matches!(err, RecoveryError::Header(_)), "{err}");
 }
+
+/// A small program named "probe" v1. Each `variant` changes exactly one
+/// structural detail; 0 is the base.
+fn probe(variant: u8) -> Program {
+    let mut b = SigBuilder::new("probe", 1);
+    let (t, u) = (b.polarized("T"), b.polarized("U"));
+    let a_payload = if variant == 1 { ValueType::Str } else { ValueType::Int };
+    let b_principal = if variant == 2 { t.pos() } else { t.neg() };
+    let (ka, kb) = if variant == 3 {
+        let kb = b.kind("B", b_principal).done();
+        let ka = b.kind("A", t.pos()).payload(a_payload).done();
+        (ka, kb)
+    } else {
+        let ka = b.kind("A", t.pos()).payload(a_payload).done();
+        let kb = b.kind("B", b_principal).done();
+        (ka, kb)
+    };
+    let kc = b.kind("C", u.pos()).done();
+    let ke = b.kind("E", u.neg()).effect().done();
+    let mut r = RuleTable::new();
+    let partner = if variant == 4 { kc } else { kb };
+    let rule = r.def("meet", ka, partner, |_cx| Ok(()));
+    if variant == 5 {
+        rule.emits(&[ke]);
+    }
+    if variant == 7 {
+        rule.recorded();
+    }
+    if variant == 6 {
+        r.forbid(kb, kc);
+    }
+    Program::new(b.build().unwrap(), r).unwrap()
+}
+
+#[test]
+fn fingerprints_cover_signature_and_rule_table() {
+    // 1 payload type, 2 port polarity, 3 kind order, 4 rule pair,
+    // 5 effect authority, 6 forbidden pair, 7 rule mode
+    let prints: Vec<Digest> = (0..=7).map(|v| probe(v).fingerprint()).collect();
+    for (i, a) in prints.iter().enumerate() {
+        for b in &prints[i + 1..] {
+            assert_ne!(a, b, "variant {i} collides with a later variant");
+        }
+    }
+    let base = || {
+        let mut m = Machine::new(probe(0));
+        m.commit().unwrap();
+        m.into_journal()
+    };
+    for v in [1, 4] {
+        let err = Machine::recover(probe(v), base()).err().expect("must refuse");
+        assert!(matches!(err, RecoveryError::Version { .. }), "variant {v}: {err}");
+    }
+}
