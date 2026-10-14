@@ -21,3 +21,28 @@ scenario "a declined payment":
   and    payments answers declined
   expect D1 is cancelled
   expect D1 is not paid
+
+scenario "a payment service that never answers":
+  when   a new Order S1 with country Japan and total 60 EUR
+  and    90 seconds pass
+  expect S1's Payment is timed out
+  expect S1's Shipment is not sent
+  when   3 days pass
+  expect an alert for S1
+  expect S1 is not paid
+
+scenario "a slow payment service":
+  when   a new Order C1 with country Japan and total 70 EUR
+  and    45 seconds pass
+  and    payments answers captured
+  and    carriers answers delivered
+  expect C1 is settled
+  when   3 days pass
+  expect no alert for C1
+
+scenario "an answer after the time-out":
+  when   a new Order L1 with country Japan and total 40 EUR
+  and    90 seconds pass
+  and    payments answers captured
+  expect L1's Payment is timed out
+  expect L1 is not paid

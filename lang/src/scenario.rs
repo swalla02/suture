@@ -3,7 +3,8 @@
 
 use crate::ast::Literal;
 use crate::lex::{statements, Cursor, Error, Tok};
-use crate::sentence::literal;
+use crate::parse::duration;
+use crate::sentence::{literal, state_word};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Scenario {
@@ -20,6 +21,12 @@ pub enum ScenarioStep {
     Answer { adapter: String, outcome: String, data: Vec<(String, Literal)>, target: Option<String> },
     /// `expect O1 is [not] settled`
     Expect { name: String, state: String, negated: bool },
+    /// `expect O1's Payment is [not] timed out`: the unit's current part of that kind.
+    ExpectPart { name: String, part: String, state: String, negated: bool },
+    /// `when 3 days pass`: the clock moves forward (appendix C.1).
+    Pass { secs: u64 },
+    /// `expect [an|no] alert for O1`
+    Alert { name: String, negated: bool },
 }
 
 pub fn parse_scenarios(file: &str, src: &str) -> Result<Vec<Scenario>, Error> {
@@ -47,13 +54,37 @@ pub fn parse_scenarios(file: &str, src: &str) -> Result<Vec<Scenario>, Error> {
 
 fn step(c: &mut Cursor) -> Result<ScenarioStep, Error> {
     if c.eat_word("expect") {
+        let alert = if c.eat_word("no") {
+            Some(true)
+        } else if c.eat_word("an") || c.eat_word("a") {
+            Some(false)
+        } else {
+            None
+        };
+        if let Some(negated) = alert {
+            c.expect_word("alert")?;
+            c.expect_word("for")?;
+            return Ok(ScenarioStep::Alert { name: c.word()?, negated });
+        }
         let name = c.word()?;
+        let part = if c.eat_poss() { Some(c.kind_name()?) } else { None };
         c.expect_word("is")?;
         let negated = c.eat_word("not");
-        return Ok(ScenarioStep::Expect { name, state: c.word()?, negated });
+        let state = state_word(c)?;
+        return Ok(match part {
+            Some(part) => ScenarioStep::ExpectPart { name, part, state, negated },
+            None => ScenarioStep::Expect { name, state, negated },
+        });
     }
     if !(c.eat_word("when") || c.eat_word("and")) {
         return Err(c.error(format!("expected `when`, `and` or `expect`, found {}", c.found())));
+    }
+    if matches!(c.peek(), Some(Tok::Num(_))) {
+        let secs = duration(c)?;
+        if !(c.eat_word("pass") || c.eat_word("passes")) {
+            return Err(c.error(format!("expected `pass` after a duration, found {}", c.found())));
+        }
+        return Ok(ScenarioStep::Pass { secs });
     }
     if c.eat_word("a") || c.eat_word("an") {
         c.expect_word("new")?;
@@ -115,6 +146,17 @@ mod tests {
             }
         );
         assert_eq!(s[0].steps[3], ScenarioStep::Expect { name: "O1".into(), state: "cancelled".into(), negated: true });
+    }
+
+    #[test]
+    fn time_and_alert_steps_parse() {
+        let src = "scenario \"late\":\n  when   3 days pass\n  and    1 second passes\n  expect an alert for O1\n  expect no alert for O2\n  expect O1's Payment is timed out\n";
+        let s = &parse_scenarios("o.scenario", src).unwrap()[0];
+        assert_eq!(s.steps[0], ScenarioStep::Pass { secs: 259_200 });
+        assert_eq!(s.steps[1], ScenarioStep::Pass { secs: 1 });
+        assert_eq!(s.steps[2], ScenarioStep::Alert { name: "O1".into(), negated: false });
+        assert_eq!(s.steps[3], ScenarioStep::Alert { name: "O2".into(), negated: true });
+        assert_eq!(s.steps[4], ScenarioStep::ExpectPart { name: "O1".into(), part: "Payment".into(), state: "timed out".into(), negated: false });
     }
 
     #[test]

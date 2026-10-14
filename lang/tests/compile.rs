@@ -96,3 +96,12 @@ fn a_part_needed_twice_is_an_error() {
     let e = errors("kind O { c: Bool = no }\nkind P { o: O }\nO needs P\nO needs P while it is c\n");
     assert!(e.iter().any(|m| m.contains("O needs P twice")), "{e:?}");
 }
+
+#[test]
+fn timed_out_is_a_state_of_every_effect() {
+    let p = shop();
+    assert!(p.states("Payment").contains(&"timed out".to_string()));
+    assert!(!p.states("Order").contains(&"timed out".to_string()));
+    let e = errors("kind O { c: Bool = no }\nkind P { o: O }\nO needs P\neffect pay P via payments within 30 seconds\n  sends its o's c\n  reports paid\nwhen a P is timed out: its O is c\ndefine: an O is stuck when its P is timed out\n");
+    assert!(e.is_empty(), "{e:?}");
+}

@@ -73,7 +73,8 @@ fn scenarios(dir: &Path, file: &Path, explain: Option<&str>) -> Result<bool, Str
         }
         if let Some(unit) = explain.and_then(|name| report.host.unit(name)) {
             println!();
-            for line in suture_runtime::explain::explain(&prog, &unit) {
+            let host = &report.host;
+            for line in suture_runtime::explain::explain(&prog, &unit, |k| host.deadline(k).map(|d| d - host.now)) {
                 println!("  {line}");
             }
         }

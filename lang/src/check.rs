@@ -5,7 +5,7 @@
 use crate::ast::{self, CmpOp, Head, Literal, Loc, NounPhrase, Source, Term, TypeName};
 use crate::ir::{
     Action, Attr, Body, Cond, Define, Effect, Goal, Kind, Lit, Need, Op, Operand, OwnerRef, Path, Program, Reaction,
-    Rule, Step, Ty,
+    Rule, Step, Ty, TIMED_OUT,
 };
 use crate::lex::Error;
 use crate::readback;
@@ -375,7 +375,7 @@ impl Checker {
                 self.errors.push(err(&r.at, format!("a {} has no effect, so nothing reports `{}` for it", r.kind, r.outcome)));
                 continue;
             };
-            if e.success != r.outcome && !e.failures.contains(&r.outcome) {
+            if e.success != r.outcome && !e.failures.contains(&r.outcome) && r.outcome != TIMED_OUT {
                 self.errors.push(err(
                     &r.at,
                     format!("a {} reports `{}` or fails with {}, not `{}`", r.kind, e.success, e.failures.join(", "), r.outcome),

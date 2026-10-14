@@ -1,4 +1,4 @@
-use suture_lang::ir::Program;
+use suture_lang::ir::{Program, TIMED_OUT};
 use suture_runtime::interp::{in_state, new_unit, step, violated};
 use suture_runtime::state::{Ask, Msg, Unit, Val};
 
@@ -262,4 +262,69 @@ when a Payment is declined: its Order is cancelled
     assert_eq!(after.root, u.root);
     assert!(has_note(&after, "refused by rule keep"), "{:?}", after.notes);
     assert_eq!(again, vec![pay]);
+}
+
+fn time_out(p: &Program, u: &Unit, ask: &Ask) -> (Unit, Vec<Ask>) {
+    answer(p, u, ask, TIMED_OUT, &[])
+}
+
+fn payment(u: &Unit) -> &suture_runtime::state::Node {
+    u.root.parts.iter().rfind(|n| n.kind == "Payment").expect("a Payment")
+}
+
+#[test]
+fn an_unanswered_request_is_sent_again_then_times_out() {
+    let p = shop();
+    let (u, asks) = order(&p, "J1", "Japan", 80);
+    let pay = ask(&asks, "payments").clone();
+    let (u, asks) = time_out(&p, &u, &pay);
+    assert_eq!(asks, vec![pay.clone()], "the same request, with the same key");
+    assert!(has_note(&u, "no answer within 30 seconds: asking again (send 2 of 3)"), "{:?}", u.notes);
+    let (u, asks) = time_out(&p, &u, &pay);
+    assert!(has_note(&u, "send 3 of 3"), "{:?}", u.notes);
+    assert_eq!(asks.len(), 1);
+    let (u, asks) = time_out(&p, &u, &pay);
+    assert!(asks.is_empty(), "{asks:?}");
+    assert!(has_note(&u, "Payment timed out"), "{:?}", u.notes);
+    assert_eq!(payment(&u).outcome.as_deref(), Some(TIMED_OUT));
+    let i = u.root.parts.iter().position(|n| n.kind == "Payment").unwrap();
+    assert!(in_state(&p, &u.root, &[i], TIMED_OUT));
+    assert_eq!(u.root.parts.iter().filter(|n| n.kind == "Payment").count(), 1, "a timed-out part is not replaced");
+}
+
+#[test]
+fn a_unit_records_the_goals_it_matches() {
+    let p = shop();
+    let (u, _) = order(&p, "J1", "Japan", 80);
+    assert_eq!(u.matched, vec![0]);
+}
+
+#[test]
+fn a_goal_due_and_unmet_raises_one_alert_that_explains_why() {
+    let p = shop();
+    let (u, asks) = order(&p, "J1", "Japan", 80);
+    let pay = ask(&asks, "payments").clone();
+    let (mut u, _) = time_out(&p, &u, &pay);
+    for _ in 0..2 {
+        u = time_out(&p, &u, &pay).0;
+    }
+    let (u, sent) = run(&p, &u, Msg::GoalDue { goal: 0 });
+    assert!(sent.is_empty());
+    assert_eq!(u.alerts, vec![0]);
+    assert!(has_note(&u, "alert: not met within 3 days: every Order that is not cancelled is paid and settled"), "{:?}", u.notes);
+    assert!(has_note(&u, "Payment timed out"), "the alert explains: {:?}", u.notes);
+    let (again, _) = run(&p, &u, Msg::GoalDue { goal: 0 });
+    assert_eq!(again.alerts, vec![0]);
+    assert!(again.notes.is_empty(), "{:?}", again.notes);
+}
+
+#[test]
+fn a_goal_met_after_its_alert_is_noted_late() {
+    let p = shop();
+    let (u, asks) = order(&p, "J1", "Japan", 80);
+    let (u, _) = run(&p, &u, Msg::GoalDue { goal: 0 });
+    assert_eq!(u.alerts, vec![0]);
+    let (u, asks) = answer(&p, &u, ask(&asks, "payments"), "captured", &[]);
+    let (u, _) = answer(&p, &u, ask(&asks, "carriers"), "delivered", &[]);
+    assert!(has_note(&u, "goal met late: every Order"), "{:?}", u.notes);
 }

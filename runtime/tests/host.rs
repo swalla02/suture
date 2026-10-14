@@ -83,3 +83,68 @@ fn an_answer_too_large_to_deliver_keeps_its_request() {
     h.answer("forms", "filled", &fine, None).unwrap();
     assert!(h.trace.iter().any(|l| l.contains("Declaration filled")), "{:?}", h.trace);
 }
+
+fn japanese(h: &mut Host, label: &str) {
+    let given = [("country".to_string(), Val::Text("Japan".into())), ("total".to_string(), Val::Money(8000))];
+    h.create("Order", label, &given).unwrap();
+}
+
+#[test]
+fn deadlines_resend_then_time_out_and_late_answers_are_ignored() {
+    let mut h = Host::new(shop());
+    japanese(&mut h, "J1");
+    h.pass(30).unwrap();
+    assert!(h.trace.iter().any(|l| l.contains("payments: no answer within 30 seconds")), "{:?}", h.trace);
+    assert_eq!(h.pending().len(), 1, "sent again");
+    h.pass(60).unwrap();
+    assert!(h.trace.iter().any(|l| l.contains("Payment timed out")), "{:?}", h.trace);
+    assert!(h.pending().is_empty());
+    let before = h.unit("J1").unwrap().root;
+    h.answer("payments", "captured", &[], None).unwrap();
+    assert!(h.trace.iter().any(|l| l.contains("ignored a late answer for J1/Payment#1")), "{:?}", h.trace);
+    assert_eq!(h.unit("J1").unwrap().root, before);
+    assert!(h.unit("J1").unwrap().alerts.is_empty());
+    h.pass(3 * 86_400).unwrap();
+    assert_eq!(h.unit("J1").unwrap().alerts, vec![0]);
+    assert!(h.machine.faults().is_empty(), "{:?}", h.machine.faults());
+}
+
+#[test]
+fn a_timer_whose_reason_is_gone_fires_without_a_step() {
+    let mut h = Host::new(shop());
+    japanese(&mut h, "J1");
+    h.answer("payments", "captured", &[], None).unwrap();
+    h.answer("carriers", "delivered", &[], None).unwrap();
+    let injects = h.machine.stats().injects;
+    h.pass(30 * 86_400).unwrap();
+    assert_eq!(h.machine.stats().injects, injects, "the answered deadlines and the met goal are dropped");
+}
+
+#[test]
+fn moving_the_clock_costs_only_the_timers_due() {
+    fn cost(idle: usize) -> u64 {
+        let mut h = Host::new(shop());
+        japanese(&mut h, "J1");
+        h.pass(20).unwrap();
+        for i in 0..idle {
+            japanese(&mut h, &format!("I{i}"));
+        }
+        let s = h.machine.stats();
+        let before = s.reductions + s.injects;
+        h.pass(15).unwrap();
+        let s = h.machine.stats();
+        s.reductions + s.injects - before
+    }
+    let one = cost(1);
+    assert!(one > 0, "J1's deadline fired");
+    assert_eq!(cost(1_000), one);
+}
+
+#[test]
+fn an_adapter_cannot_report_timed_out() {
+    let mut h = Host::new(shop());
+    japanese(&mut h, "J1");
+    let err = h.answer("payments", "timed out", &[], None).unwrap_err();
+    assert!(err.contains("only the runtime reports `timed out`"), "{err}");
+    assert_eq!(h.pending().len(), 1);
+}

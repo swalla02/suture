@@ -106,6 +106,9 @@ pub struct Node {
     pub outcome: Option<String>,
     /// Which attempt of its need this part is, from 1.
     pub attempt: u32,
+    /// How many times its request has gone out: 0 until it is requested, at
+    /// most `ATTEMPTS` (appendix C.3.3).
+    pub sends: u32,
     /// The rule its request is waiting on, if any. A part with no effect uses
     /// it for the rule that keeps it from being done.
     pub waiting: Option<String>,
@@ -123,6 +126,7 @@ impl Node {
             Value::from(self.status.code()),
             text(self.outcome.as_deref().unwrap_or("")),
             Value::from(i64::from(self.attempt)),
+            Value::from(i64::from(self.sends)),
             text(self.waiting.as_deref().unwrap_or("")),
             Value::list(self.held.iter().map(|(part, rule)| Value::tuple([text(part), text(rule)]))),
             Value::list(self.parts.iter().map(Node::to_value)),
@@ -130,7 +134,7 @@ impl Node {
     }
 
     fn from_value(v: &Value) -> Result<Node, String> {
-        let [kind, attrs, status, outcome, attempt, waiting, held, parts] = fields::<8>(v, "node")?;
+        let [kind, attrs, status, outcome, attempt, sends, waiting, held, parts] = fields::<9>(v, "node")?;
         let mut map = BTreeMap::new();
         for a in items(attrs)? {
             let [k, x] = fields::<2>(a, "attribute")?;
@@ -148,6 +152,7 @@ impl Node {
             status: Status::from_code(int(status)?)?,
             outcome: some(string(outcome)?),
             attempt: u32::try_from(int(attempt)?).map_err(|e| e.to_string())?,
+            sends: u32::try_from(int(sends)?).map_err(|e| e.to_string())?,
             waiting: some(string(waiting)?),
             held: held_by,
             parts: items(parts)?.iter().map(Node::from_value).collect::<Result<_, _>>()?,
@@ -164,6 +169,11 @@ pub struct Unit {
     pub notes: Vec<String>,
     /// The goals already reported as met, by index, so each is reported once.
     pub met: Vec<u32>,
+    /// The goals with a deadline whose subject this unit has matched, by
+    /// index, in the order it matched them; the host starts their timers.
+    pub matched: Vec<u32>,
+    /// The goals that raised an alert, by index (appendix C.3.4).
+    pub alerts: Vec<u32>,
 }
 
 impl Unit {
@@ -172,20 +182,21 @@ impl Unit {
             text(&self.label),
             self.root.to_value(),
             Value::list(self.notes.iter().map(|n| text(n))),
-            Value::list(self.met.iter().map(|&i| Value::from(i64::from(i)))),
+            indexes(&self.met),
+            indexes(&self.matched),
+            indexes(&self.alerts),
         ])
     }
 
     pub fn from_value(v: &Value) -> Result<Unit, String> {
-        let [label, root, notes, met] = fields::<4>(v, "unit")?;
+        let [label, root, notes, met, matched, alerts] = fields::<6>(v, "unit")?;
         Ok(Unit {
             label: string(label)?,
             root: Node::from_value(root)?,
             notes: items(notes)?.iter().map(string).collect::<Result<_, _>>()?,
-            met: items(met)?
-                .iter()
-                .map(|m| int(m).and_then(|i| u32::try_from(i).map_err(|e| e.to_string())))
-                .collect::<Result<_, _>>()?,
+            met: indexes_from(met)?,
+            matched: indexes_from(matched)?,
+            alerts: indexes_from(alerts)?,
         })
     }
 }
@@ -197,6 +208,8 @@ pub enum Msg {
     Create,
     /// The outside world's answer to the request with this key.
     Answer { key: String, outcome: String, data: Vec<(String, Val)> },
+    /// A goal's deadline has come (appendix C.3.4).
+    GoalDue { goal: u32 },
 }
 
 impl Msg {
@@ -206,6 +219,7 @@ impl Msg {
             Msg::Answer { key, outcome, data } => {
                 Value::tuple([Value::from(1i64), text(key), text(outcome), pairs_value(data)])
             }
+            Msg::GoalDue { goal } => Value::tuple([Value::from(2i64), Value::from(i64::from(*goal))]),
         }
     }
 
@@ -215,6 +229,10 @@ impl Msg {
             Some(Ok(1)) => {
                 let [_, key, outcome, data] = fields::<4>(v, "answer message")?;
                 Ok(Msg::Answer { key: string(key)?, outcome: string(outcome)?, data: pairs_from(data)? })
+            }
+            Some(Ok(2)) => {
+                let [_, goal] = fields::<2>(v, "goal message")?;
+                Ok(Msg::GoalDue { goal: u32::try_from(int(goal)?).map_err(|e| e.to_string())? })
             }
             _ => Err(format!("not a message: {v}")),
         }
@@ -293,6 +311,14 @@ fn pairs_from(v: &Value) -> Result<Vec<(String, Val)>, String> {
         .collect()
 }
 
+fn indexes(v: &[u32]) -> Value {
+    Value::list(v.iter().map(|&i| Value::from(i64::from(i))))
+}
+
+fn indexes_from(v: &Value) -> Result<Vec<u32>, String> {
+    items(v)?.iter().map(|m| int(m).and_then(|i| u32::try_from(i).map_err(|e| e.to_string()))).collect()
+}
+
 fn text(s: &str) -> Value {
     Value::from(s)
 }
@@ -328,6 +354,7 @@ mod tests {
             status: Status::Requested,
             outcome: None,
             attempt: 1,
+            sends: 1,
             waiting: None,
             held: BTreeMap::new(),
             parts: vec![],
@@ -338,11 +365,12 @@ mod tests {
             status: Status::Idle,
             outcome: None,
             attempt: 1,
+            sends: 1,
             waiting: Some("hold".into()),
             held: BTreeMap::from([("Shipment".to_string(), "paid".to_string())]),
             parts: vec![part],
         };
-        Unit { label: "O1".into(), root, notes: vec!["placed".into()], met: vec![0] }
+        Unit { label: "O1".into(), root, notes: vec!["placed".into()], met: vec![0], matched: vec![0], alerts: vec![0] }
     }
 
     #[test]
@@ -352,6 +380,7 @@ mod tests {
         let m = Msg::Answer { key: "O1/Payment#1".into(), outcome: "captured".into(), data: vec![("value".into(), Val::Money(100))] };
         assert_eq!(Msg::from_value(&m.to_value()).unwrap(), m);
         assert_eq!(Msg::from_value(&Msg::Create.to_value()).unwrap(), Msg::Create);
+        assert_eq!(Msg::from_value(&Msg::GoalDue { goal: 2 }.to_value()).unwrap(), Msg::GoalDue { goal: 2 });
         let a = Ask {
             adapter: "payments".into(),
             verb: "capture".into(),

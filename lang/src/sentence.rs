@@ -93,7 +93,13 @@ fn term(c: &mut Cursor) -> Result<Term, Error> {
     if starts_noun_phrase(c) {
         return Ok(Term::Np(noun_phrase(c)?));
     }
-    Ok(Term::Word(c.word()?))
+    Ok(Term::Word(state_word(c)?))
+}
+
+/// A state's name: one word, or `timed out` (appendix C.2).
+pub fn state_word(c: &mut Cursor) -> Result<String, Error> {
+    let w = c.word()?;
+    Ok(if w == "timed" && c.eat_word("out") { "timed out".into() } else { w })
 }
 
 /// What follows a noun phrase: `is [not] t`, `is at most t` and the other
@@ -110,7 +116,7 @@ pub fn predicate(c: &mut Cursor, left: NounPhrase) -> Result<Cond, Error> {
         let kind = c.kind_name()?;
         let state = if c.eat_word("that") {
             c.expect_word("is")?;
-            Some(c.word()?)
+            Some(state_word(c)?)
         } else {
             None
         };
@@ -165,7 +171,7 @@ pub fn condition(c: &mut Cursor) -> Result<Cond, Error> {
             };
             let left = left.clone();
             let negated = c.eat_word("not");
-            Cond::Is { left, negated, right: Term::Word(c.word()?) }
+            Cond::Is { left, negated, right: Term::Word(state_word(c)?) }
         };
         parts.push(next);
     }
@@ -245,6 +251,16 @@ mod tests {
 
     fn is(left: NounPhrase, negated: bool, right: &str) -> Cond {
         Cond::Is { left, negated, right: word(right) }
+    }
+
+    #[test]
+    fn timed_out_is_one_state() {
+        assert_eq!(with("its Payment is timed out", condition).unwrap(), is(np(&["Payment"]), false, "timed out"));
+        assert_eq!(with("it is not timed out", condition).unwrap(), is(np(&[]), true, "timed out"));
+        let has = with("it has a Payment that is timed out", condition).unwrap();
+        assert_eq!(has, Cond::Has { owner: np(&[]), negated: false, kind: "Payment".into(), state: Some("timed out".into()) });
+        let both = with("it is cancelled and timed out", condition).unwrap();
+        assert_eq!(both, Cond::And(vec![is(np(&[]), false, "cancelled"), is(np(&[]), false, "timed out")]));
     }
 
     #[test]

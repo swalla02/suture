@@ -2,7 +2,7 @@
 //! It is a pure function of the program, the unit and the message, so
 //! replaying the journal reproduces every step.
 
-use suture_lang::ir::{Body, Cond, Effect, Op, Operand, Path, Program, Rule, Step};
+use suture_lang::ir::{Body, Cond, Effect, Op, Operand, Path, Program, Rule, Step, TIMED_OUT};
 
 use crate::state::{Ask, Msg, Node, Status, Unit, Val};
 
@@ -33,7 +33,7 @@ pub fn new_unit(prog: &Program, label: &str, kind: &str, given: &[(String, Val)]
         }
         root.attrs.insert(name.clone(), v.clone());
     }
-    let unit = Unit { label: label.to_string(), root, notes: vec![], met: vec![] };
+    let unit = Unit { label: label.to_string(), root, notes: vec![], met: vec![], matched: vec![], alerts: vec![] };
     if let Some(r) = violated(prog, &step(prog, &unit, &Msg::Create).unit.root) {
         return Err(format!("refused by rule {}: {}", r.name, r.paraphrase));
     }
@@ -51,6 +51,7 @@ fn blank(prog: &Program, kind: &str, attempt: u32) -> Node {
         status: Status::Idle,
         outcome: None,
         attempt,
+        sends: 0,
         waiting: None,
         held: Default::default(),
         parts: vec![],
@@ -68,6 +69,17 @@ pub fn step(prog: &Program, unit: &Unit, msg: &Msg) -> Outcome {
         Msg::Create => {
             let attrs: Vec<String> = u.root.attrs.iter().map(|(k, v)| format!("{k} {}", v.show(&prog.currency))).collect();
             u.notes.push(format!("placed: {}", attrs.join(", ")));
+        }
+        Msg::GoalDue { goal } => {
+            goal_due(prog, &mut u, *goal);
+            return Outcome { unit: u, asks };
+        }
+        Msg::Answer { key, outcome, .. } if outcome == TIMED_OUT => {
+            if let Err(refusal) = deadline(prog, &mut u, key, &mut asks) {
+                let mut kept = unit.clone();
+                kept.notes = vec![refusal.note];
+                return Outcome { unit: kept, asks: vec![] };
+            }
         }
         Msg::Answer { key, outcome, data } => {
             if let Err(refusal) = answer(prog, &mut u, key, outcome, data) {
@@ -149,6 +161,77 @@ fn answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[(Strin
     Ok(())
 }
 
+/// A request's deadline passed with no answer (appendix C.3.3): it goes out
+/// again with the same key, or after the last send the part fails as
+/// `timed out`. A timed-out part is never replaced (D9).
+fn deadline(prog: &Program, u: &mut Unit, key: &str, asks: &mut Vec<Ask>) -> Result<(), Refusal> {
+    let Some(at) = open_request(&u.root, &u.label, key) else {
+        return Err(Refusal { note: format!("ignored a deadline for {key}: no open request"), again: None });
+    };
+    let kind = node_at(&u.root, &at).kind.clone();
+    let effect = prog.effect_of(&kind).expect("a requested part has an effect");
+    let n = node_at_mut(&mut u.root, &at);
+    if n.sends < ATTEMPTS {
+        n.sends += 1;
+        let sends = n.sends;
+        u.notes.push(format!(
+            "{kind}: no answer within {}: asking again (send {sends} of {ATTEMPTS})",
+            duration(effect.within_secs)
+        ));
+        asks.push(ask_for(&u.label, &u.root, &at, effect));
+        return Ok(());
+    }
+    n.status = Status::Failed;
+    n.outcome = Some(TIMED_OUT.to_string());
+    u.notes.push(format!("{kind} timed out after {ATTEMPTS} sends"));
+    let mut notes = vec![];
+    react(prog, &mut u.root, &at, &kind, TIMED_OUT, &mut notes);
+    u.notes.extend(notes);
+    Ok(())
+}
+
+/// A goal's deadline came (appendix C.3.4). If the goal applies and is not
+/// met, the unit records one alert, with why: each current part not done,
+/// and each need held back by a rule.
+fn goal_due(prog: &Program, u: &mut Unit, goal: u32) {
+    let Some(g) = prog.goals.get(goal as usize) else { return };
+    if g.kind != u.root.kind || u.met.contains(&goal) || u.alerts.contains(&goal) {
+        return;
+    }
+    if !g.filter.iter().all(|f| eval(prog, &u.root, &[], f) == T::Yes) {
+        return;
+    }
+    u.alerts.push(goal);
+    u.notes.push(format!("alert: not met within {}: {}", duration(g.within_secs.unwrap_or(0)), g.source));
+    for at in positions(&u.root) {
+        let n = node_at(&u.root, &at);
+        for (part, rule) in &n.held {
+            u.notes.push(format!("  because {part} waits: rule {rule}"));
+        }
+        let Some((&i, owner)) = at.split_last() else { continue };
+        if current(node_at(&u.root, owner), &n.kind) != Some(i) {
+            continue;
+        }
+        let why = match (n.status, &n.waiting) {
+            (Status::Done, _) => continue,
+            (Status::Failed, _) => format!("{} {}", n.kind, n.outcome.as_deref().unwrap_or("failed")),
+            (Status::Requested, _) => format!("{} has no answer yet", n.kind),
+            (Status::Idle, Some(rule)) => format!("{} waits: rule {rule}", n.kind),
+            (Status::Idle, None) => format!("{} is not done", n.kind),
+        };
+        u.notes.push(format!("  because {why}"));
+    }
+}
+
+/// `30 seconds`, `3 days`: the largest unit up to days that divides evenly.
+pub fn duration(secs: u64) -> String {
+    let (n, unit) = [(86_400, "day"), (3_600, "hour"), (60, "minute")]
+        .into_iter()
+        .find(|(n, _)| secs >= *n && secs % n == 0)
+        .map_or((secs, "second"), |(n, unit)| (secs / n, unit));
+    format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
+}
+
 /// Applies the `when` reactions to an outcome (spec §3.3).
 fn react(prog: &Program, root: &mut Node, at: &[usize], kind: &str, outcome: &str, notes: &mut Vec<String>) {
     for r in prog.reactions.iter().filter(|r| r.kind == kind && r.outcome == outcome) {
@@ -195,7 +278,9 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
             let active = need.cond.as_ref().is_none_or(|c| eval(prog, &u.root, at, c) == T::Yes);
             let add = match current(n, &need.part).map(|i| (i, &n.parts[i])) {
                 None if active => Some((blank(prog, &need.part, 1), format!("needs {}", need.part))),
-                Some((_, p)) if active && p.status == Status::Failed && p.attempt < ATTEMPTS => {
+                Some((_, p))
+                    if active && p.status == Status::Failed && p.attempt < ATTEMPTS && p.outcome.as_deref() != Some(TIMED_OUT) =>
+                {
                     let note = format!("{} {}: attempt {}", need.part, p.outcome.as_deref().unwrap_or("failed"), p.attempt + 1);
                     Some((blank(prog, &need.part, p.attempt + 1), note))
                 }
@@ -304,7 +389,9 @@ fn request_pass(prog: &Program, u: &mut Unit, at: &[usize], asks: &mut Vec<Ask>)
             true
         }
         None => {
-            node_at_mut(&mut t, at).waiting = None;
+            let n = node_at_mut(&mut t, at);
+            n.waiting = None;
+            n.sends = 1;
             u.root = t;
             let a = ask_for(&u.label, &u.root, at, effect);
             let sends: Vec<String> = a.sends.iter().map(|(k, v)| format!("{k} {}", v.show(&prog.currency))).collect();
@@ -315,17 +402,23 @@ fn request_pass(prog: &Program, u: &mut Unit, at: &[usize], asks: &mut Vec<Ask>)
     }
 }
 
-/// Notes each goal of the root the first time it is met.
+/// Records each goal with a deadline the first time the root matches its
+/// subject, so the host starts its timer (appendix C.3.4), and notes each
+/// goal the first time it is met: late, if it already raised an alert.
 fn goals(prog: &Program, u: &mut Unit) {
     for (i, g) in prog.goals.iter().enumerate() {
         let i = i as u32;
-        if g.kind != u.root.kind || u.met.contains(&i) {
+        if g.kind != u.root.kind {
             continue;
         }
         let applies = g.filter.iter().all(|f| eval(prog, &u.root, &[], f) == T::Yes);
-        if applies && g.states.iter().all(|s| in_state(prog, &u.root, &[], s)) {
+        if applies && g.within_secs.is_some() && !u.matched.contains(&i) {
+            u.matched.push(i);
+        }
+        if !u.met.contains(&i) && applies && g.states.iter().all(|s| in_state(prog, &u.root, &[], s)) {
             u.met.push(i);
-            u.notes.push(format!("goal met: {}", g.source));
+            let late = if u.alerts.contains(&i) { " late" } else { "" };
+            u.notes.push(format!("goal met{late}: {}", g.source));
         }
     }
 }
@@ -346,7 +439,7 @@ pub fn in_state(prog: &Program, root: &Node, at: &[usize], state: &str) -> bool 
         if e.marks.as_deref() == Some(state) {
             return n.status != Status::Idle;
         }
-        if e.success == state || e.failures.iter().any(|f| f == state) {
+        if e.success == state || e.failures.iter().any(|f| f == state) || state == TIMED_OUT {
             return n.outcome.as_deref() == Some(state);
         }
     }

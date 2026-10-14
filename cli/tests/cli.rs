@@ -21,7 +21,10 @@ fn run_passes_the_shop_scenarios() {
     let (ok, out) = suture(&["run", "examples/shop", "--scenario", "examples/shop/orders.scenario"]);
     assert!(ok, "{out}");
     assert!(out.contains("refused by rule declared"), "{out}");
-    assert_eq!(out.matches("  passed").count(), 3, "{out}");
+    assert!(out.contains("payments: no answer within 30 seconds"), "{out}");
+    assert!(out.contains("alert: not met within 3 days"), "{out}");
+    assert!(out.contains("ignored a late answer for L1/Payment#1"), "{out}");
+    assert_eq!(out.matches("  passed").count(), 6, "{out}");
 }
 
 #[test]

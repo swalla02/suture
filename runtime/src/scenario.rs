@@ -5,7 +5,7 @@ use suture_lang::ir::Program;
 use suture_lang::scenario::{Scenario, ScenarioStep};
 
 use crate::host::Host;
-use crate::interp::in_state;
+use crate::interp::{duration, in_state};
 use crate::state::Val;
 
 /// What a scenario did: its host, with the trace, and the steps that failed.
@@ -33,10 +33,20 @@ pub fn run(prog: &Program, sc: &Scenario) -> Report {
                 values(prog, data).and_then(|v| host.answer(adapter, outcome, &v, target.as_deref()))
             }
             ScenarioStep::Expect { name, state, negated } => {
-                let r = expect(&host, name, state, *negated);
-                let mark = if r.is_ok() { "✓" } else { "✗" };
-                host.trace.push(format!("{mark} expect {name} is {}{state}", if *negated { "not " } else { "" }));
-                r
+                let r = expect(&host, name, None, state, *negated);
+                checked(&mut host, r, format!("expect {name} is {}{state}", not(*negated)))
+            }
+            ScenarioStep::ExpectPart { name, part, state, negated } => {
+                let r = expect(&host, name, Some(part), state, *negated);
+                checked(&mut host, r, format!("expect {name}'s {part} is {}{state}", not(*negated)))
+            }
+            ScenarioStep::Alert { name, negated } => {
+                let r = alert(&host, name, *negated);
+                checked(&mut host, r, format!("expect {} alert for {name}", if *negated { "no" } else { "an" }))
+            }
+            ScenarioStep::Pass { secs } => {
+                host.trace.push(format!("  … {} pass", duration(*secs)));
+                host.pass(*secs)
             }
         };
         if let Err(e) = result {
@@ -64,14 +74,42 @@ fn values(prog: &Program, pairs: &[(String, Literal)]) -> Result<Vec<(String, Va
         .collect()
 }
 
-fn expect(host: &Host, name: &str, state: &str, negated: bool) -> Result<(), String> {
+fn not(negated: bool) -> &'static str {
+    if negated { "not " } else { "" }
+}
+
+/// Traces an expectation with ✓ or ✗.
+fn checked(host: &mut Host, r: Result<(), String>, what: String) -> Result<(), String> {
+    host.trace.push(format!("{} {what}", if r.is_ok() { "✓" } else { "✗" }));
+    r
+}
+
+/// The unit, or its current part of kind `part`, is (not) in `state`.
+fn expect(host: &Host, name: &str, part: Option<&str>, state: &str, negated: bool) -> Result<(), String> {
     let unit = host.unit(name).ok_or_else(|| format!("there is no unit {name}"))?;
-    let states = host.prog.states(&unit.root.kind);
+    let (kind, at) = match part {
+        None => (unit.root.kind.clone(), vec![]),
+        Some(k) => match unit.root.parts.iter().rposition(|n| n.kind == k) {
+            Some(i) => (k.to_string(), vec![i]),
+            None => return Err(format!("{name} has no {k}")),
+        },
+    };
+    let states = host.prog.states(&kind);
     if !states.iter().any(|s| s == state) {
-        return Err(format!("{} has no state {state}; its states are {}", unit.root.kind, states.join(", ")));
+        return Err(format!("{kind} has no state {state}; its states are {}", states.join(", ")));
     }
-    if in_state(&host.prog, &unit.root, &[], state) == negated {
-        return Err(format!("expected {name} is {}{state}", if negated { "not " } else { "" }));
+    if in_state(&host.prog, &unit.root, &at, state) == negated {
+        let whose = part.map(|k| format!("{name}'s {k}")).unwrap_or_else(|| name.to_string());
+        return Err(format!("expected {whose} is {}{state}", not(negated)));
     }
     Ok(())
+}
+
+fn alert(host: &Host, name: &str, negated: bool) -> Result<(), String> {
+    let unit = host.unit(name).ok_or_else(|| format!("there is no unit {name}"))?;
+    match (unit.alerts.is_empty(), negated) {
+        (true, false) => Err(format!("expected an alert for {name}")),
+        (false, true) => Err(format!("expected no alert for {name}")),
+        _ => Ok(()),
+    }
 }

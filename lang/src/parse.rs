@@ -3,7 +3,7 @@
 
 use crate::ast::*;
 use crate::lex::{statements, Cursor, Error, Stmt, Tok};
-use crate::sentence::{condition, literal, noun_phrase, rule_body, starts_noun_phrase, subject};
+use crate::sentence::{condition, literal, noun_phrase, rule_body, starts_noun_phrase, state_word, subject};
 
 /// Parses one source file into `out`.
 pub fn parse_file(file: &str, src: &str, out: &mut Source) -> Result<(), Error> {
@@ -63,7 +63,7 @@ fn number<T: std::str::FromStr>(c: &mut Cursor, what: &str) -> Result<T, Error> 
 }
 
 /// `30 seconds`, `1 day`, `3 days` and so on, in seconds.
-fn duration(c: &mut Cursor) -> Result<u64, Error> {
+pub(crate) fn duration(c: &mut Cursor) -> Result<u64, Error> {
     let n: u64 = number(c, "a duration")?;
     let unit = c.word()?;
     let secs = match unit.trim_end_matches('s') {
@@ -278,9 +278,9 @@ fn goal(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     c.expect_word("every")?;
     let subject = subject(&mut c)?;
     c.expect_word("is")?;
-    let mut states = vec![c.word()?];
+    let mut states = vec![state_word(&mut c)?];
     while c.eat_word("and") {
-        states.push(c.word()?);
+        states.push(state_word(&mut c)?);
     }
     c.expect_end()?;
     out.goals.push(GoalDecl { subject, states, within_secs, source: text(after_colon(&toks)), at });
@@ -297,7 +297,7 @@ fn reaction(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     }
     let kind = c.kind_name()?;
     c.expect_word("is")?;
-    let outcome = c.word()?;
+    let outcome = state_word(&mut c)?;
     c.expect_sym(':')?;
     let mut actions = vec![action(&mut c)?];
     while c.eat_word("and") {

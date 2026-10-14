@@ -849,9 +849,9 @@ Slice 1 parses `within` but never acts on it. Slice 2 makes time real: a request
 ### C.1 What runs
 
 - Scenarios gain a step that moves the clock: `when 3 days pass` (also `seconds`, `minutes`, `hours`, `weeks`, singular or plural).
-- Scenarios gain an expectation about alerts: `expect an alert for O1`, and `expect no alert for O1`.
+- Scenarios gain an expectation about alerts, `expect an alert for O1` and `expect no alert for O1`, and one about a unit's current part: `expect O1's Payment is timed out`.
 - `suture run` traces every re-send, every time-out and every alert. `suture explain` also shows each pending request's deadline and the unit's alerts.
-- `examples/shop/orders.scenario` gains three orders: a payment service that never answers, a carrier that answers only after one re-send, and an answer that arrives after its request timed out.
+- `examples/shop/orders.scenario` gains three orders: a payment service that never answers, a payment service that answers only after one re-send, and an answer that arrives after its request timed out.
 
 ### C.2 Language in slice 2
 
@@ -860,7 +860,7 @@ Slice 1 parses `within` but never acts on it. Slice 2 makes time real: a request
 | `within` on an effect fires | the `attempts` setting (fixed at 3, as in slice 1) |
 | `timed out` is an outcome of every effect: usable in conditions, `define`, `desired` and `when` reactions | `prefer … then … after ⟨duration⟩` (with choices) |
 | `desired within …` raises alerts | alerts sent anywhere but the trace and `explain` |
-| scenario steps `when ⟨n⟩ ⟨unit⟩ pass`, `expect [no] alert for ⟨name⟩` | choices, `uses`, pools, per-group and global rules |
+| scenario steps `when ⟨n⟩ ⟨unit⟩ pass`, `expect [no] alert for ⟨name⟩`, `expect ⟨name⟩'s ⟨Kind⟩ is …` | choices, `uses`, pools, per-group and global rules |
 
 `timed out` is a state name like any other outcome. Slice 1's checker gives each state name one meaning per kind, so no attribute, mark or other outcome may also be called `timed out`.
 
@@ -886,7 +886,7 @@ Slice 1 parses `within` but never acts on it. Slice 2 makes time real: a request
 ### C.4 Acceptance
 
 - **Payment service never answers:** the request is sent 3 times, 30 seconds apart. Then the Payment is `timed out`, the Shipment never goes out, and after 3 days the order raises an alert whose explanation names the timed-out Payment.
-- **Slow carrier:** the carrier answers after the first re-send. The order settles within its goal, with no alert.
+- **Slow payment service:** it answers after the first re-send. The order settles within its goal, with no alert. (A slow carrier cannot show this: its 7-day deadline is longer than the 3-day goal.)
 - **Late answer:** an answer after the time-out is ignored with a note, and the unit is unchanged.
 - **Slice 1 still holds:** the three existing shop scenarios pass unchanged.
 - **Cost:** with one order that has a due timer, moving the clock costs the same number of kernel steps whether there are 1 or 1,000 other orders with nothing due.

@@ -3,12 +3,13 @@
 //! requests to adapters. In slice 1 the adapters are simulated: a scenario
 //! answers for them, one request at a time.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use suture::{HoleId, Injection, Machine, NetBuilder, Value};
-use suture_lang::ir::Program;
+use suture_lang::ir::{Program, TIMED_OUT};
 
-use crate::interp;
+use crate::interp::{self, duration, holds};
 use crate::kernel::{self, Kinds};
 use crate::state::{answer_value, send_from_value, Ask, Msg, Unit, Val};
 
@@ -20,13 +21,41 @@ pub struct Host {
     pub trace: Vec<String>,
     /// Outside requests waiting for an answer, oldest first, with their effect holes.
     pending: Vec<(Ask, HoleId)>,
+    /// The clock, in seconds from the start. Only `pass` moves it (appendix C.3.1).
+    pub now: u64,
+    /// Timers by due time, then by the order they were started (appendix C.3.2).
+    timers: BTreeMap<(u64, u64), Timer>,
+    started: u64,
+    /// The goal timers already started, by unit and goal.
+    goal_timers: BTreeSet<(String, u32)>,
+    /// Requests whose deadline passed, so a late answer is noted, not an error.
+    expired: Vec<Ask>,
+}
+
+/// What a timer is for.
+enum Timer {
+    /// The deadline of the request whose effect hole this is.
+    Deadline(HoleId),
+    /// A goal's deadline for a unit.
+    Goal(String, u32),
 }
 
 impl Host {
     pub fn new(prog: Program) -> Host {
         let prog = Arc::new(prog);
         let (kernel, kinds) = kernel::program(prog.clone());
-        Host { prog, machine: Machine::new(kernel), kinds, trace: vec![], pending: vec![] }
+        Host {
+            prog,
+            machine: Machine::new(kernel),
+            kinds,
+            trace: vec![],
+            pending: vec![],
+            now: 0,
+            timers: BTreeMap::new(),
+            started: 0,
+            goal_timers: BTreeSet::new(),
+            expired: vec![],
+        }
     }
 
     /// Creates a root entity as a new unit labeled `label`, and settles it.
@@ -49,12 +78,21 @@ impl Host {
     }
 
     /// The adapter answers its oldest pending request, or the oldest for `target`.
+    /// An answer for a request that already timed out is noted and ignored.
     pub fn answer(&mut self, adapter: &str, outcome: &str, data: &[(String, Val)], target: Option<&str>) -> Result<(), String> {
-        let i = self
-            .pending
-            .iter()
-            .position(|(a, _)| a.adapter == adapter && target.is_none_or(|t| a.label == t))
-            .ok_or_else(|| format!("{adapter} has no pending request{}", target.map(|t| format!(" for {t}")).unwrap_or_default()))?;
+        if outcome == TIMED_OUT {
+            return Err(format!("only the runtime reports `{TIMED_OUT}`; {adapter} must answer with an outcome of its effect"));
+        }
+        let matches = |a: &Ask| a.adapter == adapter && target.is_none_or(|t| a.label == t);
+        let Some(i) = self.pending.iter().position(|(a, _)| matches(a)) else {
+            let Some(j) = self.expired.iter().position(matches) else {
+                return Err(format!("{adapter} has no pending request{}", target.map(|t| format!(" for {t}")).unwrap_or_default()));
+            };
+            let ask = self.expired.remove(j);
+            self.trace.push(format!("      {adapter}: {outcome}   ({})", ask.key));
+            self.trace.push(format!("{:<4}ignored a late answer for {}: it timed out", ask.label, ask.key));
+            return Ok(());
+        };
         let hole = self.pending[i].1;
         let sig = self.machine.program().sig.clone();
         let mut b = NetBuilder::new(&sig);
@@ -69,6 +107,73 @@ impl Host {
         let tail = if shown.is_empty() { String::new() } else { format!(", {}", shown.join(", ")) };
         self.trace.push(format!("      {adapter}: {outcome}{tail}   ({})", ask.key));
         self.pump()
+    }
+
+    /// Moves the clock forward by `secs`, firing in order every timer due by
+    /// then; while a timer fires, the clock reads its due time (appendix C.3.2).
+    pub fn pass(&mut self, secs: u64) -> Result<(), String> {
+        let until = self.now + secs;
+        let mut first_error = None;
+        while let Some((&(due, seq), _)) = self.timers.first_key_value() {
+            if due > until {
+                break;
+            }
+            let timer = self.timers.remove(&(due, seq)).expect("the first timer exists");
+            self.now = due;
+            if let Err(e) = self.fire(timer) {
+                first_error.get_or_insert(e);
+            }
+        }
+        self.now = until;
+        first_error.map_or(Ok(()), Err)
+    }
+
+    /// When the request with this key is due, if it is pending.
+    pub fn deadline(&self, key: &str) -> Option<u64> {
+        let hole = self.pending.iter().find(|(a, _)| a.key == key)?.1;
+        self.timers.iter().find(|(_, t)| matches!(t, Timer::Deadline(h) if *h == hole)).map(|(&(due, _), _)| due)
+    }
+
+    fn schedule(&mut self, due: u64, timer: Timer) {
+        self.started += 1;
+        self.timers.insert((due, self.started), timer);
+    }
+
+    /// Fires a timer. One whose reason is gone does nothing: no step.
+    fn fire(&mut self, timer: Timer) -> Result<(), String> {
+        let sig = self.machine.program().sig.clone();
+        let mut b = NetBuilder::new(&sig);
+        match timer {
+            Timer::Deadline(hole) => {
+                let Some(i) = self.pending.iter().position(|(_, h)| *h == hole) else { return Ok(()) };
+                let meet = b.var();
+                b.agent(self.kinds.answer, answer_value(TIMED_OUT, &[]), meet, &[]);
+                let net = b.finish().map_err(|e| e.to_string())?;
+                let inj = Injection::new(net).at_hole(meet, hole).key(format!("deadline:{:032x}", hole.0));
+                self.machine.inject(inj).map_err(|e| e.to_string())?;
+                let (ask, _) = self.pending.remove(i);
+                let within = self.prog.effect_of(&ask.kind).map_or(0, |e| e.within_secs);
+                self.trace.push(format!("      {}: no answer within {}   ({})", ask.adapter, duration(within), ask.key));
+                self.expired.push(ask);
+                self.pump()
+            }
+            Timer::Goal(label, goal) => {
+                let Some(unit) = self.unit(&label) else { return Ok(()) };
+                let g = &self.prog.goals[goal as usize];
+                let applies = g.filter.iter().all(|f| holds(&self.prog, &unit.root, &[], f));
+                if !applies || unit.met.contains(&goal) || unit.alerts.contains(&goal) {
+                    return Ok(());
+                }
+                let (to, next) = (b.var(), b.var());
+                b.agent(self.kinds.msg, Msg::GoalDue { goal }.to_value(), to, &[next]);
+                let net = b.finish().map_err(|e| e.to_string())?;
+                self.machine.inject(Injection::new(net).at_label(to, &label).new_hole(next, Some(&label))).map_err(|e| e.to_string())?;
+                self.machine.run(None);
+                let noted = self.note(&label);
+                let pumped = self.pump();
+                noted.and(pumped)
+            }
+        }
     }
 
     /// A unit's current state, read from the graph.
@@ -110,7 +215,12 @@ impl Host {
                 }
             }
             self.machine.commit().map_err(|e| e.to_string())?;
-            self.pending.extend(outside);
+            for (ask, hole) in outside {
+                let within = self.prog.effect_of(&ask.kind).map_or(0, |e| e.within_secs);
+                self.expired.retain(|a| a.key != ask.key);
+                self.schedule(self.now + within, Timer::Deadline(hole));
+                self.pending.push((ask, hole));
+            }
             if effects.is_empty() {
                 return first_error.map_or(Ok(()), Err);
             }
@@ -139,6 +249,14 @@ impl Host {
         };
         for n in &unit.notes {
             self.trace.push(format!("{label:<4}{n}"));
+        }
+        for &g in &unit.matched {
+            let within = self.prog.goals.get(g as usize).and_then(|x| x.within_secs);
+            if let Some(secs) = within {
+                if self.goal_timers.insert((label.to_string(), g)) {
+                    self.schedule(self.now + secs, Timer::Goal(label.to_string(), g));
+                }
+            }
         }
         Ok(())
     }

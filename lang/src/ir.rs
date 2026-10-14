@@ -166,6 +166,9 @@ pub enum Cond {
     Or(Vec<Cond>),
 }
 
+/// The outcome of a request that got no answer in time (appendix C.3.3).
+pub const TIMED_OUT: &str = "timed out";
+
 impl Program {
     pub fn kind(&self, name: &str) -> Option<&Kind> {
         self.kinds.iter().find(|k| k.name == name)
@@ -176,7 +179,8 @@ impl Program {
     }
 
     /// The states a node of `kind` can be in (spec B.3): its Bool attributes,
-    /// its defined states, its effect's marks and outcomes, `done` and `failed`.
+    /// its defined states, its effect's marks and outcomes (`timed out` among
+    /// them), `done` and `failed`.
     pub fn states(&self, kind: &str) -> Vec<String> {
         let mut out: Vec<String> = vec![];
         if let Some(k) = self.kind(kind) {
@@ -187,6 +191,7 @@ impl Program {
             out.extend(e.marks.iter().cloned());
             out.push(e.success.clone());
             out.extend(e.failures.iter().cloned());
+            out.push(TIMED_OUT.into());
         }
         out.push("done".into());
         out.push("failed".into());
