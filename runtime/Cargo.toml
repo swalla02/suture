@@ -1,0 +1,12 @@
+[package]
+name = "suture-runtime"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "The Suture runtime: compiled programs running on the interaction-net kernel"
+publish = false
+
+[dependencies]
+suture = { path = ".." }
+suture-lang = { path = "../lang" }
+serde_json = "1"
