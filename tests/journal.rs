@@ -206,3 +206,66 @@ fn empty_journal_recovers_to_a_fresh_machine() {
     let r2 = Machine::recover(m0.prog.clone(), r.into_journal()).unwrap();
     assert_eq!(r2.stats().injects, 1);
 }
+
+struct AllowAll;
+
+impl Policy for AllowAll {
+    fn name(&self) -> &str {
+        "allow-all"
+    }
+    fn check(&self, _: &PatchView<'_>) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_journal_starts_with_header_and_version() {
+    let m0 = mini();
+    let path = tmp("version");
+    let m = Machine::with_journal(m0.prog.clone(), Box::new(FileJournal::open(&path).unwrap())).unwrap();
+    drop(m);
+    let records = FileJournal::open(&path).unwrap().durable().unwrap();
+    assert_eq!(records[0], Record::Header { program: "mini".into(), version: 1, format: suture::journal::FORMAT });
+    assert_eq!(records[1], Record::Version { program: "mini".into(), version: 1, hash: m0.prog.fingerprint() });
+    assert_eq!(suture::journal::FORMAT, 2);
+}
+
+#[test]
+fn fingerprints_cover_structure_but_not_rule_versions() {
+    assert_eq!(mini().prog.fingerprint(), mini().prog.fingerprint());
+    assert_eq!(mini().prog.fingerprint(), mini_with(1, 2).prog.fingerprint(), "replay checks rule versions and code");
+    assert_ne!(mini().prog.fingerprint(), mini().prog.with_policy(AllowAll).fingerprint());
+    let tighter = Limits { max_payload_bytes: 100, ..Limits::default() };
+    assert_ne!(mini().prog.fingerprint(), mini().prog.with_limits(tighter).fingerprint());
+}
+
+#[test]
+fn a_structurally_different_program_is_refused() {
+    let j = committed_journal(&mini());
+    let changed = mini().prog.with_policy(AllowAll); // same name and version, one more policy
+    let err = Machine::recover(changed, j).err().expect("must refuse");
+    assert!(matches!(err, RecoveryError::Version { .. }), "{err}");
+}
+
+#[test]
+fn a_pinned_fingerprint_is_journaled_and_checked() {
+    let m0 = mini();
+    let journal = || {
+        let mut m = Machine::new(m0.prog.clone().with_fingerprint(Digest(42)));
+        m.inject(sum(&m0, 1, 1, "a")).unwrap();
+        m.run(None);
+        m.commit().unwrap();
+        m.into_journal()
+    };
+    assert!(Machine::recover(m0.prog.clone().with_fingerprint(Digest(42)), journal()).is_ok());
+    let err = Machine::recover(m0.prog.clone().with_fingerprint(Digest(43)), journal()).err().expect("must refuse");
+    assert!(matches!(err, RecoveryError::Version { .. }), "{err}");
+}
+
+#[test]
+fn a_format_1_journal_is_refused() {
+    let path = tmp("format1");
+    std::fs::write(&path, "{\"t\":\"Header\",\"program\":\"mini\",\"version\":1,\"format\":1}\n{\"t\":\"Commit\"}\n").unwrap();
+    let err = Machine::recover(mini().prog, Box::new(FileJournal::open(&path).unwrap())).err().expect("must refuse");
+    assert!(matches!(err, RecoveryError::Header(_)), "{err}");
+}

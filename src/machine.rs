@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::check::{check_inject_static, check_patch, NetError, PatchSpec};
 use crate::graph::{Agent, Cause, Endpoint, Graph, GraphError, Hole, HoleOrigin};
-use crate::id::{AgentId, Digest, HoleId};
+use crate::id::{AgentId, Digest, DigestBuilder, HoleId};
 use crate::journal::{Journal, JournalError, MemJournal, RecBind, Record, RecoveryError, FORMAT};
 use crate::net::{resolve, Bind, End, ExtKind, HoleRef, Injection, NetData, Slot, Var};
 use crate::policy::{PatchView, Policy};
@@ -42,6 +42,8 @@ pub struct Program {
     pub rules: Arc<RuleTable>,
     pub policies: Arc<Vec<Arc<dyn Policy>>>,
     pub limits: Limits,
+    /// Set by `with_fingerprint`, for example to a compiled program file's hash.
+    fixed_fingerprint: Option<Digest>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -55,7 +57,13 @@ impl Program {
         if !rules.errors().is_empty() {
             return Err(ProgramError::Rules(rules.errors().to_vec()));
         }
-        Ok(Program { sig: Arc::new(sig), rules: Arc::new(rules), policies: Arc::new(vec![]), limits: Limits::default() })
+        Ok(Program {
+            sig: Arc::new(sig),
+            rules: Arc::new(rules),
+            policies: Arc::new(vec![]),
+            limits: Limits::default(),
+            fixed_fingerprint: None,
+        })
     }
 
     pub fn with_policy(mut self, p: impl Policy + 'static) -> Program {
@@ -68,6 +76,34 @@ impl Program {
     pub fn with_limits(mut self, l: Limits) -> Program {
         self.limits = l;
         self
+    }
+
+    /// Pins the fingerprint, for example to a compiled program file's hash.
+    pub fn with_fingerprint(mut self, d: Digest) -> Program {
+        self.fixed_fingerprint = Some(d);
+        self
+    }
+
+    /// What journal `Version` records identify this program by. That is the
+    /// pinned fingerprint, or else a digest of the signature, the rule table's
+    /// structure, the policy names and the limits. Rule versions and rule code
+    /// are left out, because replay checks them step by step (`RuleVersion`,
+    /// `Divergence`).
+    pub fn fingerprint(&self) -> Digest {
+        if let Some(d) = self.fixed_fingerprint {
+            return d;
+        }
+        let mut d = DigestBuilder::new("program");
+        self.sig.encode_structure(&mut d);
+        self.rules.encode_structure(&mut d);
+        d.u64(self.policies.len() as u64);
+        for p in self.policies.iter() {
+            d.str(p.name());
+        }
+        d.u64(self.limits.max_patch_agents as u64);
+        d.u64(self.limits.max_inject_agents as u64);
+        d.u64(self.limits.max_payload_bytes as u64);
+        d.finish()
     }
 
     pub fn name(&self) -> &str {
@@ -248,9 +284,9 @@ impl Machine {
             pending_effects: BTreeSet::new(),
             new_effects: Vec::new(),
         };
-        let header =
-            Record::Header { program: m.prog.name().to_string(), version: m.prog.version(), format: FORMAT };
-        m.journal.append(header);
+        let (program, version) = (m.prog.name().to_string(), m.prog.version());
+        m.journal.append(Record::Header { program: program.clone(), version, format: FORMAT });
+        m.journal.append(Record::Version { program, version, hash: m.prog.fingerprint() });
         m
     }
 
@@ -832,12 +868,21 @@ impl Machine {
                     let f = Fault { left: *left, right: *right, rule: rule.clone(), error: error.clone() };
                     m.faults.insert(norm(*left, *right), f);
                 }
+                Record::Version { program, version, hash } => m.check_version(program, *version, *hash)?,
                 Record::Commit | Record::Header { .. } => {}
             }
         }
         m.replaying = false;
         m.ready = m.graph.active_pairs().into_iter().filter(|p| !m.faults.contains_key(p)).collect();
         Ok(m)
+    }
+
+    fn check_version(&self, program: &str, version: u32, hash: Digest) -> Result<(), RecoveryError> {
+        let (p, v, h) = (self.prog.name(), self.prog.version(), self.prog.fingerprint());
+        if program == p && version == v && hash == h {
+            return Ok(());
+        }
+        Err(RecoveryError::Version { journal: format!("{program} v{version} {hash}"), program: format!("{p} v{v} {h}") })
     }
 
     #[allow(clippy::too_many_arguments)]

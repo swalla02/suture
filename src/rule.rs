@@ -12,6 +12,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::check::NetError;
+use crate::id::DigestBuilder;
 use crate::net::{NetBuilder, NetData, Var};
 use crate::sig::{KindId, Signature};
 use crate::value::{Value, ValueError};
@@ -237,6 +238,28 @@ impl RuleTable {
 
     pub fn errors(&self) -> &[String] {
         &self.errors
+    }
+
+    /// Feeds the table's structure into a program fingerprint: rule names,
+    /// kind pairs, modes, effect authority and forbidden pairs. Versions and
+    /// rule code are left out, because replay checks them step by step.
+    pub(crate) fn encode_structure(&self, d: &mut DigestBuilder) {
+        d.u64(self.rules.len() as u64);
+        for r in &self.rules {
+            d.str(&r.name);
+            d.u32(r.left.0 as u32);
+            d.u32(r.right.0 as u32);
+            d.u8(matches!(r.mode, RuleMode::Recorded) as u8);
+            d.u64(r.may_emit.len() as u64);
+            for k in &r.may_emit {
+                d.u32(k.0 as u32);
+            }
+        }
+        d.u64(self.forbidden.len() as u64);
+        for (a, b) in &self.forbidden {
+            d.u32(a.0 as u32);
+            d.u32(b.0 as u32);
+        }
     }
 
     pub fn coverage(&self, sig: &Signature) -> Coverage {

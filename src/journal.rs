@@ -14,13 +14,16 @@ use serde::{Deserialize, Serialize};
 use crate::id::{AgentId, Digest, HoleId};
 use crate::net::{NetData, Var};
 
-/// Journal format version written in every header.
-pub const FORMAT: u32 = 1;
+/// Journal format version written in every header. Format 2 adds `Version`.
+pub const FORMAT: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "t")]
 pub enum Record {
     Header { program: String, version: u32, format: u32 },
+    /// The program that writes the records that follow: its name, version
+    /// and fingerprint (`Program::fingerprint`).
+    Version { program: String, version: u32, hash: Digest },
     Inject { seq: u64, key: Option<String>, mint: bool, net: NetData, binds: Vec<(Var, RecBind)> },
     Reduce { left: AgentId, right: AgentId, rule: String, version: u32, digest: Digest, patch: Option<NetData> },
     Fault { left: AgentId, right: AgentId, rule: Option<String>, error: String },
@@ -220,6 +223,8 @@ pub enum RecoveryError {
     Journal(#[from] JournalError),
     #[error("journal header mismatch: {0}")]
     Header(String),
+    #[error("journal was written by {journal}; the running program is {program}")]
+    Version { journal: String, program: String },
     #[error("journal references unknown rule {0}")]
     UnknownRule(String),
     #[error("rule {rule} is version {program} but the journal recorded version {journal}")]

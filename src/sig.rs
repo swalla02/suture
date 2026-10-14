@@ -11,6 +11,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::id::DigestBuilder;
 use crate::value::{Value, ValueType};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -108,6 +109,37 @@ pub struct Signature {
 impl Signature {
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Feeds the signature's structure into a program fingerprint.
+    pub(crate) fn encode_structure(&self, d: &mut DigestBuilder) {
+        d.str(&self.name);
+        d.u32(self.version);
+        d.u64(self.types.len() as u64);
+        for t in &self.types {
+            d.str(&t.name);
+            d.u8(matches!(t.mode, TypeMode::SelfDual) as u8);
+        }
+        d.u64(self.kinds.len() as u64);
+        for k in &self.kinds {
+            d.str(&k.name);
+            encode_port(k.principal, d);
+            d.u64(k.aux.len() as u64);
+            for p in &k.aux {
+                d.str(&p.name);
+                encode_port(p.ty, d);
+            }
+            encode_value_type(&k.payload, d);
+            d.u8(k.effect as u8);
+            match &k.conserved {
+                None => d.u8(0),
+                Some(c) => {
+                    d.u8(1);
+                    d.str(&c.class);
+                    d.u64(c.key as u64);
+                }
+            }
+        }
     }
 
     pub fn version(&self) -> u32 {
@@ -274,6 +306,32 @@ impl KindBuilder<'_> {
     pub fn done(self) -> KindId {
         self.sig.kinds.push(self.decl);
         KindId((self.sig.kinds.len() - 1) as u16)
+    }
+}
+
+fn encode_port(p: PortType, d: &mut DigestBuilder) {
+    d.u32(p.ty.0 as u32);
+    d.u8(matches!(p.pol, Polarity::Neg) as u8);
+}
+
+fn encode_value_type(t: &ValueType, d: &mut DigestBuilder) {
+    match t {
+        ValueType::Any => d.u8(0),
+        ValueType::Unit => d.u8(1),
+        ValueType::Bool => d.u8(2),
+        ValueType::Int => d.u8(3),
+        ValueType::Str => d.u8(4),
+        ValueType::Tuple(xs) => {
+            d.u8(5);
+            d.u64(xs.len() as u64);
+            for x in xs {
+                encode_value_type(x, d);
+            }
+        }
+        ValueType::List(x) => {
+            d.u8(6);
+            encode_value_type(x, d);
+        }
     }
 }
 

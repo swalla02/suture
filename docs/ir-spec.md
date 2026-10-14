@@ -255,6 +255,7 @@ Each pair reduces at most once, so `(l, r)` is unique and identities are unique 
 | Record | Fields |
 | --- | --- |
 | `Header` | program, version, format |
+| `Version` | program, version, hash |
 | `Inject` | seq, key?, mint, net, binds with resolved holes |
 | `Reduce` | l, r, rule, version, digest, patch? |
 | `Fault` | l, r, rule?, error |
@@ -262,7 +263,10 @@ Each pair reduces at most once, so `(l, r)` is unique and identities are unique 
 
 `append` buffers records. `COMMIT` makes them durable atomically. `FileJournal` appends JSON lines and a commit marker, then calls `fsync`. Opening a journal truncates any torn or uncommitted tail.
 
+A journal starts with `Header` (format 2) and then `Version`. Its hash is the program's fingerprint: a pinned hash such as a compiled program file's, or else a digest of the signature, the rule table's structure, the policy names and the limits.
+
 **Recovery** replays the committed records in order, using the same code paths with journaling disabled:
+- `Version` must match the running program's name, version and fingerprint, or recovery fails with `Version`.
 - Injects are re-applied with their recorded hole identities.
 - A deterministic `Reduce` re-runs its rule. A version mismatch fails with `RuleVersion`, and a digest mismatch fails with `Divergence`. **Rule-code drift is detected, never silently replayed.**
 - A recorded `Reduce` applies the journaled patch after re-validating it. The rule is not re-run, so a nondeterministic or learned law reproduces its recorded decision.
