@@ -30,7 +30,7 @@ pub fn compile(files: &[(String, String)]) -> Result<ir::Program, Vec<Error>> {
     if !errors.is_empty() {
         return Err(errors);
     }
-    check::check(&src)
+    check::check(&src).map_err(|es| es.into_iter().map(|e| suggest::names(&src, e)).collect())
 }
 
 /// Compiles every `.st` file in `dir`, in file-name order.

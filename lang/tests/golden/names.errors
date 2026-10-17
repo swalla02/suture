@@ -1,0 +1,5 @@
+bad.st:1: unknown kind Ordr; did you mean Order?
+bad.st:2: an Order has no attribute, part or owner called `totl`; did you mean total?
+bad.st:3: an Order has no state `payed`; its states are cancelled, paid, settled, done, failed; did you mean paid?
+bad.st:4: an Order does not need a Shipmnet; did you mean Shipment?
+bad.st:5: an Order has no attribute, part or owner called `zzz`

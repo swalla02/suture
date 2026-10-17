@@ -378,3 +378,67 @@ pub fn improve(src: &Source, st: &Stmt, e: Error) -> Error {
     }
     Error { msg, ..e }
 }
+
+/// The edit distance between two words, counting a swap of two letters as one.
+fn distance(a: &str, b: &str) -> usize {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let mut d = vec![vec![0; b.len() + 1]; a.len() + 1];
+    for (i, row) in d.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    d[0] = (0..=b.len()).collect();
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            d[i][j] = (d[i - 1][j] + 1).min(d[i][j - 1] + 1).min(d[i - 1][j - 1] + cost);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                d[i][j] = d[i][j].min(d[i - 2][j - 2] + 1);
+            }
+        }
+    }
+    d[a.len()][b.len()]
+}
+
+/// The one name at most two letters from `w`, if there is exactly one.
+fn near<'a>(w: &str, names: impl IntoIterator<Item = &'a String>) -> Option<&'a String> {
+    let mut close = names.into_iter().filter(|n| *n != w && distance(&n.to_lowercase(), &w.to_lowercase()) <= 2);
+    let one = close.next()?;
+    close.all(|n| n == one).then_some(one)
+}
+
+/// The word that follows `marker` in `msg`, without its backticks.
+fn after<'m>(msg: &'m str, marker: &str) -> Option<&'m str> {
+    let rest = &msg[msg.find(marker)? + marker.len()..];
+    let rest = rest.trim_start_matches('`');
+    let end = rest.find(|c: char| !(c.is_alphanumeric() || c == '_')).unwrap_or(rest.len());
+    (end > 0).then(|| &rest[..end])
+}
+
+/// A checker error about an unknown kind, attribute or state, with `did you
+/// mean` when one declared name is close (appendix H.2.6).
+pub fn names(src: &Source, e: Error) -> Error {
+    let kinds: Vec<String> = src.kinds.iter().map(|k| k.name.clone()).chain(src.slots.iter().map(|s| s.name.clone())).collect();
+    let attrs_of = |k: &str| -> Vec<String> { src.kinds.iter().filter(|x| x.name == k).flat_map(|x| x.attrs.iter().map(|a| a.name.clone())).collect() };
+    let kind_before = |m: &str, marker: &str| m.find(marker).and_then(|i| m[..i].split(' ').next_back()).map(str::to_string);
+    let m = &e.msg;
+    let hint = if let Some(w) = after(m, "unknown kind ").or_else(|| after(m, "there is no kind ")).or_else(|| after(m, " does not need a ")).or_else(|| after(m, " does not need an ")) {
+        near(w, &kinds).cloned()
+    } else if let Some(w) = after(m, "has no state ") {
+        let listed: Vec<String> = m.split("its states are ").nth(1).map_or(vec![], |s| s.split(", ").map(str::to_string).collect());
+        near(w, &listed).cloned()
+    } else if let Some(w) = after(m, "has no attribute, part or owner called ") {
+        let k = kind_before(m, " has no attribute").unwrap_or_default();
+        let mut names = attrs_of(&k);
+        names.extend(kinds.iter().map(|k| k.to_lowercase()));
+        near(w, &names).cloned()
+    } else if let Some(w) = after(m, "has no attribute ") {
+        let k = kind_before(m, " has no attribute").filter(|k| k != "it").or_else(|| kind_before(m, " is shared")).unwrap_or_default();
+        near(w, &attrs_of(&k)).cloned()
+    } else {
+        None
+    };
+    match hint {
+        Some(h) => Error { msg: format!("{m}; did you mean {h}?"), ..e },
+        None => e,
+    }
+}

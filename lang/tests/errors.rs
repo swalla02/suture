@@ -63,15 +63,24 @@ fn the_example_of_section_3_5() {
     );
 }
 
-/// Golden errors (spec §7.5): each wrong sentence of `golden/bad.st`, with
-/// the shop, gives the message in `golden/bad.errors`, word for word.
-/// `UPDATE_GOLDEN=1` rewrites the expected file.
-#[test]
-fn golden_errors() {
+/// Golden errors (spec §7.5): each wrong sentence of `golden/⟨name⟩.st`,
+/// with the shop, gives the message in `golden/⟨name⟩.errors`, word for
+/// word. `UPDATE_GOLDEN=1` rewrites the expected files.
+fn golden(name: &str) {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden");
-    let got = shop_with(&std::fs::read_to_string(format!("{dir}/bad.st")).unwrap()).join("\n") + "\n";
+    let got = shop_with(&std::fs::read_to_string(format!("{dir}/{name}.st")).unwrap()).join("\n") + "\n";
     if std::env::var_os("UPDATE_GOLDEN").is_some() {
-        std::fs::write(format!("{dir}/bad.errors"), &got).unwrap();
+        std::fs::write(format!("{dir}/{name}.errors"), &got).unwrap();
     }
-    assert_eq!(got, std::fs::read_to_string(format!("{dir}/bad.errors")).unwrap());
+    assert_eq!(got, std::fs::read_to_string(format!("{dir}/{name}.errors")).unwrap());
+}
+
+#[test]
+fn golden_sentence_errors() {
+    golden("bad");
+}
+
+#[test]
+fn golden_name_errors() {
+    golden("names");
 }

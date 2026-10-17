@@ -1813,7 +1813,7 @@ impl Checker {
                     cur = o.kind.clone();
                 }
                 None => {
-                    self.errors.push(err(at, format!("a {cur} has no attribute, part or owner called `{w}`")));
+                    self.errors.push(err(at, format!("{} has no attribute, part or owner called `{w}`", a(&cur))));
                     return None;
                 }
             }
@@ -1844,7 +1844,7 @@ impl Checker {
                     return None;
                 }
                 if !p.has_part(&k, kind) {
-                    self.errors.push(err(at, format!("a {k} does not need a {kind}")));
+                    self.errors.push(err(at, format!("{} does not need {}", a(&k), a(kind))));
                     return None;
                 }
                 if let Some(s) = state {
@@ -2003,7 +2003,7 @@ impl Checker {
         if states.iter().any(|x| x == s) {
             return Some(());
         }
-        self.errors.push(err(at, format!("a {kind} has no state `{s}`; its states are {}", states.join(", "))));
+        self.errors.push(err(at, format!("{} has no state `{s}`; its states are {}", a(kind), states.join(", "))));
         None
     }
 }
