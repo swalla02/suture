@@ -7,7 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use suture::{HoleId, Injection, Machine, NetBuilder, Value};
-use suture_lang::ir::{Program, Ty, TIMED_OUT};
+use suture_lang::ir::{third_person, Admit, Admitted, Program, Ty, TIMED_OUT};
+use suture_lang::scenario::Caller;
 
 use crate::interp::{self, duration, holds};
 use crate::kernel::{self, Kinds};
@@ -37,6 +38,8 @@ pub struct Host {
     pools: BTreeMap<(String, String), BTreeMap<String, Vec<String>>>,
     /// Bindings with no candidate left, in arrival order (appendix F.2.9).
     waiters: Vec<Waiter>,
+    /// Every decision of the gate, in order (appendix G.2.2).
+    pub gate: Vec<String>,
 }
 
 /// A binding waiting on its pool key, with its choice's hole.
@@ -81,6 +84,7 @@ impl Host {
             expired: vec![],
             pools: BTreeMap::new(),
             waiters: vec![],
+            gate: vec![],
         };
         // One unit holds each total `checked globally` (appendix F.2.13).
         for g in h.prog.globals.clone() {
@@ -96,8 +100,33 @@ impl Host {
         self.create_with(kind, label, given, &[])
     }
 
-    /// Creates a root entity with the elements of its lists (appendix E.2.6).
+    /// Creates a root entity with the elements of its lists (appendix E.2.6),
+    /// as part of the world: it does not pass the gate.
     pub fn create_with(&mut self, kind: &str, label: &str, given: &[(String, Val)], items: &[(String, Vec<(String, Val)>)]) -> Result<(), String> {
+        self.make(None, kind, label, given, items)
+    }
+
+    /// A caller's input that creates a root entity: it passes the gate first
+    /// (appendix G.2.2).
+    pub fn input_new(
+        &mut self,
+        by: Option<&Caller>,
+        kind: &str,
+        label: &str,
+        given: &[(String, Val)],
+        items: &[(String, Vec<(String, Val)>)],
+    ) -> Result<(), String> {
+        self.make(Some(by), kind, label, given, items)
+    }
+
+    fn make(
+        &mut self,
+        gated: Option<Option<&Caller>>,
+        kind: &str,
+        label: &str,
+        given: &[(String, Val)],
+        items: &[(String, Vec<(String, Val)>)],
+    ) -> Result<(), String> {
         if self.machine.hole(label).is_some() {
             return Err(format!("{label} already exists"));
         }
@@ -111,7 +140,12 @@ impl Host {
         for (_, v) in given.iter().chain(elements.iter().flat_map(|(_, attrs)| attrs)) {
             self.carry(v, &mut facts);
         }
-        let unit = interp::new_unit_full(&self.prog, label, kind, &given, &elements, facts, self.clock())?;
+        let unit = interp::build_unit(&self.prog, label, kind, &given, &elements, facts, self.clock())?;
+        if let Some(by) = gated {
+            let fits = |a: &Admitted| matches!(a, Admitted::New { verb, kind: k } if by.is_some_and(|c| third_person(verb) == c.verb) && k == kind);
+            self.gate(by, fits, &format!("a new {kind} {label}"), &unit)?;
+        }
+        interp::refused_at_creation(&self.prog, &unit, self.clock())?;
         let sig = self.machine.program().sig.clone();
         let mut b = NetBuilder::new(&sig);
         let (meet, rest) = (b.var(), b.var());
@@ -277,6 +311,50 @@ impl Host {
             out.push((name.clone(), v));
         }
         Ok(out)
+    }
+
+    /// The gate (appendix G.2.2): whether some `admit` lets this caller do
+    /// what `fits` describes to `target` (`what`, as in `a new Order O1`).
+    /// The decision is kept either way.
+    fn gate(&mut self, by: Option<&Caller>, fits: impl Fn(&Admitted) -> bool, what: &str, target: &Unit) -> Result<(), String> {
+        if self.prog.admits.is_empty() {
+            return Ok(());
+        }
+        let decision = self.gate_check(by, fits, target);
+        let input = by.map_or(what.to_string(), |c| format!("{} {} {} {what}", c.role, c.name, c.verb));
+        let line = match &decision {
+            Ok(()) => format!("admitted: {input}"),
+            Err(e) => format!("refused at the gate: {input}: {e}"),
+        };
+        self.trace.push(format!("gate: {line}"));
+        self.gate.push(line);
+        decision.map_err(|e| format!("refused at the gate: {e}"))
+    }
+
+    fn gate_check(&self, by: Option<&Caller>, fits: impl Fn(&Admitted) -> bool, target: &Unit) -> Result<(), String> {
+        let by = by.ok_or("an input needs a caller")?;
+        let role = self.prog.role(&by.role).ok_or_else(|| format!("there is no role {}", by.role))?;
+        let mut target = target.clone();
+        let caller = match &role.kind {
+            Some(k) => {
+                match self.unit(&by.name) {
+                    Some(u) if u.root.kind == *k => {}
+                    _ => return Err(format!("there is no {k} {}", by.name)),
+                }
+                self.carry(&Val::Ref(by.name.clone()), &mut target.facts);
+                Some(by.name.as_str())
+            }
+            None => None,
+        };
+        let admits: Vec<&Admit> = self.prog.admits.iter().filter(|a| fits(&a.what) && a.roles.contains(&by.role)).collect();
+        let Some(first) = admits.first() else {
+            return Err(format!("no `admit` lets a {} do that", by.role));
+        };
+        if admits.iter().any(|a| a.cond.as_ref().is_none_or(|c| interp::admits(&self.prog, &target, caller, c))) {
+            Ok(())
+        } else {
+            Err(format!("the condition of `admit {}` does not hold", first.source))
+        }
     }
 
     /// Carries the units a value refers to, with the facts they carry

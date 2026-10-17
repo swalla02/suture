@@ -18,8 +18,19 @@ pub enum ScenarioStep {
     /// `when a new Order O1 with country France and total 120 EUR`, or
     /// `given a Stock S1 with …` for a shared entity (appendix F.2.1), then
     /// `and a line with …` for each list element, and optionally
-    /// `is refused by rule …` when the creation must be refused.
-    Create { kind: String, name: String, attrs: Vec<(String, Literal)>, items: Vec<(String, Vec<(String, Literal)>)>, refused: Option<String> },
+    /// `is refused by rule …` or `is refused at the gate` when it must be
+    /// refused. `when customer Ada places a new Order …` names its caller
+    /// (appendix G.2.1); a `given` (and every `and` after it) is the world,
+    /// which never passes the gate.
+    Create {
+        kind: String,
+        name: String,
+        attrs: Vec<(String, Literal)>,
+        items: Vec<(String, Vec<(String, Literal)>)>,
+        by: Option<Caller>,
+        given: bool,
+        refused: Option<Refused>,
+    },
     /// `and forms answers filled with licence "L-77" [for O1]`
     Answer { adapter: String, outcome: String, data: Vec<(String, Literal)>, target: Option<String> },
     /// `expect O1 is [not] settled`
@@ -33,6 +44,21 @@ pub enum ScenarioStep {
     /// `expect the number of P1's Shipments is 3`: any condition, with the
     /// unit's name standing for the subject (appendix E.2.9).
     ExpectCond { name: String, cond: crate::ast::Cond, text: String },
+}
+
+/// `customer Ada places …`: the caller's role and name, and the verb as written.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Caller {
+    pub role: String,
+    pub name: String,
+    pub verb: String,
+}
+
+/// How a step must be refused.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Refused {
+    Rule(String),
+    Gate,
 }
 
 pub fn parse_scenarios(file: &str, src: &str) -> Result<Vec<Scenario>, Error> {
@@ -62,10 +88,10 @@ pub fn parse_scenarios(file: &str, src: &str) -> Result<Vec<Scenario>, Error> {
                 _ => lines.push(line.clone()),
             }
         }
-        let mut steps = vec![];
+        let (mut steps, mut given) = (vec![], false);
         for line in &lines {
             let mut c = Cursor::new(line, &st.file, st.line);
-            steps.push(step(&mut c)?);
+            steps.push(step(&mut c, &mut given)?);
             c.expect_end()?;
         }
         out.push(Scenario { title, steps, line: st.line });
@@ -73,7 +99,7 @@ pub fn parse_scenarios(file: &str, src: &str) -> Result<Vec<Scenario>, Error> {
     Ok(out)
 }
 
-fn step(c: &mut Cursor) -> Result<ScenarioStep, Error> {
+fn step(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {
     if c.eat_word("expect") {
         let alert = if c.eat_word("no") {
             Some(true)
@@ -96,7 +122,11 @@ fn step(c: &mut Cursor) -> Result<ScenarioStep, Error> {
         *c = saved;
         return expect_cond(c);
     }
-    if !(c.eat_word("when") || c.eat_word("and") || c.eat_word("given")) {
+    if c.eat_word("given") {
+        *given = true;
+    } else if c.eat_word("when") {
+        *given = false;
+    } else if !c.eat_word("and") {
         return Err(c.error(format!("expected `given`, `when`, `and` or `expect`, found {}", c.found())));
     }
     if matches!(c.peek(), Some(Tok::Num(_))) {
@@ -106,7 +136,22 @@ fn step(c: &mut Cursor) -> Result<ScenarioStep, Error> {
         }
         return Ok(ScenarioStep::Pass { secs });
     }
-    if c.eat_word("a") || c.eat_word("an") {
+    let by = if c.is_word("a") || c.is_word("an") || matches!(c.peek_at(1), Some(Tok::Word(w)) if w == "answers") {
+        None
+    } else {
+        // `customer Ada places a new Order O1 …`
+        let role = c.word()?;
+        let name = c.word()?;
+        let verb = c.word()?;
+        if *given {
+            return Err(c.error("a `given` is the world, with no caller; write `when` for a caller's input"));
+        }
+        Some(Caller { role, name, verb })
+    };
+    if by.is_some() || c.is_word("a") || c.is_word("an") {
+        if !(c.eat_word("a") || c.eat_word("an")) {
+            return Err(c.error(format!("expected `a new ⟨Kind⟩`, found {}", c.found())));
+        }
         c.eat_word("new");
         let kind = c.kind_name()?;
         let name = c.word()?;
@@ -121,15 +166,8 @@ fn step(c: &mut Cursor) -> Result<ScenarioStep, Error> {
             c.expect_word("with")?;
             items.push((element, pairs(c)?));
         }
-        let refused = if c.eat_word("is") {
-            c.expect_word("refused")?;
-            c.expect_word("by")?;
-            c.expect_word("rule")?;
-            Some(c.word()?)
-        } else {
-            None
-        };
-        return Ok(ScenarioStep::Create { kind, name, attrs, items, refused });
+        let refused = refusal(c)?;
+        return Ok(ScenarioStep::Create { kind, name, attrs, items, by, given: *given, refused });
     }
     let adapter = c.word()?;
     c.expect_word("answers")?;
@@ -137,6 +175,22 @@ fn step(c: &mut Cursor) -> Result<ScenarioStep, Error> {
     let data = if c.eat_word("with") { pairs(c)? } else { vec![] };
     let target = if c.eat_word("for") { Some(c.word()?) } else { None };
     Ok(ScenarioStep::Answer { adapter, outcome, data, target })
+}
+
+/// `is refused by rule late`, `is refused at the gate`, or nothing.
+fn refusal(c: &mut Cursor) -> Result<Option<Refused>, Error> {
+    if !c.eat_word("is") {
+        return Ok(None);
+    }
+    c.expect_word("refused")?;
+    if c.eat_word("at") {
+        c.expect_word("the")?;
+        c.expect_word("gate")?;
+        return Ok(Some(Refused::Gate));
+    }
+    c.expect_word("by")?;
+    c.expect_word("rule")?;
+    Ok(Some(Refused::Rule(c.word()?)))
 }
 
 /// `expect O1 is [not] paid`, `expect O1's Payment is [not] timed out`.
@@ -237,6 +291,8 @@ mod tests {
                 name: "O1".into(),
                 attrs: vec![country, ("total".into(), eur(12000))],
                 items: vec![],
+                by: None,
+                given: false,
                 refused: None
             }
         );
@@ -261,6 +317,21 @@ mod tests {
         assert_eq!(s.steps[2], ScenarioStep::Alert { name: "O1".into(), negated: false });
         assert_eq!(s.steps[3], ScenarioStep::Alert { name: "O2".into(), negated: true });
         assert_eq!(s.steps[4], ScenarioStep::ExpectPart { name: "O1".into(), part: "Payment".into(), state: "timed out".into(), negated: false });
+    }
+
+    #[test]
+    fn callers_and_refusals_parse() {
+        let src = "scenario \"x\":\n  given  a Customer Ada with name Ada\n  and    a Customer Bob with name Bob\n  when   customer Ada places a new Order O1 with customer Ada\n  and    customer Bob places a new Order O2 with customer Ada\n         is refused at the gate\n";
+        let s = &parse_scenarios("o.scenario", src).unwrap()[0];
+        let ScenarioStep::Create { given, by, .. } = &s.steps[1] else { panic!("{:?}", s.steps[1]) };
+        assert!(*given && by.is_none());
+        let ScenarioStep::Create { given, by, refused, .. } = &s.steps[2] else { panic!() };
+        assert!(!*given && refused.is_none());
+        assert_eq!(by, &Some(Caller { role: "customer".into(), name: "Ada".into(), verb: "places".into() }));
+        let ScenarioStep::Create { refused, .. } = &s.steps[3] else { panic!() };
+        assert_eq!(refused, &Some(Refused::Gate));
+        let e = parse_scenarios("o.scenario", "scenario \"x\":\n  given  customer Ada places a new Order O1\n").unwrap_err();
+        assert!(e.msg.contains("a `given` is the world"), "{e}");
     }
 
     #[test]

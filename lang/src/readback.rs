@@ -330,6 +330,7 @@ fn step_names(p: &Program, kind: &str, path: &Path) -> Vec<(String, bool)> {
             }
             Step::Cand => out.push(("candidate".into(), false)),
             Step::Elem => out.push(("element".into(), false)),
+            Step::Caller => out.push(("caller".into(), false)),
             Step::Owner => match p.kind(&cur).and_then(|k| k.owner.clone()) {
                 Some(o) => {
                     out.push((o.attr, false));

@@ -2,7 +2,7 @@
 
 use suture_lang::ast::Literal;
 use suture_lang::ir::Program;
-use suture_lang::scenario::{Scenario, ScenarioStep};
+use suture_lang::scenario::{Caller, Refused, Scenario, ScenarioStep};
 
 use crate::host::Host;
 use crate::interp::{duration, holds, in_state};
@@ -28,17 +28,9 @@ pub fn run(prog: &Program, sc: &Scenario) -> Report {
     let mut failures = vec![];
     for (i, step) in sc.steps.iter().enumerate() {
         let result = match step {
-            ScenarioStep::Create { kind, name, attrs, items, refused } => {
-                let created = create(prog, &mut host, kind, name, attrs, items);
-                match (refused, created) {
-                    (None, r) => r,
-                    (Some(rule), Err(e)) if e.contains(&format!("refused by rule {rule}")) => {
-                        host.trace.push(format!("✓ {name} is refused by rule {rule}"));
-                        Ok(())
-                    }
-                    (Some(rule), Err(e)) => Err(format!("expected {name} to be refused by rule {rule}, but: {e}")),
-                    (Some(rule), Ok(())) => Err(format!("expected {name} to be refused by rule {rule}, but it was created")),
-                }
+            ScenarioStep::Create { kind, name, attrs, items, by, given, refused } => {
+                let created = create(prog, &mut host, kind, name, attrs, items, (!*given).then_some(by.as_ref()));
+                refusal(&mut host, name, refused.as_ref(), created, "it was created")
             }
             ScenarioStep::Answer { adapter, outcome, data, target } => {
                 values(prog, data).and_then(|v| host.answer(adapter, outcome, &v, target.as_deref()))
@@ -71,7 +63,25 @@ pub fn run(prog: &Program, sc: &Scenario) -> Report {
     Report { title: sc.title.clone(), host, failures }
 }
 
+/// Whether a step was refused as the scenario says it must be.
+fn refusal(host: &mut Host, name: &str, refused: Option<&Refused>, r: Result<(), String>, done: &str) -> Result<(), String> {
+    let (want, why) = match refused {
+        None => return r,
+        Some(Refused::Rule(rule)) => (format!("refused by rule {rule}"), format!("is refused by rule {rule}")),
+        Some(Refused::Gate) => ("refused at the gate".to_string(), "is refused at the gate".to_string()),
+    };
+    match r {
+        Err(e) if e.contains(&want) => {
+            host.trace.push(format!("✓ {name} {why}"));
+            Ok(())
+        }
+        Err(e) => Err(format!("expected {name} to be {want}, but: {e}")),
+        Ok(()) => Err(format!("expected {name} to be {want}, but {done}")),
+    }
+}
+
 /// A creation with its list elements, named in the singular (`a line`).
+/// `gated` holds the caller of an input; a `given` passes no gate.
 fn create(
     prog: &Program,
     host: &mut Host,
@@ -79,6 +89,7 @@ fn create(
     name: &str,
     attrs: &[(String, Literal)],
     items: &[(String, Vec<(String, Literal)>)],
+    gated: Option<Option<&Caller>>,
 ) -> Result<(), String> {
     let given = values(prog, attrs)?;
     let mut elements = vec![];
@@ -90,7 +101,10 @@ fn create(
             .ok_or_else(|| format!("{kind} has no list whose element is called {one}"))?;
         elements.push((list.name.clone(), values(prog, pairs)?));
     }
-    host.create_with(kind, name, &given, &elements)
+    match gated {
+        Some(by) => host.input_new(by, kind, name, &given, &elements),
+        None => host.create_with(kind, name, &given, &elements),
+    }
 }
 
 fn values(prog: &Program, pairs: &[(String, Literal)]) -> Result<Vec<(String, Val)>, String> {

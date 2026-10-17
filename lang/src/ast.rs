@@ -263,6 +263,35 @@ pub struct ReactionDecl {
     pub at: Loc,
 }
 
+/// `role customer is a Customer`, `role support` (appendix G.2.1).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RoleDecl {
+    pub name: String,
+    pub kind: Option<String>,
+    pub at: Loc,
+}
+
+/// What an `admit` lets a caller do (appendix G.2.2).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Admitted {
+    /// `admit place a new Order …`, `admit add a new Country, … or Stock …`
+    New { verb: String, kinds: Vec<String> },
+    /// `admit cancel Order …`: an event that reactions handle.
+    Event { verb: String, kind: String },
+    /// `admit change Stock's units …`
+    Change { kind: String, attr: String },
+}
+
+/// `admit … by customer[, support] [where ⟨cond⟩]`
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AdmitDecl {
+    pub what: Admitted,
+    pub roles: Vec<String>,
+    pub cond: Option<Cond>,
+    pub source: String,
+    pub at: Loc,
+}
+
 /// Everything parsed from a module's files.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Source {
@@ -277,4 +306,6 @@ pub struct Source {
     pub slots: Vec<SlotDecl>,
     pub prefers: Vec<PreferDecl>,
     pub uses: Vec<UsesDecl>,
+    pub roles: Vec<RoleDecl>,
+    pub admits: Vec<AdmitDecl>,
 }

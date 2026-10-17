@@ -23,16 +23,18 @@ pub struct View<'a> {
     pub elem: Option<&'a [usize]>,
     /// The period a take falls in, for the totals per period (appendix F.2.12).
     pub period: Option<&'a str>,
+    /// In an `admit` condition: the caller's unit (appendix G.2.3).
+    pub caller: Option<&'a str>,
 }
 
 impl<'a> View<'a> {
     pub fn of(u: &'a Unit) -> View<'a> {
-        View { root: &u.root, facts: &u.facts, taken: &u.taken, cand: None, elem: None, period: None }
+        View { root: &u.root, facts: &u.facts, taken: &u.taken, cand: None, elem: None, period: None, caller: None }
     }
 
     /// A tree being built, with its facts and nothing taken yet.
     fn bare(root: &'a Node, facts: &'a Facts) -> View<'a> {
-        View { root, facts, taken: &NO_TOTALS, cand: None, elem: None, period: None }
+        View { root, facts, taken: &NO_TOTALS, cand: None, elem: None, period: None, caller: None }
     }
 
     fn with(self, root: &'a Node) -> View<'a> {
@@ -111,6 +113,21 @@ pub fn new_unit_full(
     facts: Facts,
     now: i64,
 ) -> Result<Unit, String> {
+    let unit = build_unit(prog, label, kind, given, items, facts, now)?;
+    refused_at_creation(prog, &unit, now)?;
+    Ok(unit)
+}
+
+/// The unit as it would be created, before any rule is checked.
+pub fn build_unit(
+    prog: &Program,
+    label: &str,
+    kind: &str,
+    given: &[(String, Val)],
+    items: &[(String, Vec<(String, Val)>)],
+    facts: Facts,
+    now: i64,
+) -> Result<Unit, String> {
     let k = prog.kind(kind).ok_or_else(|| format!("there is no kind {kind}"))?;
     if let Some(o) = &k.owner {
         return Err(format!("{kind} is a part of {}; its owner's needs create it", o.kind));
@@ -138,10 +155,21 @@ pub fn new_unit_full(
         facts,
         taken: BTreeMap::new(),
     };
-    if let Some(r) = violated(prog, &step_at(prog, &unit, &Msg::Create, now).unit) {
-        return Err(format!("refused by rule {}: {}", r.name, r.paraphrase));
-    }
     Ok(unit)
+}
+
+/// A creation that its first step would leave breaking a rule is refused.
+pub fn refused_at_creation(prog: &Program, unit: &Unit, now: i64) -> Result<(), String> {
+    match violated(prog, &step_at(prog, unit, &Msg::Create, now).unit) {
+        Some(r) => Err(format!("refused by rule {}: {}", r.name, r.paraphrase)),
+        None => Ok(()),
+    }
+}
+
+/// Whether an `admit` condition holds at the root of `u`, with the caller's
+/// facts carried into it (appendix G.2.3). An unknown value does not admit.
+pub fn admits(prog: &Program, u: &Unit, caller: Option<&str>, c: &Cond) -> bool {
+    matches!(eval(prog, View { caller, ..View::of(u) }, &[], c), T::Yes)
 }
 
 /// Sets given attributes, which must exist, have the right type and not be formulas.
@@ -1291,6 +1319,7 @@ fn locate(v: View, from: &[usize], steps: &[Step]) -> Option<Place> {
                 _ => return None,
             },
             (_, Step::Cand) => Place::There(v.cand?.to_string()),
+            (_, Step::Caller) => Place::There(v.caller?.to_string()),
             (_, Step::Elem) => Place::Here(v.elem?.to_vec()),
             (Place::There(_), _) | (_, Step::Attr(_)) => return None,
         };
@@ -1311,6 +1340,9 @@ fn here(v: View, from: &[usize], steps: &[Step]) -> Option<Vec<usize>> {
 
 /// The value a path ends at, if it has one yet.
 fn value(v: View, from: &[usize], path: &Path) -> Option<Val> {
+    if path.steps == [Step::Caller] {
+        return v.caller.map(|c| Val::Ref(c.to_string()));
+    }
     let (last, rest) = path.steps.split_last()?;
     let Step::Attr(name) = last else { return None };
     match locate(v, from, rest)? {

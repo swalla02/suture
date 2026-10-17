@@ -29,11 +29,13 @@ fn statement(st: &Stmt, out: &mut Source) -> Result<(), Error> {
         "desired" => goal(st, at, out),
         "when" => reaction(st, at, out),
         "prefer" => prefer(st, at, out),
+        "role" => role(st, at, out),
+        "admit" => admit(st, at, out),
         w if w.starts_with(char::is_uppercase) && matches!(st.lines[0].get(1), Some(Tok::Word(x)) if x == "is") => slot(st, at, out),
         w if w.starts_with(char::is_uppercase) && matches!(st.lines[0].get(1), Some(Tok::Word(x)) if x == "uses") => uses(st, at, out),
         w if w.starts_with(char::is_uppercase) => needs(st, at, out),
         _ => Err(st.error(format!(
-            "unknown statement `{first}`: expected module, kind, effect, rule, define, desired, when, prefer, `Kind needs …` or `Slot is …`"
+            "unknown statement `{first}`: expected module, kind, effect, rule, define, desired, when, prefer, role, admit, `Kind needs …` or `Slot is …`"
         ))),
     }
 }
@@ -465,6 +467,62 @@ fn reaction(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     }
     c.expect_end()?;
     out.reactions.push(ReactionDecl { kind, outcome, actions, at });
+    Ok(())
+}
+
+/// `role customer is a Customer`, `role support`
+fn role(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
+    let toks = st.tokens();
+    let mut c = Cursor::new(&toks, &st.file, st.line);
+    c.expect_word("role")?;
+    let name = c.word()?;
+    if name.starts_with(char::is_uppercase) {
+        return Err(c.error(format!("a role is named in lower case: `role {}`", name.to_lowercase())));
+    }
+    let kind = if c.eat_word("is") {
+        if !(c.eat_word("a") || c.eat_word("an")) {
+            return Err(c.error(format!("expected `a` or `an`, found {}", c.found())));
+        }
+        Some(c.kind_name()?)
+    } else {
+        None
+    };
+    c.expect_end()?;
+    out.roles.push(RoleDecl { name, kind, at });
+    Ok(())
+}
+
+/// `admit place a new Order by customer where …`, `admit cancel Order by
+/// customer, support`, `admit change Stock's units by staff` (appendix G.2).
+fn admit(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
+    let toks = st.tokens();
+    let mut c = Cursor::new(&toks, &st.file, st.line);
+    c.expect_word("admit")?;
+    let verb = c.word()?;
+    let what = if c.eat_word("a") || c.eat_word("an") {
+        c.expect_word("new")?;
+        let mut kinds = vec![c.kind_name()?];
+        while c.eat_sym(',') || c.eat_word("or") {
+            kinds.push(c.kind_name()?);
+        }
+        Admitted::New { verb, kinds }
+    } else if verb == "change" {
+        let kind = c.kind_name()?;
+        if !c.eat_poss() {
+            return Err(c.error(format!("`admit change {kind}`: name the attribute, as in `admit change {kind}'s units`")));
+        }
+        Admitted::Change { kind, attr: c.word()? }
+    } else {
+        Admitted::Event { verb, kind: c.kind_name()? }
+    };
+    c.expect_word("by")?;
+    let mut roles = vec![c.word()?];
+    while c.eat_sym(',') || c.eat_word("or") {
+        roles.push(c.word()?);
+    }
+    let cond = if c.eat_word("where") { Some(condition(&mut c)?) } else { None };
+    c.expect_end()?;
+    out.admits.push(AdmitDecl { what, roles, cond, source: text(&toks[1..]), at });
     Ok(())
 }
 

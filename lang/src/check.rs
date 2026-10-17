@@ -4,15 +4,15 @@
 
 use crate::ast::{self, CmpOp, Head, Literal, Loc, NounPhrase, Source, Term, TypeName};
 use crate::ir::{
-    Action, Arith, Attr, Binding, Body, Cond, Criterion, Define, Effect, Goal, Kind, Lit, Need, Num, Op, OwnerRef, Path,
-    Program, Reaction, Rule, Slot, Step, Taking, Ty, CREATED, TIMED_OUT,
+    Action, Admit, Admitted, Arith, Attr, Binding, Body, Cond, Criterion, Define, Effect, Goal, Kind, Lit, Need, Num, Op, OwnerRef, Path,
+    Program, Reaction, Role, Rule, Slot, Step, Taking, Ty, CREATED, TIMED_OUT,
 };
 use crate::lex::Error;
 use crate::readback;
 
 /// Checks a parsed module and compiles it, reporting every error it finds.
 pub fn check(src: &Source) -> Result<Program, Vec<Error>> {
-    let mut cx = Checker { errors: vec![], scope: None, period: None, contribs: vec![] };
+    let mut cx = Checker { errors: vec![], scope: None, period: None, contribs: vec![], caller: None };
     let prog = cx.program(src);
     if cx.errors.is_empty() { Ok(prog) } else { Err(cx.errors) }
 }
@@ -20,7 +20,7 @@ pub fn check(src: &Source) -> Result<Program, Vec<Error>> {
 /// Resolves a condition about a `kind` against a compiled program, as a
 /// scenario's `expect` needs (appendix E.2.9).
 pub fn condition(p: &Program, kind: &str, c: &ast::Cond) -> Result<Cond, Vec<Error>> {
-    let mut cx = Checker { errors: vec![], scope: None, period: None, contribs: vec![] };
+    let mut cx = Checker { errors: vec![], scope: None, period: None, contribs: vec![], caller: None };
     let at = Loc { file: String::new(), line: 0 };
     match cx.cond(p, &at, kind, c) {
         Some(c) if cx.errors.is_empty() => Ok(c),
@@ -91,7 +91,7 @@ fn end_kind(p: &Program, kind: &str, steps: &[Step]) -> Option<String> {
         cur = match s {
             Step::Part(k) => k.clone(),
             Step::Owner => p.kind(&cur)?.owner.as_ref()?.kind.clone(),
-            Step::Slot(_) | Step::Attr(_) | Step::Ref(_) | Step::Bound(_) | Step::Cand | Step::Elem => return None,
+            Step::Slot(_) | Step::Attr(_) | Step::Ref(_) | Step::Bound(_) | Step::Cand | Step::Elem | Step::Caller => return None,
         };
     }
     Some(cur)
@@ -288,6 +288,7 @@ fn value_type(t: &TypeName) -> Option<Ty> {
 fn show(np: &NounPhrase) -> String {
     let mut s = match (&np.head, np.steps.is_empty()) {
         (Head::It, true) => "it".to_string(),
+        (Head::It, false) if np.steps[0] == "caller" => "the".to_string(),
         (Head::It, false) => "its".to_string(),
         (Head::The(k), _) => format!("the {k}"),
         (Head::Each(k), _) => format!("each {k}"),
@@ -307,6 +308,9 @@ struct Checker {
     period: Option<String>,
     /// The implicit bindings of relations across units, found while checking rules.
     contribs: Vec<Binding>,
+    /// In an `admit` condition: the kind of the caller's unit, or empty when
+    /// one of its roles has no kind (appendix G.2.3).
+    caller: Option<String>,
 }
 
 /// A relation across units (appendix F.2.11): from a Customer, `their
@@ -430,6 +434,8 @@ impl Checker {
             lists: vec![],
             bindings: vec![],
             globals: vec![],
+            roles: vec![],
+            admits: vec![],
             attempts: src.module.as_ref().and_then(|m| m.attempts).unwrap_or(3),
             candidates: src.module.as_ref().and_then(|m| m.candidates).unwrap_or(8),
             warnings: vec![],
@@ -453,6 +459,8 @@ impl Checker {
         self.rules(src, &mut p);
         self.goals(src, &mut p);
         self.reactions(src, &mut p);
+        self.roles(src, &mut p);
+        self.admits(src, &mut p);
         for i in 0..p.rules.len() {
             p.rules[i].fixed = fixed_rule(&p, &p.rules[i]);
         }
@@ -1172,6 +1180,84 @@ impl Checker {
         }
     }
 
+    fn roles(&mut self, src: &Source, p: &mut Program) {
+        for r in &src.roles {
+            if p.role(&r.name).is_some() {
+                self.errors.push(err(&r.at, format!("role {} is declared twice", r.name)));
+                continue;
+            }
+            if let Some(k) = &r.kind {
+                match p.kind(k) {
+                    None => {
+                        self.errors.push(err(&r.at, format!("role {}: there is no kind {k}", r.name)));
+                        continue;
+                    }
+                    Some(x) if x.owner.is_some() => {
+                        self.errors.push(err(&r.at, format!("role {}: {k} is a part, so no caller can be one", r.name)));
+                        continue;
+                    }
+                    Some(_) => {}
+                }
+            }
+            p.roles.push(Role { name: r.name.clone(), kind: r.kind.clone() });
+        }
+    }
+
+    /// Each `admit`, one for each kind it names (appendix G.2.2).
+    fn admits(&mut self, src: &Source, p: &mut Program) {
+        for a in &src.admits {
+            let mut kinds = vec![];
+            for r in &a.roles {
+                match p.role(r) {
+                    Some(role) => kinds.push(role.kind.clone().unwrap_or_default()),
+                    None => {
+                        let known: Vec<&str> = p.roles.iter().map(|r| r.name.as_str()).collect();
+                        let known = if known.is_empty() { "none is declared".to_string() } else { format!("the roles are {}", known.join(", ")) };
+                        self.errors.push(err(&a.at, format!("`admit … by {r}`: there is no role {r}; {known}")));
+                    }
+                }
+            }
+            if kinds.len() < a.roles.len() {
+                continue;
+            }
+            kinds.dedup();
+            let caller = if kinds.len() == 1 { kinds.pop().expect("one kind") } else { String::new() };
+            let targets: Vec<Admitted> = match &a.what {
+                ast::Admitted::New { verb, kinds } => kinds.iter().map(|k| Admitted::New { verb: verb.clone(), kind: k.clone() }).collect(),
+                ast::Admitted::Event { verb, kind } => vec![Admitted::Event { verb: verb.clone(), kind: kind.clone() }],
+                ast::Admitted::Change { kind, attr } => vec![Admitted::Change { kind: kind.clone(), attr: attr.clone() }],
+            };
+            for what in targets {
+                let k = what.kind().to_string();
+                match p.kind(&k) {
+                    None => {
+                        self.errors.push(err(&a.at, format!("`{}`: there is no kind {k}", a.source)));
+                        continue;
+                    }
+                    Some(x) if x.owner.is_some() => {
+                        let owner = x.owner.as_ref().map(|o| o.kind.clone()).unwrap_or_default();
+                        self.errors.push(err(&a.at, format!("`{}`: {k} is a part of {owner}; its owner's needs create and change it", a.source)));
+                        continue;
+                    }
+                    Some(_) => {}
+                }
+                self.caller = Some(caller.clone());
+                let cond = match &a.cond {
+                    Some(c) => match self.cond(p, &a.at, &k, c) {
+                        Some(c) => Some(c),
+                        None => {
+                            self.caller = None;
+                            continue;
+                        }
+                    },
+                    None => None,
+                };
+                self.caller = None;
+                p.admits.push(Admit { what, roles: a.roles.clone(), cond, source: a.source.clone() });
+            }
+        }
+    }
+
     fn filter(&mut self, p: &Program, at: &Loc, s: &ast::Subject) -> Option<Vec<Cond>> {
         s.filter.iter().map(|c| self.cond(p, at, &s.kind, c)).collect()
     }
@@ -1386,6 +1472,22 @@ impl Checker {
         let mut cur = from.to_string();
         let mut shared = false;
         let mut words: &[String] = &np.steps;
+        if let (Some(ck), Head::It, Some(w)) = (self.caller.clone(), &np.head, np.steps.first()) {
+            // `the caller`, `the caller's country` (appendix G.2.3).
+            if w == "caller" && p.kind(from).is_none_or(|k| k.attr("caller").is_none()) {
+                if ck.is_empty() {
+                    self.errors.push(err(at, format!("`{}`: a caller of this admit has a role with no kind, so it is only a name; write `role … is a ⟨Kind⟩`", show(np))));
+                    return None;
+                }
+                steps.push(Step::Caller);
+                cur = ck;
+                shared = true;
+                words = &np.steps[1..];
+                if words.is_empty() {
+                    return Some((Path { steps }, End::Ref(cur)));
+                }
+            }
+        }
         if let Some(sc) = self.scope.clone() {
             let elem = sc.elem.as_ref().filter(|(names, _)| matches!(np.head, Head::It) && np.steps.first().is_some_and(|w| names.contains(w)));
             if let Some((_, kind)) = elem {

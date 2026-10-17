@@ -21,6 +21,9 @@ pub struct Program {
     /// The units the host makes at the start, one for each rule `checked
     /// globally`, by kind: `all Refunds` (appendix F.2.13).
     pub globals: Vec<String>,
+    /// Who calls in, and what each may do (appendix G.2).
+    pub roles: Vec<Role>,
+    pub admits: Vec<Admit>,
     /// Attempts of a part, and sends of a request (appendix E.2.8).
     pub attempts: u32,
     /// How many candidates a choice among shared entities gathers (appendix F.2.7).
@@ -127,6 +130,43 @@ pub enum Criterion {
     Lowest(Num),
     Highest(Num),
     Those(Cond),
+}
+
+/// `role customer is a Customer`: a caller's name is then a Customer unit.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Role {
+    pub name: String,
+    pub kind: Option<String>,
+}
+
+/// One `admit` (appendix G.2.2). Its condition is read at the target, with
+/// [`Step::Caller`] for the caller's unit.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Admit {
+    pub what: Admitted,
+    pub roles: Vec<String>,
+    pub cond: Option<Cond>,
+    pub source: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Admitted {
+    New { verb: String, kind: String },
+    Event { verb: String, kind: String },
+    Change { kind: String, attr: String },
+}
+
+impl Admitted {
+    pub fn kind(&self) -> &str {
+        match self {
+            Admitted::New { kind, .. } | Admitted::Event { kind, .. } | Admitted::Change { kind, .. } => kind,
+        }
+    }
+}
+
+/// `cancel` → `cancels`, `place` → `places`, `fix` → `fixes` (appendix G.2.4).
+pub fn third_person(verb: &str) -> String {
+    if ["s", "sh", "ch", "x", "z"].iter().any(|e| verb.ends_with(e)) { format!("{verb}es") } else { format!("{verb}s") }
 }
 
 /// A slot an owner fills with one of its alternatives (appendix D).
@@ -294,6 +334,8 @@ pub enum Step {
     Cand,
     /// In a `uses … per`: the element the binding is for.
     Elem,
+    /// In an `admit` condition: the caller's unit, through its carried facts.
+    Caller,
 }
 
 /// A calculation (appendix E.2.3). Paths are relative to the node it is
@@ -352,6 +394,10 @@ pub const TIMED_OUT: &str = "timed out";
 pub const CREATED: &str = "created";
 
 impl Program {
+    pub fn role(&self, name: &str) -> Option<&Role> {
+        self.roles.iter().find(|r| r.name == name)
+    }
+
     pub fn kind(&self, name: &str) -> Option<&Kind> {
         self.kinds.iter().find(|k| k.name == name)
     }
