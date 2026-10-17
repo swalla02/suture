@@ -42,7 +42,10 @@ pub fn paraphrase(p: &Program, r: &Rule) -> String {
             let pred = w(pred);
             let pred = pred.strip_prefix("it ").unwrap_or(&pred);
             let tail = unless.as_ref().map_or_else(String::new, |u| format!(" unless {}", w(u)));
-            format!("no {k}{scope} ever {pred}{tail}")
+            match pred.strip_prefix("is ") {
+                Some(rest) => format!("no {k}{scope} is ever {rest}{tail}"),
+                None => format!("no {k}{scope} ever {pred}{tail}"),
+            }
         }
     }
 }

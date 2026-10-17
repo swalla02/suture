@@ -10,3 +10,5 @@ rule g9: Orders are frobbed
 rule g10: no Order has a Shipment that isn't sent
 define: an Order is closed when it is paid and it isn't cancelled
 desired within 3 days: every Order that isn't cancelled must be paid
+rule g13: no Order may have a Shipment that is sent unless it is paid
+rule g14: no Order whose country is restricted has a Shipment that is sent frobbing unless it is paid

@@ -47,6 +47,14 @@ const PHRASES: &[(&str, &str)] = &[
     ("cannot be", "is not"),
     ("if it isn't", "unless it is"),
     ("if it is not", "unless it is"),
+    ("may not have", "has no"),
+    ("must not have", "has no"),
+    ("cannot have", "has no"),
+    ("can't have", "has no"),
+    ("may have", "has"),
+    ("can have", "has"),
+    ("must have", "has"),
+    ("should have", "has"),
     ("doesn't have", "has no"),
     ("does not have", "has no"),
     ("hasn't got", "has no"),
@@ -111,6 +119,7 @@ const PATTERNS: &[&str] = &[
     "every <Kind> 's <attr> <cmp> <num>",
     "no <Kind> has a <Kind> unless <cond>",
     "no <Kind> has a <Kind> that is <state>",
+    "no <Kind> has a <Kind> that is <state> unless <cond>",
     "no <Kind> whose <attr> is <value> has a <Kind>",
     "the total <attr> of each <Kind> 's <Kinds> <cmp> <num>",
     "the number of each <Kind> 's <Kinds> <cmp> <num>",
@@ -354,7 +363,10 @@ pub fn improve(src: &Source, st: &Stmt, e: Error) -> Error {
                 // A suggestion keeps every negation, or it would say the opposite.
                 let negations = |w: &[String]| w.iter().filter(|w| ["no", "not"].contains(&w.to_lowercase().as_str())).count();
                 let said_neg = negations(&Said::words(&body));
+                // Nor does it drop what follows the user's `unless` or comparison.
+                let tail = said.split.as_ref().map(|(_, t)| t.clone());
                 mean = fill(&d, src, p, &fills)
+                    .filter(|s| tail.as_ref().is_none_or(|t| s.ends_with(t.as_str())))
                     .map(|s| format!("{s}{globally}"))
                     .filter(|s| tokens(s).is_ok_and(|t| negations(&Said::words(&t)) == said_neg))
                     .filter(|s| restate(s).is_some_and(|st| compiles(src, &st)));

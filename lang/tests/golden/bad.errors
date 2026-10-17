@@ -29,3 +29,8 @@ bad.st:11: "isn't" is not a Suture phrase
   did you mean:     an Order is closed when it is paid and it is not cancelled
 bad.st:12: "isn't" and "must be" are not Suture phrases
   did you mean:     every Order that is not cancelled is paid
+bad.st:13: rule g13: "may have" is not a Suture phrase
+  closest pattern:  no ⟨Kind⟩ has a ⟨Kind⟩ that is ⟨state⟩ unless ⟨cond⟩
+  did you mean:     no Order has a Shipment that is sent unless it is paid
+bad.st:14: rule g14: unexpected `frobbing` at the end
+  closest pattern:  no ⟨Kind⟩ has a ⟨Kind⟩ that is ⟨state⟩ unless ⟨cond⟩
