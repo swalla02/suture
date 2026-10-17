@@ -129,6 +129,16 @@ pub fn tokens(text: &str) -> Result<Vec<Tok>, String> {
             if possessive {
                 out.push(Tok::Poss);
                 i += 2;
+            } else if chars.get(i) == Some(&'\'') && chars.get(i + 1).is_some_and(|d| d.is_alphabetic()) {
+                // `can't`, `doesn't`: one word, which only the phrasing table
+                // knows (appendix H.2.2).
+                let Some(Tok::Word(w)) = out.last_mut() else { unreachable!("a word was just pushed") };
+                i += 1;
+                w.push('\'');
+                while i < chars.len() && chars[i].is_alphabetic() {
+                    w.push(chars[i]);
+                    i += 1;
+                }
             }
         } else if "{}:,=|()+-*/×−".contains(c) {
             out.push(Tok::Sym(c));

@@ -9,6 +9,7 @@ pub mod parse;
 pub mod readback;
 pub mod scenario;
 pub mod sentence;
+pub mod suggest;
 
 pub use lex::{statements, tokens, Cursor, Error, Stmt, Tok};
 pub use parse::parse_file;
@@ -16,7 +17,16 @@ pub use parse::parse_file;
 /// Compiles a module from its files, given as (name, text) pairs.
 pub fn compile(files: &[(String, String)]) -> Result<ir::Program, Vec<Error>> {
     let mut src = ast::Source::default();
-    let errors: Vec<Error> = files.iter().filter_map(|(name, text)| parse::parse_file(name, text, &mut src).err()).collect();
+    let mut errors = vec![];
+    let mut failed = vec![];
+    for (name, text) in files {
+        match parse::parse_all(name, text, &mut src) {
+            Ok(f) => failed.extend(f),
+            Err(e) => errors.push(e),
+        }
+    }
+    // Suggestions are made against everything that did parse (appendix H.2.5).
+    errors.extend(failed.into_iter().map(|(st, e)| suggest::improve(&src, &st, e)));
     if !errors.is_empty() {
         return Err(errors);
     }

@@ -14,7 +14,19 @@ pub fn parse_file(file: &str, src: &str, out: &mut Source) -> Result<(), Error> 
     Ok(())
 }
 
-fn statement(st: &Stmt, out: &mut Source) -> Result<(), Error> {
+/// Parses every statement of a file into `out`, and returns those that
+/// fail with their errors, so one bad sentence hides none after it.
+pub fn parse_all(file: &str, src: &str, out: &mut Source) -> Result<Vec<(Stmt, Error)>, Error> {
+    let mut failed = vec![];
+    for st in statements(file, src)? {
+        if let Err(e) = statement(&st, out) {
+            failed.push((st, e));
+        }
+    }
+    Ok(failed)
+}
+
+pub(crate) fn statement(st: &Stmt, out: &mut Source) -> Result<(), Error> {
     let at = Loc { file: st.file.clone(), line: st.line };
     let first = match st.lines[0].first() {
         Some(Tok::Word(w)) => w.clone(),
