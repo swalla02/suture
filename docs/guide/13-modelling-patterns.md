@@ -83,10 +83,12 @@ scenario "a paid order that is cancelled is refunded":
   when   shopper Sue places a new Order O1 with total 50 EUR
   and    payments answers captured
   expect O1 is paid
+  expect O1 is shipped
   expect O1 has no Refund
   when   shopper Sue cancels O1
   and    payments answers refunded
   expect O1's Refund is refunded
+  expect O1 has a Shipment that is sent
 ```
 
 The Shipment had already gone out when the order was cancelled, so it stays, and the refund follows from the new facts.

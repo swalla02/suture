@@ -91,7 +91,7 @@ kind Branch { city: Text }
 kind Shelf  { branch: Branch, label: Text }
 ```
 
-Through a reference you can read the other entity's attributes, and their references in turn: `its shelf's branch's city`. A reference must name an existing entity when the entity is created, or the creation is refused.
+Through a reference you can read the other entity's attributes, and their references in turn: `its shelf's branch's city`. A reference must name an existing entity when the entity is created; in a scenario, naming one that does not exist is an error in the scenario itself.
 
 There is one special case. When a kind is a **part** of another (chapter 4), its attribute of the owner's kind is not an ordinary reference: it is the owner, and the runtime sets it.
 

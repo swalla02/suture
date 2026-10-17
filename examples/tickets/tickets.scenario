@@ -27,6 +27,7 @@ scenario "a sold-out show waits for seats":
   when   fan Ada books a new Booking B1 with fan Ada, show Hamlet and quantity 2
   and    payments answers charged
   expect B1 is not issued
+  expect the total quantity taken from Fri is 0
   when   box Bo changes Fri's seats to 10
   and    mailer answers issued
   expect B1 is issued

@@ -22,7 +22,8 @@ Suture v0 is a prototype. Everything earlier in this guide runs and is tested. T
 | `the caller` in rules and reactions | put the condition on the `admit` |
 | events with data (`cancels an Order with reason …`) | an admitted change of an attribute, plus the event |
 | changing a reference, a set, a formula, `created`, a part's attribute, or an attribute a pool key reads | model the change as a new entity |
-| refreshing carried facts that a shared entity's own reactions or answers change | carried facts are refreshed after admitted changes only |
+| refreshing carried facts that a shared entity's own reactions or answers change | a rule that reads such a fact from another unit is a compile error; carry it with a formula or change it with `admit change` |
+| goals about parts, and events sent to parts | state the goal, and admit the event, on the root |
 | a `that` filter on a relation across units (`their Refunds that are refunded`) | filter on the subject's own relations |
 | sets of values (`set of Text`) | a set of a small kind (`set of Zone`) |
 | `attempts` per part kind | one module-wide setting |

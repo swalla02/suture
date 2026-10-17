@@ -62,14 +62,14 @@ In v0 callers are named by the scenario (and later by the input file). Real auth
 | Form | Lets a caller |
 |---|---|
 | `admit ⟨verb⟩ a new ⟨Kind⟩[, ⟨Kind⟩… or ⟨Kind⟩] by ⟨role⟩[, ⟨role⟩] [where ⟨cond⟩]` | create an entity from the input's fields |
-| `admit ⟨verb⟩ ⟨Kind⟩ by ⟨role⟩… [where ⟨cond⟩]` | send an event to an existing entity, handled by a `when` reaction |
+| `admit ⟨verb⟩ ⟨Kind⟩ by ⟨role⟩… [where ⟨cond⟩]` | send an event to an existing root entity, handled by a `when` reaction |
 | `admit change ⟨Kind⟩'s ⟨attr⟩ by ⟨role⟩… [where ⟨cond⟩]` | set one attribute of an existing entity |
 
 The verb is yours: `borrow`, `place`, `request`. It is what a scenario and the gate log say.
 
 ### The condition
 
-The condition reads the **target**: the new entity as it would be created (with its formulas and carried facts), or the existing entity. `the caller` is the caller's entity, and `the caller's name` one of its attributes. Using `the caller` in an admit whose role has no kind is a compile error, and so is an admit whose roles are of different kinds.
+The condition reads the **target**: the new entity as it would be created (with its formulas and carried facts), or the existing entity. `the caller` is the caller's entity, and `the caller's name` one of its attributes. Using `the caller` in an admit whose role has no kind is a compile error, and so is using it in an admit whose roles are of different kinds.
 
 The check reads at most two units, the target and the caller, so it is bounded.
 

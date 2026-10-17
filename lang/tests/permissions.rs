@@ -153,3 +153,25 @@ fn review_fixes_in_the_checker() {
     let e = errors(&format!("{SHOP}role clerk is a Product\nadmit add a new Country by customer, clerk where the caller's name is \"x\"\n"));
     assert!(e[0].contains("the roles of this admit are of different kinds"), "{e:?}");
 }
+
+#[test]
+fn a_rule_cannot_read_a_fact_another_unit_changes_by_itself() {
+    // v0 refreshes carried facts only after an admitted change (appendix
+    // G.1), so a rule over one that a reaction sets could break unseen.
+    let e = errors(
+        "role staff
+kind Lab   { name: Text, frozen: Bool = no }
+kind Grant { lab: Lab }
+kind Award { grant: Grant }
+Grant needs Award
+effect pay Award via bank within 1 day
+  sends    the grant's lab's name
+  marks    sent
+  reports  paid
+rule frozen: no Grant whose lab is frozen has an Award that is sent
+when a staff freezes a Lab: the Lab is frozen
+admit freeze Lab by staff
+",
+    );
+    assert!(e.len() == 1 && e[0].contains("rule frozen: it reads `frozen` from another unit, which a reaction or an answer changes there"), "{e:?}");
+}

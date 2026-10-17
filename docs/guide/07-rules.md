@@ -14,7 +14,7 @@ module grants version 1, currency EUR
 kind Fund   { name: Text, budget: Money }
 kind Lab    { name: Text, fund: Fund, frozen: Bool = no }
 kind Grant  { lab: Lab, amount: Money, approved: Bool = no }
-kind Award  { grant: Grant, amount: Money }
+kind Award  { grant: Grant, amount: Money = grant's amount }
 kind Report { grant: Grant }
 
 Grant needs Award, Report
@@ -98,7 +98,9 @@ rule budget: the total amount of all Awards is at most 1000000 EUR, checked glob
 
 ### Carried facts keep rules local
 
-`rule frozen` reads `its lab`, another unit. It is still local, because the compiler **carries** the facts a local rule reads into the unit when it is created. If the lab's `frozen` can change, through an admitted change or a reaction, the fact is **changeable**: the host remembers which units carry it, and refreshes and re-checks them when it changes (chapter 10). The rule's tier then becomes per-group.
+`rule frozen` reads `its lab`, another unit. It is still local, because the compiler **carries** the facts a local rule reads into the unit when it is created. If the lab's `frozen` can change through an `admit change`, the fact is **changeable**: the host remembers which units carry it, and refreshes and re-checks them when it changes (chapter 10). The rule's tier then becomes per-group.
+
+In v0 only admitted changes are refreshed. If the lab's own reaction or an adapter's answer set `frozen`, the grants would keep their old copy and the rule could break without anyone noticing, so the compiler refuses such a rule: `rule frozen: it reads `frozen` from another unit, which a reaction or an answer changes there; …`. Carry the fact with a formula, or change it with `admit change`.
 
 ## Periods
 

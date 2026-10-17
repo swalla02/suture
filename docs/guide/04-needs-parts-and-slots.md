@@ -27,6 +27,7 @@ effect hold Interview via calendar within 7 days
 `A needs B, C [while ⟨condition⟩]` gives **each** A its own B and its own C. These are A's **parts**. A part can have needs of its own, so structure can go as deep as the domain does: here a Review needs an Interview, but only for urgent applications.
 
 - **Ownership.** The part kind must have exactly one attribute of the owner's kind (`application: Application`). The runtime sets it; you never give it.
+- **A part's other attributes need a default or a formula** (`amount: Money = grant's amount`). Nobody creates a part from an input, so an attribute with neither stays unknown for ever, and every rule that reads it is unknown too.
 - **One unit.** A root entity and all its parts, at every depth, form one unit (chapter 2). Every rule about them is checked in one step.
 - **Conditional depth.** Structure appears only where its condition holds. An application that is not urgent never grows an Interview, and nothing in the program mentions it.
 
@@ -43,7 +44,7 @@ Parts and slots have the built-in states `done` and `failed`, so a sentence can 
 
 ### Withdrawal
 
-When a need's condition turns false, an **unfinished** part is withdrawn and gives back everything it took (chapter 9). A part that is already done stays done. If the application above is withdrawn before the fee is paid, the Fee and the Review disappear.
+When a need's condition turns false, an **unfinished** part is withdrawn and gives back everything it took (chapter 9). A part that is already done stays done. If the application above is withdrawn before the courier goes out, the Courier is withdrawn. The Fee stays, because its request went out when it was created, and so does the Review, which has no effect and so was done at once.
 
 Withdrawal is how Suture does compensation. You never write "if cancelled, release the stock". The cancelled entity stops needing its parts, and the parts give back what they hold.
 
@@ -64,6 +65,7 @@ scenario "an urgent application gets an interview, and a missed one is held agai
   and    calendar answers held
   expect A1's Fee is paid
   expect A1's Review is done
+  expect the number of A1's Review's Interviews is 2
 
 scenario "a normal application needs no interview":
   given  an Applicant Ada with name Ada
@@ -147,6 +149,14 @@ scenario "a declined fee withdraws the application and its waiting courier":
   when   payments answers declined
   expect A1 is withdrawn
   expect A1 has no Courier
+
+scenario "a courier held back for 3 days gives way to a collection":
+  given  an Applicant Ada with name Ada
+  when   a new Application A1 with applicant Ada
+  and    3 days pass
+  expect A1 has no Courier
+  when   mailer answers notified
+  expect A1's Collection is notified
 ```
 
 ## The `attempts` setting

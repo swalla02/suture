@@ -101,7 +101,7 @@ rule seats: the total quantity taken from each Session is at most its seats
   cost:            per-group
 
 rule early: no Booking has a Ticket that is sent unless it is paid
-  understood as:   for each Booking b: exists(s in b.Ticket where s is sent) implies b is paid
+  understood as:   for each Booking b: exists(t in b.Ticket where t is sent) implies b is paid
   in other words:  no booking ever has a ticket that is sent unless it is paid
   cost:            local
 
@@ -205,6 +205,7 @@ scenario "a sold-out show waits for seats":
   when   fan Ada books a new Booking B1 with fan Ada, show Hamlet and quantity 2
   and    payments answers charged
   expect B1 is not issued
+  expect the total quantity taken from Fri is 0
   when   box Bo changes Fri's seats to 10
   and    mailer answers issued
   expect B1 is issued

@@ -42,7 +42,7 @@ prefer Bin for a item: highest units
 
 ## Shared entities
 
-A kind that no other kind creates through `needs` is a **root**, and a root that other units refer to is **shared**: Zone, Product, Bin and Driver here. A shared entity is a unit like any other. Its own rules are checked by every step that changes it, and in a scenario it is created with `given`.
+A kind that no other kind creates through `needs` is a **root**, and a root that other units refer to is **shared**: Zone, Sender, Product, Bin and Driver here. A shared entity is a unit like any other. Its own rules are checked by every step that changes it, and in a scenario it is created with `given`.
 
 ## Bindings: `uses`
 
@@ -137,7 +137,7 @@ scenario "a parcel waits for a driver, and a new one wakes it":
   and    a Driver Eli with name Eli, zones North, capacity 5 and rate 7 EUR
   when   a new Parcel P1 with sender Sam, zone North and weight 8
          and an item with product Tea and quantity 2
-  expect P1 has a Leg
+  expect P1 has no Leg that is out
   expect the total weight taken from Eli is 0
   given  a Driver Dee with name Dee, zones North, capacity 20 and rate 9 EUR
   expect the total weight taken from Dee is 8

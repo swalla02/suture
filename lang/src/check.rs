@@ -417,16 +417,30 @@ fn key_reads(p: &Program, b: &Binding) -> Vec<(String, String)> {
 /// The changeable attributes of other units a rule reads through carried
 /// facts: each needs a watch (appendix G.2.7).
 fn watched(p: &Program, r: &Rule) -> Vec<String> {
-    let changes = admitted_changes(p);
+    carried_reads(r, &admitted_changes(p))
+}
+
+/// The attributes a reaction or an answer sets, as (kind, attribute), with
+/// an empty kind: carried copies of these are never refreshed in v0.
+fn set_inside(p: &Program) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = p.reactions.iter().flat_map(|r| r.actions.iter().map(|a| (String::new(), a.attr.clone()))).collect();
+    out.extend(p.effects.iter().flat_map(|e| e.data.iter().map(|(n, _)| (String::new(), n.clone()))));
+    out
+}
+
+/// The attributes in `changes` that `r` reads from another unit, through a
+/// reference or a binding, named `K's a` (or `a`).
+fn carried_reads(r: &Rule, changes: &[(String, String)]) -> Vec<String> {
     let mut out = vec![];
     let mut see = |x: &Path, last: Option<&str>| {
         if !x.steps.iter().any(|s| matches!(s, Step::Ref(_) | Step::Bound(_))) {
             return;
         }
         if let Some(a) = last {
-            for (k, c) in &changes {
-                if c == a && !out.contains(&format!("{k}'s {c}")) {
-                    out.push(format!("{k}'s {c}"));
+            for (k, c) in changes {
+                let name = if k.is_empty() { c.clone() } else { format!("{k}'s {c}") };
+                if c == a && !out.contains(&name) {
+                    out.push(name);
                 }
             }
         }
@@ -597,6 +611,22 @@ impl Checker {
         self.reactions(src, &mut p);
         for i in 0..p.rules.len() {
             p.rules[i].fixed = fixed_rule(&p, &p.rules[i]);
+            // A carried fact that the other unit's own reactions or answers
+            // change is never refreshed in v0 (appendix G.1), so the rule
+            // could be broken without anyone knowing: refuse it.
+            let stale = carried_reads(&p.rules[i], &set_inside(&p));
+            if !stale.is_empty() {
+                let r = &p.rules[i];
+                let at = src.rules.iter().find(|x| x.name == r.name).map_or_else(|| Loc { file: String::new(), line: 0 }, |x| x.at.clone());
+                self.errors.push(err(
+                    &at,
+                    format!(
+                        "rule {}: it reads `{}` from another unit, which a reaction or an answer changes there; v0 refreshes such copies only after an `admit change`, so the rule could break unseen. Carry the fact with a formula, or change it with `admit change`",
+                        r.name,
+                        stale.join("`, `")
+                    ),
+                ));
+            }
             let w = watched(&p, &p.rules[i]);
             if !w.is_empty() && p.rules[i].tier == "local" {
                 p.rules[i].tier = format!("per-group (watches {})", w.join(", "));

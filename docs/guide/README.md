@@ -2,7 +2,7 @@
 
 Suture is a language for writing systems as statements, not steps. You write what exists, what each thing needs, the rules that must always hold, the goals to reach and by when, what the outside world does, and who may do what. You never write the order of steps, status machines, retries, locks, compensations or crash recovery. The runtime does that work, and it can say at any moment why something is not done yet.
 
-This guide teaches the language as it runs today (prototype v0, slices 1 to 7). Every program and scenario in it is compiled and run by the test suite (`runtime/tests/guide.rs`), so if an example here stops working, the build fails.
+This guide teaches the language as it runs today (prototype v0, slices 1 to 7). Every `suture` program block and every scenario in it is compiled and run by the test suite (`runtime/tests/guide.rs`), so if an example here stops working, the build fails.
 
 ## How to read it
 

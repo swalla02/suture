@@ -15,7 +15,7 @@ kind Account { hire: Hire }
 Hire needs Laptop, Account while it is not left
 Hire needs Badge while it is not remote and it is not left
 
-effect ship Laptop via it within 2 days
+effect ship Laptop via itdesk within 2 days
   sends    the hire's name
   reports  delivered | fails with lost
 effect print Badge via security within 1 day
@@ -52,6 +52,7 @@ desired [within ⟨duration⟩]: every ⟨subject⟩ is ⟨state⟩[ and ⟨stat
 
 - For every entity that matches the subject, the states must **eventually** all hold.
 - The deadline runs from the moment the entity **first matched** the subject. Here that is when the hire was created, since a new hire is not `left`.
+- A goal is about a root kind. In v0 a part cannot be a goal's subject; state the goal on its owner (`every Hire is equipped`, with `define: a Hire is equipped when its Laptop is delivered`).
 - A goal without `within` has no deadline: it is still checked, and `explain` reports whether it is met.
 
 A goal is not an instruction. It does not make anything happen: needs do that. It states what success looks like, so the runtime can tell you when it has not happened in time.
@@ -67,7 +68,7 @@ When a goal's deadline passes and the goal is not met, the entity raises an **al
 ```scenario
 scenario "a remote hire needs no badge":
   given  a Hire Ana with name Ana and remote yes
-  when   it answers delivered
+  when   itdesk answers delivered
   and    identity answers opened
   expect Ana is equipped
   expect Ana is admitted
@@ -78,11 +79,11 @@ scenario "a lost laptop is replaced, and the goal is met late":
   given  a Hire Bo with name Bo
   when   security answers printed
   and    identity answers opened
-  and    it answers lost
+  and    itdesk answers lost
   and    4 days pass
   expect an alert for Bo
   expect Bo is not equipped
-  when   it answers delivered
+  when   itdesk answers delivered
   expect Bo is equipped
 ```
 
