@@ -938,3 +938,45 @@ Checks: a slot's name is capitalized and is not a kind; its alternatives are kin
 - **Patience never abandons a part that went out:** a Shipment already sent stays, whatever its patience.
 - The slice 1 and slice 2 scenarios still pass. One expectation changed on purpose: an order whose payment never comes no longer keeps an unsent Shipment after 2 days (its Delivery moves to a Refund, which waits on rule `refund`).
 - Every scenario's journal replays to the same state.
+
+## Appendix E. Prototype slice 4: values and relations (2026-10-17)
+
+Slices 1–3 were chosen by what the shop needed next. The user asked why the work followed the example rather than the whole language, so from slice 4 on, each slice is chosen from a construct-by-construct audit of §3, and is tested on small programs of its own and on two apps: the shop and workspace provisioning. The audit found that the largest gap is values and relations (numbers, math, totals, plurals), which shared entities depend on. Slice 4 builds the part of that which lives inside one unit; what needs other units moves to slice 5.
+
+### E.1 What slice 4 adds
+
+| Added in slice 4 | Moves to slice 5 (needs shared entities or a clock in sentences) |
+|---|---|
+| math: `+`, `−`, `×`, `/` (also `-`, `*`) and parentheses | `set of K`, `contains`, `does not contain` |
+| `the total ⟨attr⟩ of ⟨np⟩'s ⟨Kinds⟩ [that ⟨cond⟩]`, `the number of ⟨np⟩'s ⟨Kinds⟩ [that ⟨cond⟩]` | `the total ⟨attr⟩ taken from ⟨np⟩` |
+| plurals, with irregular ones declared: `kind Person (plural People) { … }` | `Time`, `Duration`, `created`, per-period rules |
+| bounds for each entity: `the total amount of each Order's Refunds is at most its total` | |
+| `whose ⟨attr⟩` with any predicate (`whose total is at least 100 EUR`), `has a ⟨Kind⟩ or a ⟨Kind⟩` | |
+| formula attributes: `amount: Money = order's total`, computed once at creation | |
+| `list of K`: entities given together with their owner, and `the total of ⟨calculation⟩ over ⟨list⟩` with `the ⟨element⟩` | |
+| `⟨np⟩'s ⟨attr⟩ becomes ⟨num or np⟩` in reactions | |
+| the module setting `attempts` | `candidates` (with `uses`) |
+| scenarios: `and a ⟨element⟩ with …` in creation, `expect ⟨cond⟩` about any unit | |
+
+### E.2 Semantics that slice 4 settles
+
+1. **Relations.** `⟨np⟩'s ⟨Kinds⟩` is every part of that kind under the node, all attempts included, in creation order: a part counts until it is withdrawn (§3.3, D9), so three lost Shipments are three Shipments. `⟨np⟩'s ⟨Kind⟩` (singular) is still the current attempt.
+2. **Plurals.** A kind's plural is its name plus `s`, or `es` after s, x, ch and sh, unless declared. A plural is only valid after `'s` (`its Refunds`), and a list attribute names the same relation (`its lines`).
+3. **Numbers.** Arithmetic works on `Money` and `Count`:
+   - `Money ± Money`, `Count ± Count`, `Money × Count`, `Count × Money`, `Count × Count`, `Money / Count` and `Count / Count`; division rounds toward zero (to the cent for Money). Anything else is a compile error.
+   - `×` and `/` bind tighter than `+` and `−`, left to right; parentheses group.
+   - A value that is not known yet (B.3.3) makes the whole calculation unknown, and so does an overflow or a division by zero. An unknown calculation never breaks a rule and makes a condition false, as in slice 1.
+   - A sum over no entities is 0.
+4. **Bounds for each entity.** `⟨num with each K⟩ ⟨comparison⟩ ⟨num⟩` is a rule about every K; `its` in it means that K. It reads back with its scope made explicit, and its cost is per-group: one running total per K. In slice 4 the group always lies inside one unit, so it is checked like a local rule.
+5. **Formula attributes.** After `=`, a literal is a default; anything else is a formula, computed once when the entity is created and never changed. It is computed from the entity's own given values and its owner's attributes, after defaults. A formula whose value is unknown leaves the attribute unknown.
+6. **Lists.** `lines: list of Line` gives an entity a list of elements given with it at creation (a scenario writes `and a line with product tea and quantity 2`). The element kind names its owner like a part, has no needs or effects of its own in slice 4, and is `done` from the start. `the total of ⟨calculation⟩ over ⟨list⟩` sums a calculation in which `the ⟨element⟩` (the list's name in the singular, `the line`) is each element in turn.
+7. **`becomes`.** `⟨np⟩'s ⟨attr⟩ becomes ⟨num or np⟩` sets a value attribute when the reaction's event happens; the types must match. Like every action, it is refused if it would break a rule (B.3.4, C.3.3 for time-outs). A value that is unknown is not set, and the trace says so. A `Count` never becomes negative: that is refused too.
+8. **`attempts`.** `module shop version 1, currency EUR, attempts 5` sets the number of attempts of a part and of sends of a request (default 3).
+9. **Scenario conditions.** `expect ⟨cond⟩` takes any condition, in which a unit's name stands where a subject would (`expect P1's total is at most 90 EUR`, `expect the number of P1's Shipments is 3`). The names `expect … alert …` and the slice 1–3 forms still work.
+
+### E.3 Acceptance
+
+- Each row of E.1 has small programs that use it, and programs that misuse it get errors with file and line.
+- **The shop:** a `cap` rule bounds refunds by the order's total; the number of an order's Shipments after three lost parcels is 3; formula attributes carry the order's total into a Refund.
+- **Workspace provisioning** (`examples/workspaces/`): a workspace is requested with a list of members; it needs an account, a repository and a charge whose amount is a formula; a bound limits members to the plan's seats; a slot chooses storage; scenarios cover a workspace that is ready, one with too many members, and one whose account service never answers.
+- Every scenario of both apps replays to the same state.
