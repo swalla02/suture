@@ -117,6 +117,25 @@ pub fn time_text(t: i64) -> String {
     format!("{y:04}-{m:02}-{d:02} {:02}:{:02}", secs / 3_600, secs % 3_600 / 60)
 }
 
+/// The period a time falls in (appendix F.2.12), in UTC: `2026-01-17` for
+/// a day, the Monday it starts on for a week, `2026-01` for a month, `2026`
+/// for a year.
+pub fn period_key(period: &str, t: i64) -> String {
+    let days = EPOCH_DAYS + t.div_euclid(86_400);
+    let date = |d: i64| {
+        let (y, m, d) = civil(d);
+        format!("{y:04}-{m:02}-{d:02}")
+    };
+    let (y, m, _) = civil(days);
+    match period {
+        // 1970-01-01, day 0, was a Thursday.
+        "week" => format!("week of {}", date(days - (days + 3).rem_euclid(7))),
+        "month" => format!("{y:04}-{m:02}"),
+        "year" => format!("{y:04}"),
+        _ => date(days),
+    }
+}
+
 /// A shared entity as another unit carries it (appendix F.2.3): its kind,
 /// when it was created, and its attributes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -716,6 +735,12 @@ mod tests {
         let d = Decide { label: "O1".into(), node: "O1/Shipment#1".into(), bind: "Stock.0".into(), binding: 1, elem: Some(0), taken, skip: vec!["S1".into()] };
         assert_eq!(Decide::from_value(&d.to_value()).unwrap(), d);
         assert_eq!(d.key(), "O1/Shipment#1@Stock.0");
+        let t = 16 * 86_400 + 3_600; // 2026-01-17 01:00, a Saturday
+        assert_eq!(period_key("day", t), "2026-01-17");
+        assert_eq!(period_key("week", t), "week of 2026-01-12");
+        assert_eq!(period_key("month", t), "2026-01");
+        assert_eq!(period_key("year", t), "2026");
+        assert_eq!(period_key("week", 0), "week of 2025-12-29");
         let (label, msg) = send_from_value(&send_value("O1", &m)).unwrap();
         assert_eq!((label.as_str(), Msg::from_value(&msg).unwrap()), ("O1", m));
         assert!(Unit::from_value(&Value::from(3i64)).is_err());

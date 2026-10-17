@@ -245,3 +245,95 @@ fn a_new_stock_wakes_a_waiting_binding() {
 ",
     );
 }
+
+const REFUNDS: &str = "module t version 1, currency EUR
+kind Country  { restricted: Bool = no }
+kind Customer { country: Country }
+kind Order    { customer: Customer, total: Money, country: Country = customer's country }
+kind Shipment { order: Order }
+kind Refund   { order: Order, customer: Customer = order's customer, amount: Money = order's total }
+Delivery is Shipment or Refund
+Order needs Delivery
+prefer Delivery: Shipment, then Refund after 2 days
+effect send Shipment via carriers within 7 days
+  sends the Order's country
+  reports delivered
+effect pay Refund via bank within 1 hour
+  sends its amount
+  reports paid
+rule embargo: no Order whose country is restricted has a Shipment
+rule cap: for each Customer and month, the total amount of their Refunds is at most 100 EUR
+rule budget: the total amount of all Refunds is at most BUDGET, checked globally
+";
+
+fn refunds(budget: &str, body: &str) -> suture_runtime::scenario::Report {
+    let src = REFUNDS.replace("BUDGET", budget);
+    let p = suture_lang::compile(&[("t.st".to_string(), src)]).unwrap_or_else(|e| panic!("{e:?}"));
+    let sc = format!(
+        "scenario \"s\":
+  given  a Country DE
+  and    a Country IR with restricted yes
+  and    a Customer C1 with country DE
+  and    a Customer C2 with country IR
+  and    a Customer C3 with country IR
+{body}"
+    );
+    let sc = &parse_scenarios("t.scenario", &sc).unwrap_or_else(|e| panic!("{e}"))[0];
+    let r = run(&p, sc);
+    assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
+    assert!(r.host.machine.faults().is_empty(), "{:?}", r.host.machine.faults());
+    r
+}
+
+fn total(r: &suture_runtime::scenario::Report, label: &str, name: &str) -> Option<Val> {
+    r.host.unit(label).unwrap().taken.get(name).cloned()
+}
+
+#[test]
+fn a_rule_on_fixed_facts_moves_the_slot_on_at_once() {
+    let r = refunds(
+        "1000 EUR",
+        "  when   a new Order O1 with customer C2 and total 30 EUR
+  expect O1 has a Refund
+  expect O1 has no Shipment
+",
+    );
+    let trace = r.host.trace.join("\n");
+    assert!(trace.contains("Delivery: Shipment refused by rule embargo, trying Refund"), "{trace}");
+    assert_eq!(total(&r, "C2", "amount of Refunds per month@2026-01"), Some(Val::Money(3_000)));
+    assert_eq!(total(&r, "all Refunds", "amount of Refunds"), Some(Val::Money(3_000)));
+    assert!(r.host.pending().iter().any(|a| a.adapter == "bank"), "the Refund is paid once its totals grant it");
+}
+
+#[test]
+fn a_monthly_cap_makes_a_refund_wait_and_a_new_month_starts_afresh() {
+    let r = refunds(
+        "1000 EUR",
+        "  when   a new Order O1 with customer C2 and total 60 EUR
+  and    a new Order O2 with customer C2 and total 50 EUR
+  and    31 days pass
+  and    a new Order O3 with customer C2 and total 50 EUR
+",
+    );
+    let trace = r.host.trace.join("\n");
+    assert!(trace.contains("rule cap"), "{trace}");
+    assert!(trace.contains("Refund waits for room in a Customer's total amount of Refunds per month"), "{trace}");
+    assert_eq!(total(&r, "C2", "amount of Refunds per month@2026-01"), Some(Val::Money(6_000)));
+    assert_eq!(total(&r, "C2", "amount of Refunds per month@2026-02"), Some(Val::Money(5_000)));
+    let asked = |o: &str| trace.contains(&format!("{o}  Refund → pay via bank"));
+    assert!(asked("O1") && asked("O3") && !asked("O2"), "O1 and O3 are refunded; O2 waits:\n{trace}");
+}
+
+#[test]
+fn a_global_budget_holds_every_refund_to_one_total() {
+    let r = refunds(
+        "100 EUR",
+        "  when   a new Order O1 with customer C2 and total 60 EUR
+  and    a new Order O2 with customer C3 and total 50 EUR
+",
+    );
+    let trace = r.host.trace.join("\n");
+    assert!(trace.contains("O2  Refund waits for room in the total amount of Refunds"), "{trace}");
+    assert_eq!(total(&r, "all Refunds", "amount of Refunds"), Some(Val::Money(6_000)));
+    assert_eq!(total(&r, "C3", "amount of Refunds per month@2026-01"), Some(Val::Money(5_000)), "C3 granted its part");
+}

@@ -18,6 +18,9 @@ pub struct Program {
     pub slots: Vec<Slot>,
     pub lists: Vec<List>,
     pub bindings: Vec<Binding>,
+    /// The units the host makes at the start, one for each rule `checked
+    /// globally`, by kind: `all Refunds` (appendix F.2.13).
+    pub globals: Vec<String>,
     /// Attempts of a part, and sends of a request (appendix E.2.8).
     pub attempts: u32,
     /// How many candidates a choice among shared entities gathers (appendix F.2.7).
@@ -69,11 +72,15 @@ impl List {
 /// candidate and [`Step::Elem`] for the element of `per`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Binding {
+    /// How a part names it: the target (`Carrier`), or for a relation
+    /// across units the target and the total (`Customer(amount of Refunds)`).
+    pub id: String,
     pub subject: String,
     pub target: String,
     /// The list, of the subject or an owner of it, with one binding per element.
     pub per: Option<String>,
-    /// The candidate's attribute the pool is indexed by.
+    /// The candidate's attribute the pool is indexed by; empty when the key
+    /// names the candidate itself (appendix F.2.11).
     pub key_attr: String,
     /// Whether that attribute is a set that must contain the key.
     pub key_member: bool,
@@ -93,7 +100,13 @@ pub struct Taking {
     pub name: String,
     pub amount: Num,
     pub ty: Ty,
+    /// `month`: one total for each period of the subject's `created`
+    /// (appendix F.2.12), named `amount of Refunds per month@2026-01`.
+    pub period: Option<String>,
 }
+
+/// The periods of `for each K and ⟨period⟩`, in UTC (appendix F.2.12).
+pub const PERIODS: [&str; 4] = ["day", "week", "month", "year"];
 
 /// How a binding ranks its candidates, most important first (appendix F.2.7).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -200,6 +213,12 @@ pub struct Rule {
     pub formula: String,
     pub paraphrase: String,
     pub tier: String,
+    /// For `for each K and month`: its totals are per period, checked only
+    /// when something is taken in one.
+    pub period: Option<String>,
+    /// Whether its filter and `unless` read only facts that never change, so
+    /// a slot it holds back moves on at once (appendix F.2.15).
+    pub fixed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -278,7 +297,7 @@ pub enum Num {
     Count { of: Path, kind: String, filter: Option<Box<Cond>> },
     /// The running total of the amounts taken as `name` from the unit at `of`
     /// (appendix F.2.8).
-    Taken { of: Path, name: String, ty: Ty },
+    Taken { of: Path, name: String, ty: Ty, period: Option<String> },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

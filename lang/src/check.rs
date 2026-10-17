@@ -12,7 +12,7 @@ use crate::readback;
 
 /// Checks a parsed module and compiles it, reporting every error it finds.
 pub fn check(src: &Source) -> Result<Program, Vec<Error>> {
-    let mut cx = Checker { errors: vec![], scope: None };
+    let mut cx = Checker { errors: vec![], scope: None, period: None, contribs: vec![] };
     let prog = cx.program(src);
     if cx.errors.is_empty() { Ok(prog) } else { Err(cx.errors) }
 }
@@ -20,7 +20,7 @@ pub fn check(src: &Source) -> Result<Program, Vec<Error>> {
 /// Resolves a condition about a `kind` against a compiled program, as a
 /// scenario's `expect` needs (appendix E.2.9).
 pub fn condition(p: &Program, kind: &str, c: &ast::Cond) -> Result<Cond, Vec<Error>> {
-    let mut cx = Checker { errors: vec![], scope: None };
+    let mut cx = Checker { errors: vec![], scope: None, period: None, contribs: vec![] };
     let at = Loc { file: String::new(), line: 0 };
     match cx.cond(p, &at, kind, c) {
         Some(c) if cx.errors.is_empty() => Ok(c),
@@ -291,6 +291,7 @@ fn show(np: &NounPhrase) -> String {
         (Head::It, false) => "its".to_string(),
         (Head::The(k), _) => format!("the {k}"),
         (Head::Each(k), _) => format!("each {k}"),
+        (Head::All(k), _) => format!("all {k}"),
     };
     for (i, w) in np.steps.iter().enumerate() {
         s.push_str(if i == 0 && matches!(np.head, Head::It) { " " } else { "'s " });
@@ -302,6 +303,101 @@ fn show(np: &NounPhrase) -> String {
 struct Checker {
     errors: Vec<Error>,
     scope: Option<Scope>,
+    /// The period of the rule being checked, for its totals across units.
+    period: Option<String>,
+    /// The implicit bindings of relations across units, found while checking rules.
+    contribs: Vec<Binding>,
+}
+
+/// A relation across units (appendix F.2.11): from a Customer, `their
+/// Refunds` when Refund is no part of it and has one attribute of kind
+/// Customer; from the global unit `all Refunds`, `all Refunds`. The kind
+/// related, and the attribute that points at `from` (none for `all`).
+fn across(p: &Program, from: &str, of: &NounPhrase) -> Option<(String, Option<String>)> {
+    match (&of.head, of.steps.as_slice()) {
+        (Head::All(w), []) if from == format!("all {w}") => p.kinds.iter().find(|k| k.plural == *w).map(|k| (k.name.clone(), None)),
+        (Head::It | Head::Each(_) | Head::The(_), [w]) => {
+            if let Head::Each(k) | Head::The(k) = &of.head {
+                if k != from {
+                    return None;
+                }
+            }
+            if plural_kind(p, from, w).is_some() {
+                return None;
+            }
+            let r = p.kinds.iter().find(|k| k.plural == *w)?;
+            let refs: Vec<&Attr> = r.attrs.iter().filter(|a| a.ty == Ty::Ref && a.of.as_deref() == Some(from)).collect();
+            (refs.len() == 1).then(|| (r.name.clone(), Some(refs[0].name.clone())))
+        }
+        _ => None,
+    }
+}
+
+/// Attributes that change after creation: set by a reaction or an effect's answer.
+fn changeable(p: &Program) -> Vec<String> {
+    let mut out: Vec<String> = p.reactions.iter().flat_map(|r| r.actions.iter().map(|a| a.attr.clone())).collect();
+    out.extend(p.effects.iter().flat_map(|e| e.data.iter().map(|(n, _)| n.clone())));
+    out
+}
+
+/// Whether a rule's filter and `unless` read only facts that never change
+/// (appendix F.2.15): carried facts, and attributes no reaction or answer sets.
+fn fixed_rule(p: &Program, r: &Rule) -> bool {
+    let ch = changeable(p);
+    let path = |x: &Path| {
+        if through_ref(x) {
+            return true;
+        }
+        x.steps.iter().all(|s| matches!(s, Step::Owner | Step::Attr(_))) && matches!(x.steps.last(), Some(Step::Attr(a)) if !ch.contains(a))
+    };
+    fn num(n: &Num, path: &dyn Fn(&Path) -> bool) -> bool {
+        match n {
+            Num::Path(x) => path(x),
+            Num::Lit(_) => true,
+            Num::Bin(a, _, b) => num(a, path) && num(b, path),
+            Num::Sum { .. } | Num::Count { .. } | Num::Taken { .. } => false,
+        }
+    }
+    fn cond(p: &Program, c: &Cond, ch: &[String], path: &dyn Fn(&Path) -> bool) -> bool {
+        match c {
+            Cond::Cmp { left, right, .. } => num(left, path) && num(right, path),
+            Cond::Contains { set, item, .. } => num(set, path) && num(item, path),
+            Cond::State { node, state, .. } => {
+                let bool_attr = p.kinds.iter().any(|k| k.attr(state).is_some_and(|a| a.ty == Ty::Bool));
+                let other = p.defines.iter().any(|d| d.state == *state) || p.effects.iter().any(|e| p.states(&e.kind).contains(state));
+                through_ref(node) || (bool_attr && !other && !ch.contains(state) && node.steps.iter().all(|s| *s == Step::Owner))
+            }
+            Cond::Has { .. } => false,
+            Cond::And(cs) | Cond::Or(cs) => cs.iter().all(|c| cond(p, c, ch, path)),
+        }
+    }
+    r.filter.iter().all(|c| cond(p, c, &ch, &path))
+        && match &r.body {
+            Body::Every(c) => cond(p, c, &ch, &path),
+            Body::No { unless, .. } => unless.as_ref().is_none_or(|c| cond(p, c, &ch, &path)),
+        }
+}
+
+/// Whether a calculation reads a total per period.
+fn per_period(b: &Body) -> bool {
+    fn num(n: &Num) -> bool {
+        match n {
+            Num::Taken { period, .. } => period.is_some(),
+            Num::Bin(x, _, y) => num(x) || num(y),
+            _ => false,
+        }
+    }
+    fn cond(c: &Cond) -> bool {
+        match c {
+            Cond::Cmp { left, right, .. } => num(left) || num(right),
+            Cond::And(cs) | Cond::Or(cs) => cs.iter().any(cond),
+            _ => false,
+        }
+    }
+    match b {
+        Body::Every(c) => cond(c),
+        Body::No { pred, unless } => cond(pred) || unless.as_ref().is_some_and(cond),
+    }
 }
 
 impl Checker {
@@ -327,6 +423,7 @@ impl Checker {
             slots: vec![],
             lists: vec![],
             bindings: vec![],
+            globals: vec![],
             attempts: src.module.as_ref().and_then(|m| m.attempts).unwrap_or(3),
             candidates: src.module.as_ref().and_then(|m| m.candidates).unwrap_or(8),
             warnings: vec![],
@@ -350,6 +447,9 @@ impl Checker {
         self.rules(src, &mut p);
         self.goals(src, &mut p);
         self.reactions(src, &mut p);
+        for i in 0..p.rules.len() {
+            p.rules[i].fixed = fixed_rule(&p, &p.rules[i]);
+        }
         p
     }
 
@@ -707,7 +807,7 @@ impl Checker {
                     };
                     let t = self.num(p, &u.at, &u.subject, n);
                     match (name, t) {
-                        (Some(name), Some((amount, ty @ (Ty::Money | Ty::Count)))) => Some(Some(Taking { name, amount, ty })),
+                        (Some(name), Some((amount, ty @ (Ty::Money | Ty::Count)))) => Some(Some(Taking { name, amount, ty, period: None })),
                         (None, Some(_)) => {
                             self.errors.push(err(&u.at, format!("`taking {}`: name the attribute taken, as in `taking the line's quantity`", show_num(n))));
                             None
@@ -738,6 +838,7 @@ impl Checker {
             let (key_attr, key_member, key) = pool_key(&parts[i]).expect("found above");
             let filter = parts.into_iter().enumerate().filter(|(j, _)| *j != i).map(|(_, c)| c).collect();
             p.bindings.push(Binding {
+                id: u.target.clone(),
                 subject: u.subject.clone(),
                 target: u.target.clone(),
                 per,
@@ -908,11 +1009,33 @@ impl Checker {
                 continue;
             }
             let (ast::RuleBody::Every { subject, .. } | ast::RuleBody::No { subject, .. }) = &r.body;
+            let global = subject.kind.strip_prefix("all ").map(str::to_string);
+            if let Some(plural) = &global {
+                if !p.kinds.iter().any(|k| k.plural == *plural) {
+                    self.errors.push(err(&r.at, format!("`all {plural}`: no kind is called {plural} in the plural")));
+                    continue;
+                }
+                if !r.globally {
+                    self.errors.push(err(
+                        &r.at,
+                        format!("rule {}: `all {plural}` has no group key, so one total would hold up every entity it counts; end the rule with `, checked globally`", r.name),
+                    ));
+                    continue;
+                }
+                if p.kind(&subject.kind).is_none() {
+                    p.kinds.push(Kind { name: subject.kind.clone(), plural: subject.kind.clone(), attrs: vec![], owner: None });
+                    p.globals.push(subject.kind.clone());
+                }
+            } else if r.globally {
+                self.errors.push(err(&r.at, format!("rule {}: only a rule about `all …` is checked globally", r.name)));
+                continue;
+            }
             if p.kind(&subject.kind).is_none() {
                 self.errors.push(err(&r.at, format!("unknown kind {}", subject.kind)));
                 continue;
             }
             let Some(filter) = self.filter(p, &r.at, subject) else { continue };
+            self.period = r.period.clone();
             let body = match &r.body {
                 ast::RuleBody::Every { cond, .. } => match self.cond(p, &r.at, &subject.kind, cond) {
                     Some(c) => Body::Every(c),
@@ -930,7 +1053,26 @@ impl Checker {
                     Body::No { pred, unless }
                 }
             };
-            let tier = if body_sums(&body) { "per-group" } else { "local" };
+            self.period = None;
+            if r.period.is_some() && !per_period(&body) {
+                self.errors.push(err(
+                    &r.at,
+                    format!("rule {}: a total per period adds up a relation across units, as in `the total amount of their Refunds`", r.name),
+                ));
+                continue;
+            }
+            for b in self.contribs.drain(..) {
+                if !p.bindings.iter().any(|x| x.subject == b.subject && x.id == b.id) {
+                    p.bindings.push(b);
+                }
+            }
+            let tier = if global.is_some() {
+                "global (bottleneck)"
+            } else if body_sums(&body) {
+                "per-group"
+            } else {
+                "local"
+            };
             let mut rule = Rule {
                 name: r.name.clone(),
                 subject: subject.kind.clone(),
@@ -940,6 +1082,8 @@ impl Checker {
                 formula: String::new(),
                 paraphrase: String::new(),
                 tier: tier.into(),
+                period: r.period.clone(),
+                fixed: false,
             };
             rule.formula = readback::formula(p, &rule);
             rule.paraphrase = readback::paraphrase(p, &rule);
@@ -1054,6 +1198,16 @@ impl Checker {
                 }
             }
             ast::Num::Total { attr, of, filter } => {
+                if let Some((kind, by)) = across(p, from, of) {
+                    let ty = match p.kind(&kind).and_then(|k| k.attr(attr)).map(|a| a.ty) {
+                        Some(t @ (Ty::Money | Ty::Count)) => t,
+                        _ => {
+                            self.errors.push(err(at, format!("`the total {attr} of {}`: {} has no amount or count `{attr}`", show(of), a(&kind))));
+                            return None;
+                        }
+                    };
+                    return self.contribution(p, at, from, &kind, by, Some((attr, ty)), filter.is_some());
+                }
                 let (path, kind) = self.rel(p, at, from, of)?;
                 let ty = match p.kind(&kind).and_then(|k| k.attr(attr)).map(|a| a.ty) {
                     Some(t @ (Ty::Money | Ty::Count)) => t,
@@ -1074,6 +1228,9 @@ impl Checker {
                 Some((Num::Sum { of: path, kind, calc, filter, ty }, ty))
             }
             ast::Num::Number { of, filter } => {
+                if let Some((kind, by)) = across(p, from, of) {
+                    return self.contribution(p, at, from, &kind, by, None, filter.is_some());
+                }
                 let (path, kind) = self.rel(p, at, from, of)?;
                 let filter = match filter {
                     Some(f) => Some(Box::new(self.cond(p, at, &kind, f)?)),
@@ -1110,9 +1267,51 @@ impl Checker {
                     self.errors.push(err(at, format!("`{}`: no `uses a {k}` takes {attr}", show_num(n))));
                     return None;
                 };
-                Some((Num::Taken { of: path, name: attr.clone(), ty: t.ty }, t.ty))
+                Some((Num::Taken { of: path, name: attr.clone(), ty: t.ty, period: None }, t.ty))
             }
         }
+    }
+
+    /// A total over a relation across units (appendix F.2.11): each entity
+    /// of `kind` adds its `attr` (or 1, to count) to a running total of
+    /// `from`'s, as an implicit `uses a ⟨from⟩ where the ⟨from⟩ is its ⟨by⟩`.
+    #[allow(clippy::too_many_arguments)]
+    fn contribution(&mut self, p: &Program, at: &Loc, from: &str, kind: &str, by: Option<String>, attr: Option<(&String, Ty)>, filtered: bool) -> Option<(Num, Ty)> {
+        let plural = p.kind(kind).map_or_else(|| plural_of(kind), |k| k.plural.clone());
+        if filtered {
+            self.errors.push(err(at, format!("`{plural}` of {}: a relation across units cannot be filtered yet; add up all of them", a(from))));
+            return None;
+        }
+        let (what, amount, ty) = match attr {
+            Some((a, ty)) => (format!("{a} of {plural}"), Num::Path(Path { steps: vec![Step::Attr(a.clone())] }), ty),
+            None => (format!("number of {plural}"), Num::Lit(Lit::Count(1)), Ty::Count),
+        };
+        let name = match &self.period {
+            Some(per) => format!("{what} per {per}"),
+            None => what,
+        };
+        let key = match &by {
+            Some(b) => Num::Path(Path { steps: vec![Step::Attr(b.clone())] }),
+            None => Num::Lit(Lit::Text(from.to_string())),
+        };
+        let source = match &by {
+            Some(b) => format!("each {kind} adds to its {b}'s total {name}"),
+            None => format!("each {kind} adds to the total {name}"),
+        };
+        self.contribs.push(Binding {
+            id: format!("{from}({name})"),
+            subject: kind.to_string(),
+            target: from.to_string(),
+            per: None,
+            key_attr: String::new(),
+            key_member: false,
+            key,
+            filter: vec![],
+            taking: Some(Taking { name: name.clone(), amount, ty, period: self.period.clone() }),
+            prefer: vec![],
+            source,
+        });
+        Some((Num::Taken { of: Path::default(), name, ty, period: self.period.clone() }, ty))
     }
 
     /// The calculation inside `the total of … over its lines`, evaluated at
@@ -1194,6 +1393,10 @@ impl Checker {
             }
         }
         let scoped = !steps.is_empty();
+        if let Head::All(k) = &np.head {
+            self.errors.push(err(at, format!("`all {k}`: add it up with `the total … of all {k}`, or count it with `the number of all {k}`")));
+            return None;
+        }
         if let (false, Head::Each(k)) = (scoped, &np.head) {
             if k != from {
                 self.errors.push(err(at, format!("`each {k}`: this sentence is about {}", a(from))));

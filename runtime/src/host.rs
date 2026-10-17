@@ -67,7 +67,7 @@ impl Host {
     pub fn new(prog: Program) -> Host {
         let prog = Arc::new(prog);
         let (kernel, kinds) = kernel::program(prog.clone());
-        Host {
+        let mut h = Host {
             prog,
             machine: Machine::new(kernel),
             kinds,
@@ -81,7 +81,14 @@ impl Host {
             expired: vec![],
             pools: BTreeMap::new(),
             waiters: vec![],
+        };
+        // One unit holds each total `checked globally` (appendix F.2.13).
+        for g in h.prog.globals.clone() {
+            if let Err(e) = h.create(&g, &g, &[]) {
+                h.trace.push(format!("{g}: {e}"));
+            }
         }
+        h
     }
 
     /// Creates a root entity as a new unit labeled `label`, and settles it.
@@ -141,6 +148,9 @@ impl Host {
         attrs
             .into_iter()
             .map(|a| {
+                if a.is_empty() {
+                    return (String::new(), vec![key_text(&Val::Ref(u.label.clone()))]);
+                }
                 let keys = match u.root.attrs.get(a) {
                     Some(Val::Set(ls)) => ls.iter().map(|l| key_text(&Val::Ref(l.clone()))).collect(),
                     Some(v) => vec![key_text(v)],
@@ -158,7 +168,12 @@ impl Host {
         let d = Decide::from_value(payload)?;
         let u = self.unit(&d.label).ok_or_else(|| format!("{}: a choice for a unit that is gone", d.label))?;
         let b = self.prog.bindings.get(d.binding as usize).ok_or("a choice for an unknown binding")?;
-        let key = interp::decide_key(&self.prog, &u, &d).map(|k| key_text(&k)).unwrap_or_default();
+        let key = match interp::decide_key(&self.prog, &u, &d) {
+            // A key that names the unit itself (appendix F.2.11).
+            Some(Val::Text(l)) if b.key_attr.is_empty() => key_text(&Val::Ref(l)),
+            Some(k) => key_text(&k),
+            None => String::new(),
+        };
         let kind = b.target.clone();
         match self.gather(&u, &d, &key) {
             Some(label) => self.pick(hole, &label, &d),

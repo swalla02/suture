@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use suture_lang::ir::{Arith, Body, Cond, Criterion, Effect, Num, Op, Path, Program, Rule, Step, Ty, CREATED, TIMED_OUT};
 
 use crate::choice::{choose, pick};
-use crate::state::{Ask, Bind, Decide, Fact, Facts, Msg, Node, Status, Unit, Val};
+use crate::state::{period_key, Ask, Bind, Decide, Fact, Facts, Msg, Node, Status, Unit, Val};
 
 static NO_TOTALS: BTreeMap<String, Val> = BTreeMap::new();
 
@@ -21,16 +21,18 @@ pub struct View<'a> {
     pub taken: &'a BTreeMap<String, Val>,
     pub cand: Option<&'a str>,
     pub elem: Option<&'a [usize]>,
+    /// The period a take falls in, for the totals per period (appendix F.2.12).
+    pub period: Option<&'a str>,
 }
 
 impl<'a> View<'a> {
     pub fn of(u: &'a Unit) -> View<'a> {
-        View { root: &u.root, facts: &u.facts, taken: &u.taken, cand: None, elem: None }
+        View { root: &u.root, facts: &u.facts, taken: &u.taken, cand: None, elem: None, period: None }
     }
 
     /// A tree being built, with its facts and nothing taken yet.
     fn bare(root: &'a Node, facts: &'a Facts) -> View<'a> {
-        View { root, facts, taken: &NO_TOTALS, cand: None, elem: None }
+        View { root, facts, taken: &NO_TOTALS, cand: None, elem: None, period: None }
     }
 
     fn with(self, root: &'a Node) -> View<'a> {
@@ -252,7 +254,8 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
                 };
                 totals.insert(name.clone(), after);
             }
-            if let Some(r) = broken_rule(prog, View { taken: &totals, ..View::of(&u) }) {
+            let period = taken.as_ref().and_then(|(name, _)| name.split_once('@')).map(|(_, p)| p);
+            if let Some(r) = broken_rule(prog, View { taken: &totals, period, ..View::of(&u) }) {
                 let refused = Msg::Refused { key: key.clone(), by: u.label.clone(), rule: r.name.clone() };
                 return Outcome::kept(unit, format!("refused {key}: rule {}: {}", r.name, r.paraphrase), Out { sends: vec![(from.clone(), refused)], ..Out::default() });
             }
@@ -297,7 +300,7 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
             if let Some(Bind::Asked { skip }) = n.binds.get(&id).cloned() {
                 n.binds.insert(id.clone(), Bind::Waiting { skip });
                 let kind = n.kind.clone();
-                u.notes.push(format!("{kind} waits for a {}", target_of(&id)));
+                u.notes.push(format!("{kind} waits for {}", wanted(&id)));
             }
             return Outcome::new(u, out);
         }
@@ -342,7 +345,19 @@ fn granted(prog: &Program, u: &mut Unit, key: &str, by: &str, taken: &Option<(St
         Some((_, j)) => format!(" for {} {}", element_name(prog, &kind, &target_of(&id)), j.parse::<usize>().map_or(0, |j| j + 1)),
         None => String::new(),
     };
-    u.notes.push(format!("{kind} gets {} {by}{what}", target_of(&id)));
+    match id.split_once('(') {
+        Some((_, total)) => u.notes.push(format!("{kind} counts toward {by}'s total {}", total.trim_end_matches(')'))),
+        None => u.notes.push(format!("{kind} gets {} {by}{what}", target_of(&id))),
+    }
+}
+
+/// What a waiting binding waits for: `a Stock`, or room in a total.
+fn wanted(id: &str) -> String {
+    match id.split_once('(') {
+        Some((t, total)) if t.starts_with("all ") => format!("room in the total {}", total.trim_end_matches(')')),
+        Some((t, total)) => format!("room in a {t}'s total {}", total.trim_end_matches(')')),
+        None => format!("a {}", target_of(id)),
+    }
 }
 
 /// `line`, for the element of the `per` binding of `kind` to `target`.
@@ -351,9 +366,10 @@ fn element_name(prog: &Program, kind: &str, target: &str) -> String {
     b.and_then(|b| b.per.as_ref()).and_then(|l| prog.lists.iter().find(|x| x.name == *l)).map_or_else(|| "element".into(), |l| l.singular())
 }
 
-/// The kind a binding id binds: `Stock` for `Stock.0`.
+/// The kind a binding id binds: `Stock` for `Stock.0`, `Customer` for
+/// `Customer(amount of Refunds)`.
 fn target_of(id: &str) -> String {
-    id.split_once('.').map_or(id, |(t, _)| t).to_string()
+    id.split(['.', '(']).next().unwrap_or(id).to_string()
 }
 
 /// A unit as other units carry it: its own fact, and the facts it carries.
@@ -366,7 +382,7 @@ fn own_facts(u: &Unit) -> Facts {
 /// The part and binding id a binding key names, if the part still has it.
 fn find_bind(u: &Unit, key: &str) -> Option<(Vec<usize>, String)> {
     let (node, id) = key.rsplit_once('@')?;
-    let at = positions(&u.root).into_iter().find(|at| !at.is_empty() && request_key(&u.label, &u.root, at) == node)?;
+    let at = positions(&u.root).into_iter().find(|at| request_key(&u.label, &u.root, at) == node)?;
     node_at(&u.root, &at).binds.contains_key(id).then(|| (at, id.to_string()))
 }
 
@@ -386,7 +402,7 @@ fn bind_slots(prog: &Program, root: &Node, at: &[usize]) -> Vec<BindSlot> {
     let mut out = vec![];
     for (i, b) in prog.bindings.iter().enumerate().filter(|(_, b)| b.subject == n.kind) {
         let Some(list) = &b.per else {
-            out.push((b.target.clone(), i, None));
+            out.push((b.id.clone(), i, None));
             continue;
         };
         // The list belongs to the part or to its nearest owner that has it.
@@ -398,16 +414,18 @@ fn bind_slots(prog: &Program, root: &Node, at: &[usize]) -> Vec<BindSlot> {
         let owner = &at[..d];
         let elements = node_at(root, owner).parts.iter().enumerate().filter(|(_, p)| p.kind == l.element).map(|(j, _)| j);
         for (j, idx) in elements.enumerate() {
-            out.push((format!("{}.{j}", b.target), i, Some((j as u32, child(owner, idx)))));
+            out.push((format!("{}.{j}", b.id), i, Some((j as u32, child(owner, idx)))));
         }
     }
     out
 }
 
-/// Whether every binding of the node at `at` is granted.
+/// Whether every binding of the node at `at`, and of each of its owners, is granted.
 fn bound(prog: &Program, root: &Node, at: &[usize]) -> bool {
-    let n = node_at(root, at);
-    bind_slots(prog, root, at).iter().all(|(id, ..)| matches!(n.binds.get(id), Some(Bind::Granted { .. })))
+    (0..=at.len()).all(|d| {
+        let n = node_at(root, &at[..d]);
+        bind_slots(prog, root, &at[..d]).iter().all(|(id, ..)| matches!(n.binds.get(id), Some(Bind::Granted { .. })))
+    })
 }
 
 /// The choice request for the binding `id` of the part at `at`, if its
@@ -419,7 +437,11 @@ fn decide_for(prog: &Program, u: &Unit, at: &[usize], id: &str, skip: Vec<String
         None => None,
         Some(t) => {
             let v = View { elem: elem.as_ref().map(|(_, p)| p.as_slice()), ..View::of(u) };
-            Some((t.name.clone(), num(prog, v, at, &t.amount)?))
+            let name = match &t.period {
+                Some(per) => format!("{}@{}", t.name, period_key(per, node_at(&u.root, at).created)),
+                None => t.name.clone(),
+            };
+            Some((name, num(prog, v, at, &t.amount)?))
         }
     };
     Some(Decide {
@@ -435,7 +457,7 @@ fn decide_for(prog: &Program, u: &Unit, at: &[usize], id: &str, skip: Vec<String
 
 /// Asks for each binding of a new part (appendix F.2.5). Makes at most one change.
 fn bind_pass(prog: &Program, u: &mut Unit, at: &[usize], out: &mut Out) -> bool {
-    if at.is_empty() || node_at(&u.root, at).status != Status::Idle {
+    if node_at(&u.root, at).status != Status::Idle {
         return false;
     }
     for (id, ..) in bind_slots(prog, &u.root, at) {
@@ -473,7 +495,7 @@ pub fn decide_key(prog: &Program, u: &Unit, d: &Decide) -> Option<Val> {
 }
 
 fn decide_place(prog: &Program, u: &Unit, d: &Decide) -> Option<(Vec<usize>, Option<Vec<usize>>)> {
-    let at = positions(&u.root).into_iter().find(|at| !at.is_empty() && request_key(&u.label, &u.root, at) == d.node)?;
+    let at = positions(&u.root).into_iter().find(|at| request_key(&u.label, &u.root, at) == d.node)?;
     let (_, _, elem) = bind_slots(prog, &u.root, &at).into_iter().find(|(id, ..)| *id == d.bind)?;
     Some((at, elem.map(|(_, p)| p)))
 }
@@ -630,7 +652,7 @@ fn goal_due(prog: &Program, u: &mut Unit, goal: u32) {
         }
         for (id, b) in &n.binds {
             if matches!(b, Bind::Waiting { .. }) {
-                u.notes.push(format!("  because {} waits for a {}", n.kind, target_of(id)));
+                u.notes.push(format!("  because {} waits for {}", n.kind, wanted(id)));
             }
         }
         let Some((&i, owner)) = at.split_last() else { continue };
@@ -767,7 +789,13 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut Ou
                 let pos = child(at, node_at(&t, at).parts.len() - 1);
                 while formulas(prog, &mut t, &u.facts, &pos) {}
                 let part = node_at(&t, &pos).clone();
+                let next = slot.and_then(|s| choose(s, Some(&want)).map(|next| (s, next)));
                 change = match newly_broken(prog, View::of(u), &t) {
+                    // Refused on facts that never change: move on at once (appendix F.2.15).
+                    Some(r) if r.fixed && next.is_some() => {
+                        let (s, next) = next.expect("checked above");
+                        Some(Change::Fill(s.name.clone(), next.clone(), format!("{}: {want} refused by rule {}, trying {next}", s.name, r.name)))
+                    }
                     Some(r) if n.held.get(&want) == Some(&r.name) => None,
                     Some(r) => Some(Change::Hold(want.clone(), r.name.clone())),
                     None => Some(Change::Add(part, note)),
@@ -1110,8 +1138,14 @@ fn num(prog: &Program, v: View, at: &[usize], n: &Num) -> Option<Val> {
             Some(total)
         }
         Num::Count { of, kind, filter } => Some(Val::Count(relation(prog, v, at, of, kind, filter.as_deref())?.len() as i64)),
-        Num::Taken { of, name, ty } => match locate(v, at, &of.steps)? {
-            Place::Here(p) if p.is_empty() => Some(v.taken.get(name).cloned().unwrap_or_else(|| zero(*ty))),
+        Num::Taken { of, name, ty, period } => match locate(v, at, &of.steps)? {
+            Place::Here(p) if p.is_empty() => {
+                let name = match period {
+                    Some(_) => format!("{name}@{}", v.period?),
+                    None => name.clone(),
+                };
+                Some(v.taken.get(&name).cloned().unwrap_or_else(|| zero(*ty)))
+            }
             _ => None,
         },
     }

@@ -457,6 +457,7 @@ effect go B via bs within 1 day
 rule big: no big Order has an A
 when a Ping is down: its Order is paused
 when a Ping is up: its Order is not paused
+when an A is ok: its Order is not big
 ",
     );
     let (u, asks) = placed(&p, 150);

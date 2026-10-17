@@ -51,6 +51,8 @@ pub enum Head {
     The(String),
     /// `each Order`: in a bound for each entity, the subject (appendix E.2.4).
     Each(String),
+    /// `all Refunds`: every entity of a kind, by its plural (appendix F.2.13).
+    All(String),
 }
 
 /// A calculation (spec §3.3 "Numbers", appendix E).
@@ -217,6 +219,10 @@ pub struct EffectDecl {
 pub struct RuleDecl {
     pub name: String,
     pub body: RuleBody,
+    /// `for each Customer and month, …`: one total per period (appendix F.2.12).
+    pub period: Option<String>,
+    /// `…, checked globally` (appendix F.2.13).
+    pub globally: bool,
     /// The sentence as written, for read-backs.
     pub source: String,
     pub at: Loc,

@@ -96,8 +96,31 @@ fn num_formula(p: &Program, kind: &str, v: &str, n: &Num) -> String {
             let filter = filter.as_ref().map_or_else(String::new, |f| format!(" where {}", cond_formula(p, k, &e, f)));
             format!("count({e} in {}{filter})", relation_formula(p, kind, v, of, k))
         }
-        Num::Taken { of, name, .. } => format!("taken_{name}({})", path_formula(p, kind, v, of)),
+        Num::Taken { of, name, .. } => match contribution(p, kind, name) {
+            Some(b) => {
+                let e = element_var(&b.subject, v);
+                let rel = match &b.key {
+                    Num::Path(Path { steps }) => match steps.as_slice() {
+                        [Step::Attr(a)] => format!("{} where {e}.{a} = {v}", b.subject),
+                        _ => b.subject.clone(),
+                    },
+                    _ => format!("all {}", b.subject),
+                };
+                let t = b.taking.as_ref().expect("a contribution takes an amount");
+                let per = t.period.as_ref().map_or_else(String::new, |per| format!(", per {per} of {e}.created"));
+                match &t.amount {
+                    Num::Lit(_) => format!("count({e} in {rel}{per})"),
+                    a => format!("sum({e} in {rel}{per}: {})", num_formula(p, &b.subject, &e, a)),
+                }
+            }
+            None => format!("taken_{name}({})", path_formula(p, kind, v, of)),
+        },
     }
+}
+
+/// The implicit binding behind a total across units (appendix F.2.11).
+fn contribution<'p>(p: &'p Program, kind: &str, name: &str) -> Option<&'p crate::ir::Binding> {
+    p.bindings.iter().find(|b| b.target == kind && b.key_attr.is_empty() && b.taking.as_ref().is_some_and(|t| t.name == name))
 }
 
 /// `the total amount of its refunds that are refunded`, `its total / 10 + 1 EUR`
@@ -119,7 +142,21 @@ fn num_words(p: &Program, kind: &str, n: &Num) -> String {
         Num::Count { of, kind: k, filter } => {
             format!("the number of {}{}", relation_words(p, kind, of, k), that_words(p, k, filter.as_deref()))
         }
-        Num::Taken { of, name, .. } => format!("the total {name} taken from {}", path_words(p, kind, of)),
+        Num::Taken { of, name, .. } => match contribution(p, kind, name) {
+            Some(b) => {
+                let t = b.taking.as_ref().expect("a contribution takes an amount");
+                let base = t.period.as_ref().map_or(name.as_str(), |per| name.strip_suffix(&format!(" per {per}")).unwrap_or(name));
+                let (what, plural) = base.split_once(" of ").unwrap_or(("", base));
+                let whose = if matches!(b.key, Num::Lit(_)) { "all" } else { "its" };
+                let per = t.period.as_ref().map_or_else(String::new, |per| format!(" in a {per}"));
+                if what == "number" {
+                    format!("the number of {whose} {plural}{per}")
+                } else {
+                    format!("the total {what} of {whose} {plural}{per}")
+                }
+            }
+            None => format!("the total {name} taken from {}", path_words(p, kind, of)),
+        },
     }
 }
 

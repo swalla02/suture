@@ -91,6 +91,8 @@ pub fn noun_phrase(c: &mut Cursor) -> Result<NounPhrase, Error> {
         NounPhrase { head: Head::It, steps: vec![c.word()?] }
     } else if c.eat_word("each") {
         NounPhrase { head: Head::Each(c.kind_name()?), steps: vec![] }
+    } else if c.eat_word("all") {
+        NounPhrase { head: Head::All(c.kind_name()?), steps: vec![] }
     } else if c.eat_word("the") {
         let w = c.word()?;
         if w.starts_with(char::is_uppercase) {
@@ -379,7 +381,7 @@ pub fn rule_body(c: &mut Cursor) -> Result<RuleBody, Error> {
         // A bound for each entity: `the total amount of each Order's Refunds is at most its total`.
         let cond = condition(c)?;
         let Some(kind) = each_in_cond(&cond) else {
-            return Err(c.error("a bound names what it is about with `each`, as in `the total amount of each Order's Refunds`"));
+            return Err(c.error("a bound names what it is about with `each`, as in `the total amount of each Order's Refunds`, or `all`, as in `the total amount of all Refunds`"));
         };
         return Ok(RuleBody::Every { subject: Subject { kind, filter: vec![] }, cond });
     }
@@ -404,7 +406,11 @@ pub fn rule_body(c: &mut Cursor) -> Result<RuleBody, Error> {
 /// The kind named by `each` in a bound, if any.
 fn each_in_cond(c: &Cond) -> Option<String> {
     fn num(n: &Num) -> Option<String> {
-        let np = |np: &NounPhrase| if let Head::Each(k) = &np.head { Some(k.clone()) } else { None };
+        let np = |np: &NounPhrase| match &np.head {
+            Head::Each(k) => Some(k.clone()),
+            Head::All(k) => Some(format!("all {k}")),
+            _ => None,
+        };
         match n {
             Num::Np(x) | Num::Total { of: x, .. } | Num::Number { of: x, .. } | Num::Taken { from: x, .. } => np(x),
             Num::Bin(a, _, b) => num(a).or_else(|| num(b)),

@@ -209,3 +209,62 @@ fn uses_mistakes_are_errors() {
     let e = errors(&format!("{SHOP}rule x: every Shipment's Carrier is cheap\n"));
     assert!(e.iter().any(|e| e.contains("`its Carrier` is a shared Carrier; compare its attributes, or a state: express")), "{e:?}");
 }
+
+const REFUNDS: &str = "kind Country  { restricted: Bool = no }
+kind Customer { country: Country }
+kind Order    { customer: Customer, total: Money, country: Country = customer's country }
+kind Shipment { order: Order }
+kind Refund   { order: Order, customer: Customer = order's customer, amount: Money = order's total }
+Delivery is Shipment or Refund
+Order needs Delivery
+prefer Delivery: Shipment, then Refund after 2 days
+effect send Shipment via carriers within 7 days
+  sends the Order's country
+  reports delivered
+effect pay Refund via bank within 1 hour
+  sends its amount
+  reports paid
+rule embargo: no Order whose country is restricted has a Shipment
+";
+
+#[test]
+fn relations_across_units_periods_and_global_rules() {
+    let p = prog(&format!(
+        "{REFUNDS}rule cap: for each Customer and month, the total amount of their Refunds is at most 100 EUR
+rule few: the number of each Customer's Refunds is at most 3
+rule budget: the total amount of all Refunds is at most 1000 EUR, checked globally
+"
+    ));
+    let b = p.bindings.iter().find(|b| b.id == "Customer(amount of Refunds per month)").expect("an implicit binding");
+    assert_eq!((b.subject.as_str(), b.target.as_str(), b.key_attr.as_str()), ("Refund", "Customer", ""));
+    assert_eq!(b.key, Num::Path(path(&[attr("customer")])));
+    assert_eq!(b.taking.as_ref().unwrap().period.as_deref(), Some("month"));
+    assert!(p.bindings.iter().any(|b| b.id == "Customer(number of Refunds)" && b.subject == "Refund"));
+    assert!(p.bindings.iter().any(|b| b.id == "all Refunds(amount of Refunds)" && b.target == "all Refunds"));
+    assert_eq!(p.globals, ["all Refunds"]);
+    let rule = |n: &str| p.rules.iter().find(|r| r.name == n).unwrap();
+    assert_eq!(rule("cap").tier, "per-group");
+    assert_eq!(rule("cap").period.as_deref(), Some("month"));
+    assert_eq!(rule("few").tier, "per-group");
+    assert_eq!(rule("budget").tier, "global (bottleneck)");
+    assert!(rule("embargo").fixed && !rule("cap").fixed);
+    assert!(rule("cap").formula.contains("where r.customer = c, per month of r.created: r.amount"), "{}", rule("cap").formula);
+    assert!(rule("cap").paraphrase.contains("the total amount of its Refunds in a month"), "{}", rule("cap").paraphrase);
+    assert!(rule("budget").paraphrase.contains("all Refunds"), "{}", rule("budget").paraphrase);
+}
+
+#[test]
+fn relation_and_period_mistakes_are_errors() {
+    let e = errors(&format!("{REFUNDS}rule budget: the total amount of all Refunds is at most 1000 EUR\n"));
+    assert!(e[0].contains("`all Refunds` has no group key") && e[0].contains("checked globally"), "{e:?}");
+    let e = errors(&format!("{REFUNDS}rule small: every Order's total is at most 5 EUR, checked globally\n"));
+    assert!(e[0].contains("only a rule about `all …` is checked globally"), "{e:?}");
+    let e = errors(&format!("{REFUNDS}rule cap: for each Customer and fortnight, the number of their Refunds is at most 2\n"));
+    assert!(e[0].contains("a period is a day, week, month or year"), "{e:?}");
+    let e = errors(&format!("{REFUNDS}rule cap: for each Order and month, its total is at most 5 EUR\n"));
+    assert!(e[0].contains("a total per period adds up a relation across units"), "{e:?}");
+    let e = errors(&format!("{REFUNDS}rule cap: the number of each Customer's Refunds that are paid is at most 2\n"));
+    assert!(e[0].contains("cannot be filtered yet"), "{e:?}");
+    let e = errors(&format!("{REFUNDS}rule cap: the total amount of all Pigs is at most 2 EUR, checked globally\n"));
+    assert!(e[0].contains("no kind is called Pigs"), "{e:?}");
+}

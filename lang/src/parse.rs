@@ -2,6 +2,7 @@
 //! statement it is; a capitalized first word starts `Kind needs …`.
 
 use crate::ast::*;
+use crate::ir::PERIODS;
 use crate::lex::{statements, Cursor, Error, Stmt, Tok};
 use crate::sentence::{calc_expr, calc_formula, condition, literal, noun_phrase, predicate, rule_body, starts_noun_phrase, state_word, subject};
 
@@ -382,9 +383,29 @@ fn rule(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     c.expect_word("rule")?;
     let name = c.word()?;
     c.expect_sym(':')?;
-    let body = rule_body(&mut c)?;
+    let mut period = None;
+    let body = if c.eat_word("for") {
+        // `for each Customer and month, ⟨bound⟩` (appendix F.2.12).
+        c.expect_word("each")?;
+        let kind = c.kind_name()?;
+        c.expect_word("and")?;
+        let p = c.word()?;
+        if !PERIODS.contains(&p.as_str()) {
+            return Err(c.error(format!("a period is a day, week, month or year, not `{p}`")));
+        }
+        period = Some(p);
+        c.expect_sym(',')?;
+        RuleBody::Every { subject: Subject { kind, filter: vec![] }, cond: condition(&mut c)? }
+    } else {
+        rule_body(&mut c)?
+    };
+    let globally = c.eat_sym(',');
+    if globally {
+        c.expect_word("checked")?;
+        c.expect_word("globally")?;
+    }
     c.expect_end()?;
-    out.rules.push(RuleDecl { name, body, source: text(after_colon(&toks)), at });
+    out.rules.push(RuleDecl { name, body, period, globally, source: text(after_colon(&toks)), at });
     Ok(())
 }
 
