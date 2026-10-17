@@ -4,15 +4,15 @@
 
 use crate::ast::{self, CmpOp, Head, Literal, Loc, NounPhrase, Source, Term, TypeName};
 use crate::ir::{
-    Action, Arith, Attr, Body, Cond, Define, Effect, Goal, Kind, Lit, Need, Num, Op, OwnerRef, Path, Program, Reaction,
-    Rule, Slot, Step, Ty, CREATED, TIMED_OUT,
+    Action, Arith, Attr, Binding, Body, Cond, Criterion, Define, Effect, Goal, Kind, Lit, Need, Num, Op, OwnerRef, Path,
+    Program, Reaction, Rule, Slot, Step, Taking, Ty, CREATED, TIMED_OUT,
 };
 use crate::lex::Error;
 use crate::readback;
 
 /// Checks a parsed module and compiles it, reporting every error it finds.
 pub fn check(src: &Source) -> Result<Program, Vec<Error>> {
-    let mut cx = Checker { errors: vec![] };
+    let mut cx = Checker { errors: vec![], scope: None };
     let prog = cx.program(src);
     if cx.errors.is_empty() { Ok(prog) } else { Err(cx.errors) }
 }
@@ -20,7 +20,7 @@ pub fn check(src: &Source) -> Result<Program, Vec<Error>> {
 /// Resolves a condition about a `kind` against a compiled program, as a
 /// scenario's `expect` needs (appendix E.2.9).
 pub fn condition(p: &Program, kind: &str, c: &ast::Cond) -> Result<Cond, Vec<Error>> {
-    let mut cx = Checker { errors: vec![] };
+    let mut cx = Checker { errors: vec![], scope: None };
     let at = Loc { file: String::new(), line: 0 };
     match cx.cond(p, &at, kind, c) {
         Some(c) if cx.errors.is_empty() => Ok(c),
@@ -56,6 +56,7 @@ fn show_num(n: &ast::Num) -> String {
         ast::Num::Total { attr, of, .. } => format!("the total {attr} of {}", show(of)),
         ast::Num::Number { of, .. } => format!("the number of {}", show(of)),
         ast::Num::Over { calc, list } => format!("the total of {} over {}", show_num(calc), show(list)),
+        ast::Num::Taken { attr, from } => format!("the total {attr} taken from {}", show(from)),
     }
 }
 
@@ -79,6 +80,7 @@ fn not_known_at_creation(p: &Program, kind: &str, n: &Num) -> Option<String> {
             Some(format!("its {plural}, which do not exist yet when {} is created", a(&owner)))
         }
         Num::Sum { .. } | Num::Count { .. } => None,
+        Num::Taken { name, .. } => Some(format!("the total {name} taken from it, which changes")),
     }
 }
 
@@ -89,7 +91,7 @@ fn end_kind(p: &Program, kind: &str, steps: &[Step]) -> Option<String> {
         cur = match s {
             Step::Part(k) => k.clone(),
             Step::Owner => p.kind(&cur)?.owner.as_ref()?.kind.clone(),
-            Step::Slot(_) | Step::Attr(_) | Step::Ref(_) => return None,
+            Step::Slot(_) | Step::Attr(_) | Step::Ref(_) | Step::Bound(_) | Step::Cand | Step::Elem => return None,
         };
     }
     Some(cur)
@@ -178,7 +180,7 @@ fn plural_kind(p: &Program, owner: &str, word: &str) -> Option<String> {
 fn body_sums(b: &Body) -> bool {
     fn num(n: &Num) -> bool {
         match n {
-            Num::Sum { .. } | Num::Count { .. } => true,
+            Num::Sum { .. } | Num::Count { .. } | Num::Taken { .. } => true,
             Num::Bin(x, _, y) => num(x) || num(y),
             Num::Path(_) | Num::Lit(_) => false,
         }
@@ -207,7 +209,48 @@ enum End {
 
 /// Whether a path goes through a reference, to another unit's carried facts.
 fn through_ref(path: &Path) -> bool {
-    path.steps.iter().any(|s| matches!(s, Step::Ref(_)))
+    path.steps.iter().any(|s| matches!(s, Step::Ref(_) | Step::Bound(_) | Step::Cand))
+}
+
+/// Whether a calculation reads the candidate of a `uses`.
+fn reads_cand(n: &Num) -> bool {
+    match n {
+        Num::Path(p) => p.steps.contains(&Step::Cand),
+        Num::Bin(x, _, y) => reads_cand(x) || reads_cand(y),
+        _ => false,
+    }
+}
+
+/// A `uses` condition's pool key (appendix F.2.6): `the C's a is x` or
+/// `the C's a contains x`, where `x` does not read the candidate.
+fn pool_key(c: &Cond) -> Option<(String, bool, Num)> {
+    let cand_attr = |n: &Num| match n {
+        Num::Path(Path { steps }) => match steps.as_slice() {
+            [Step::Cand, Step::Attr(a)] => Some(a.clone()),
+            _ => None,
+        },
+        _ => None,
+    };
+    match c {
+        Cond::Cmp { left, op: Op::Eq, right } => match (cand_attr(left), cand_attr(right)) {
+            (Some(a), _) if !reads_cand(right) => Some((a, false, right.clone())),
+            (_, Some(a)) if !reads_cand(left) => Some((a, false, left.clone())),
+            _ => None,
+        },
+        Cond::Contains { set, item, negated: false } if !reads_cand(item) => cand_attr(set).map(|a| (a, true, item.clone())),
+        _ => None,
+    }
+}
+
+/// Inside a `uses` condition or its `prefer` (appendix F.2.4): `the C` is
+/// the candidate, and `the line` the element of `per`. In a `prefer`, `it`
+/// is the candidate too.
+#[derive(Clone)]
+struct Scope {
+    cand: String,
+    it_is_cand: bool,
+    /// The names of one element, and its kind.
+    elem: Option<(Vec<String>, String)>,
 }
 
 /// A path to a shared entity as the reference that leads to it, for
@@ -258,6 +301,7 @@ fn show(np: &NounPhrase) -> String {
 
 struct Checker {
     errors: Vec<Error>,
+    scope: Option<Scope>,
 }
 
 impl Checker {
@@ -282,7 +326,9 @@ impl Checker {
             reactions: vec![],
             slots: vec![],
             lists: vec![],
+            bindings: vec![],
             attempts: src.module.as_ref().and_then(|m| m.attempts).unwrap_or(3),
+            candidates: src.module.as_ref().and_then(|m| m.candidates).unwrap_or(8),
             warnings: vec![],
         };
         self.kinds(src, &mut p);
@@ -290,6 +336,7 @@ impl Checker {
         self.lists(src, &mut p);
         let conds = self.owners(src, &mut p);
         self.refs(src, &mut p);
+        self.bindings(src, &mut p);
         self.prefers(src, &mut p);
         self.effects(src, &mut p);
         self.list_elements(src, &p);
@@ -583,7 +630,7 @@ impl Checker {
                 }
             }
         }
-        for pr in &src.prefers {
+        for pr in src.prefers.iter().filter(|pr| pr.criteria.is_empty() && !p.bindings.iter().any(|b| b.target == pr.choice)) {
             let Some(i) = p.slots.iter().position(|s| s.name == pr.choice) else {
                 self.errors.push(err(&pr.at, format!("prefer {}: there is no slot called {}", pr.choice, pr.choice)));
                 continue;
@@ -606,6 +653,162 @@ impl Checker {
         for s in &p.slots {
             if !src.prefers.iter().any(|pr| pr.choice == s.name) {
                 p.warnings.push(format!("{} has no `prefer`; its alternatives are tried in the order declared: {}", s.name, s.alternatives.join(", ")));
+            }
+        }
+    }
+
+    /// `uses` bindings (appendix F.2.5–F.2.8), and the `prefer` that ranks each.
+    fn bindings(&mut self, src: &Source, p: &mut Program) {
+        for u in &src.uses {
+            let Some(subject) = p.kind(&u.subject) else {
+                self.errors.push(err(&u.at, format!("unknown kind {}", u.subject)));
+                continue;
+            };
+            match p.kind(&u.target) {
+                None => {
+                    self.errors.push(err(&u.at, format!("unknown kind {}", u.target)));
+                    continue;
+                }
+                Some(t) if t.owner.is_some() => {
+                    self.errors.push(err(&u.at, format!("{} is a part, so it is not shared; a `uses` binds to a root kind", u.target)));
+                    continue;
+                }
+                Some(_) => {}
+            }
+            if subject.owner.is_none() {
+                self.errors.push(err(&u.at, format!("{} is a root kind; in slice 5 a part of a unit `uses` a shared entity", u.subject)));
+                continue;
+            }
+            let (per, elem) = match &u.per {
+                None => (None, None),
+                Some(w) => {
+                    let mut chain = vec![u.subject.clone()];
+                    while let Some(o) = p.kind(chain.last().expect("never empty")).and_then(|x| x.owner.as_ref()) {
+                        if chain.len() > p.kinds.len() {
+                            break;
+                        }
+                        chain.push(o.kind.clone());
+                    }
+                    let Some(l) = chain.iter().find_map(|k| p.lists.iter().find(|l| l.owner == *k && l.singulars().contains(w))) else {
+                        self.errors.push(err(&u.at, format!("`per {w}`: neither {} nor an owner of it has a list of {w}s", a(&u.subject))));
+                        continue;
+                    };
+                    (Some(l.name.clone()), Some((l.singulars(), l.element.clone())))
+                }
+            };
+            self.scope = Some(Scope { cand: u.target.clone(), it_is_cand: false, elem: elem.clone() });
+            let cond = self.cond(p, &u.at, &u.subject, &u.cond);
+            let taking = match &u.taking {
+                Some(n) => {
+                    self.scope = Some(Scope { cand: String::new(), it_is_cand: false, elem: elem.clone() });
+                    let name = match n {
+                        ast::Num::Np(np) => np.steps.last().cloned(),
+                        _ => None,
+                    };
+                    let t = self.num(p, &u.at, &u.subject, n);
+                    match (name, t) {
+                        (Some(name), Some((amount, ty @ (Ty::Money | Ty::Count)))) => Some(Some(Taking { name, amount, ty })),
+                        (None, Some(_)) => {
+                            self.errors.push(err(&u.at, format!("`taking {}`: name the attribute taken, as in `taking the line's quantity`", show_num(n))));
+                            None
+                        }
+                        (_, Some((_, ty))) => {
+                            self.errors.push(err(&u.at, format!("`taking {}` is {ty:?}; only amounts and counts are taken", show_num(n))));
+                            None
+                        }
+                        (_, None) => None,
+                    }
+                }
+                None => Some(None),
+            };
+            self.scope = None;
+            let (Some(cond), Some(taking)) = (cond, taking) else { continue };
+            let parts = match cond {
+                Cond::And(cs) => cs,
+                c => vec![c],
+            };
+            let Some(i) = parts.iter().position(|c| pool_key(c).is_some()) else {
+                let t = &u.target;
+                self.errors.push(err(
+                    &u.at,
+                    format!("`{} uses a {t}` needs a pool key: one `and` part `the {t}'s ⟨attribute⟩ is …` or `the {t}'s ⟨attribute⟩ contains …` that does not read the {t}", u.subject),
+                ));
+                continue;
+            };
+            let (key_attr, key_member, key) = pool_key(&parts[i]).expect("found above");
+            let filter = parts.into_iter().enumerate().filter(|(j, _)| *j != i).map(|(_, c)| c).collect();
+            p.bindings.push(Binding {
+                subject: u.subject.clone(),
+                target: u.target.clone(),
+                per,
+                key_attr,
+                key_member,
+                key,
+                filter,
+                taking,
+                prefer: vec![],
+                source: u.source.clone(),
+            });
+        }
+        for pr in &src.prefers {
+            let bound: Vec<usize> = (0..p.bindings.len()).filter(|&i| p.bindings[i].target == pr.choice).collect();
+            if bound.is_empty() {
+                if let (false, Some(slot)) = (pr.criteria.is_empty(), p.slot(&pr.choice)) {
+                    self.errors.push(err(&pr.at, format!("prefer {}: {} is a slot; list its alternatives in order: {}", pr.choice, pr.choice, slot.alternatives.join(", "))));
+                } else if !pr.criteria.is_empty() {
+                    self.errors.push(err(&pr.at, format!("prefer {}: no kind `uses` a {}; `lowest`, `highest` and `those` rank shared entities", pr.choice, pr.choice)));
+                }
+                continue;
+            }
+            if pr.criteria.is_empty() {
+                self.errors.push(err(&pr.at, format!("prefer {}: rank the {} with `lowest …`, `highest …` or `those …`", pr.choice, p.kind(&pr.choice).map_or(pr.choice.clone(), |k| k.plural.clone()))));
+                continue;
+            }
+            let matching: Vec<usize> = bound
+                .into_iter()
+                .filter(|&i| match (&pr.per, &p.bindings[i].per) {
+                    (None, None) => true,
+                    (Some(w), Some(list)) => p.lists.iter().any(|l| l.name == *list && l.singulars().contains(w)),
+                    _ => false,
+                })
+                .collect();
+            let Some(&i) = matching.first() else {
+                let hint = p.bindings.iter().find(|b| b.target == pr.choice).and_then(|b| b.per.clone());
+                let want = hint.and_then(|l| p.lists.iter().find(|x| x.name == l).map(|x| format!("prefer {} for a {}", pr.choice, x.singular())));
+                self.errors.push(err(&pr.at, format!("prefer {}: it does not match how its `uses` binds{}", pr.choice, want.map(|w| format!("; write `{w}`")).unwrap_or_default())));
+                continue;
+            };
+            if matching.len() > 1 {
+                self.errors.push(err(&pr.at, format!("prefer {}: more than one kind uses a {}; slice 5 ranks one binding per kind", pr.choice, pr.choice)));
+                continue;
+            }
+            let b = &p.bindings[i];
+            let elem = b.per.as_ref().and_then(|l| p.lists.iter().find(|x| x.name == *l)).map(|l| (l.singulars(), l.element.clone()));
+            let subject = b.subject.clone();
+            self.scope = Some(Scope { cand: pr.choice.clone(), it_is_cand: true, elem });
+            let mut criteria = vec![];
+            for c in &pr.criteria {
+                let done = match c {
+                    ast::Criterion::Lowest(n) | ast::Criterion::Highest(n) => match self.num(p, &pr.at, &subject, n) {
+                        Some((num, ty)) if ordered(ty) => Some(if matches!(c, ast::Criterion::Lowest(_)) { Criterion::Lowest(num) } else { Criterion::Highest(num) }),
+                        Some((_, ty)) => {
+                            self.errors.push(err(&pr.at, format!("`{}` is {ty:?}; `lowest` and `highest` rank amounts, counts, times and durations", show_num(n))));
+                            None
+                        }
+                        None => None,
+                    },
+                    ast::Criterion::Those(cond) => self.cond(p, &pr.at, &subject, cond).map(Criterion::Those),
+                };
+                criteria.extend(done);
+            }
+            self.scope = None;
+            if criteria.len() == pr.criteria.len() {
+                p.bindings[i].prefer = criteria;
+            }
+        }
+        for b in &p.bindings {
+            if !src.prefers.iter().any(|pr| pr.choice == b.target) {
+                p.warnings.push(format!("{} has no `prefer`; {} are chosen in the order they were created", b.target, p.kind(&b.target).map_or(b.target.clone(), |k| k.plural.clone())));
             }
         }
     }
@@ -896,6 +1099,19 @@ impl Checker {
                 }
                 Some((Num::Sum { of: path, kind: element, calc: Box::new(calc), filter: None, ty }, ty))
             }
+            ast::Num::Taken { attr, from: of } => {
+                let (path, end) = self.np(p, at, from, of)?;
+                if !path.steps.is_empty() {
+                    self.errors.push(err(at, format!("`{}`: only a unit knows what was taken from it; write `the total {attr} taken from each {from}`", show_num(n))));
+                    return None;
+                }
+                let End::Node(k) = end else { unreachable!("an empty path ends at the subject") };
+                let Some(t) = p.bindings.iter().filter(|b| b.target == k).find_map(|b| b.taking.as_ref().filter(|t| t.name == *attr)) else {
+                    self.errors.push(err(at, format!("`{}`: no `uses a {k}` takes {attr}", show_num(n))));
+                    return None;
+                };
+                Some((Num::Taken { of: path, name: attr.clone(), ty: t.ty }, t.ty))
+            }
         }
     }
 
@@ -964,13 +1180,27 @@ impl Checker {
         let mut steps = vec![];
         let mut cur = from.to_string();
         let mut shared = false;
-        if let Head::Each(k) = &np.head {
+        let mut words: &[String] = &np.steps;
+        if let Some(sc) = self.scope.clone() {
+            let elem = sc.elem.as_ref().filter(|(names, _)| matches!(np.head, Head::It) && np.steps.first().is_some_and(|w| names.contains(w)));
+            if let Some((_, kind)) = elem {
+                steps.push(Step::Elem);
+                cur = kind.clone();
+                words = &np.steps[1..];
+            } else if matches!(&np.head, Head::The(k) if *k == sc.cand) || (sc.it_is_cand && matches!(np.head, Head::It)) {
+                steps.push(Step::Cand);
+                cur = sc.cand.clone();
+                shared = true;
+            }
+        }
+        let scoped = !steps.is_empty();
+        if let (false, Head::Each(k)) = (scoped, &np.head) {
             if k != from {
                 self.errors.push(err(at, format!("`each {k}`: this sentence is about {}", a(from))));
                 return None;
             }
         }
-        if let Head::The(k) = &np.head {
+        if let (false, Head::The(k)) = (scoped, &np.head) {
             // The subject, else an owner of that kind, else the subject's or
             // an owner's unique attribute of that kind (appendix F.2.4). A
             // valid chain of owners is shorter than the number of kinds; a
@@ -999,8 +1229,8 @@ impl Checker {
             }
             cur = k.clone();
         }
-        for (i, w) in np.steps.iter().enumerate() {
-            let next = np.steps.get(i + 1);
+        for (i, w) in words.iter().enumerate() {
+            let next = words.get(i + 1);
             if w == CREATED {
                 if let Some(next) = next {
                     self.errors.push(err(at, format!("`{}`: {w} is a value, so it has no `{next}`", show(np))));
@@ -1042,6 +1272,13 @@ impl Checker {
                         return Some((Path { steps }, End::Value(ty)));
                     }
                 }
+            }
+            if !shared && p.bindings.iter().any(|b| b.subject == cur && b.target == *w && b.per.is_none()) {
+                // `its Carrier`: the entity its binding was granted (appendix F.1).
+                steps.push(Step::Bound(w.clone()));
+                cur = w.clone();
+                shared = true;
+                continue;
             }
             if shared {
                 self.errors.push(err(
@@ -1152,6 +1389,16 @@ impl Checker {
                 };
                 let (path, end) = self.np(p, at, from, left)?;
                 match end {
+                    End::Node(k) if matches!(path.steps.last(), Some(Step::Cand | Step::Bound(_))) => {
+                        let bools: Vec<String> = p.kind(&k).map(|x| x.attrs.iter().filter(|a| a.ty == Ty::Bool).map(|a| a.name.clone()).collect()).unwrap_or_default();
+                        match right {
+                            Term::Word(s) if bools.contains(s) => Some(Cond::State { node: path, state: s.clone(), negated: *negated }),
+                            _ => {
+                                self.errors.push(err(at, format!("`{}` is a shared {k}; compare its attributes, or a state: {}", show(left), bools.join(", "))));
+                                None
+                            }
+                        }
+                    }
                     End::Node(k) if through_ref(&path) => {
                         let Some(reference) = as_reference(&path) else {
                             self.errors.push(err(at, format!("`{}` is a shared {k}; compare its attributes", show(left))));

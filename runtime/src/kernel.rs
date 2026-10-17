@@ -8,7 +8,7 @@ use suture::{DigestBuilder, KindId, PatchView, Policy, Program as KernelProgram,
 use suture_lang::ir::Program;
 
 use crate::interp;
-use crate::state::{answer_from_value, send_from_value, send_value, stamped, unstamp, Ask, Msg, Unit};
+use crate::state::{answer_from_value, send_from_value, send_value, stamped, unstamp, Ask, Decide, Msg, Unit};
 
 /// The runtime's kernel kinds.
 #[derive(Clone, Copy, Debug)]
@@ -25,6 +25,11 @@ pub struct Kinds {
     pub send: KindId,
     /// The host's routing agent, which joins a `Send` to a mailbox.
     pub deliver: KindId,
+    /// A binding asking for a choice: an effect whose hole the host fills
+    /// with the pick (appendix F.2.7).
+    pub decide: KindId,
+    /// The host's pick, injected at a `Decide`'s hole.
+    pub pick: KindId,
 }
 
 /// The kernel program for a compiled program. Its fingerprint pins the
@@ -33,6 +38,7 @@ pub struct Kinds {
 pub fn program(prog: Arc<Program>) -> (KernelProgram, Kinds) {
     let mut b = SigBuilder::new(&format!("suture:{}", prog.module), prog.version);
     let (mailbox, reply, route) = (b.polarized("Mailbox"), b.polarized("Reply"), b.polarized("Route"));
+    let choice = b.polarized("Choice");
     let k = Kinds {
         unit: b.kind("Unit", mailbox.neg()).payload(ValueType::Any).done(),
         msg: b.kind("Msg", mailbox.pos()).aux("rest", mailbox.neg()).payload(ValueType::Any).done(),
@@ -40,6 +46,8 @@ pub fn program(prog: Arc<Program>) -> (KernelProgram, Kinds) {
         answer: b.kind("Answer", reply.pos()).payload(ValueType::Any).done(),
         send: b.kind("Send", route.neg()).payload(ValueType::Any).effect().done(),
         deliver: b.kind("Deliver", route.pos()).aux("to", mailbox.pos()).aux("next", mailbox.neg()).payload(ValueType::Any).done(),
+        decide: b.kind("Decide", choice.neg()).payload(ValueType::Any).effect().done(),
+        pick: b.kind("Pick", choice.pos()).payload(ValueType::Any).done(),
     };
     let sig = b.build().expect("the runtime signature is valid");
     let mut t = RuleTable::new();
@@ -53,9 +61,23 @@ pub fn program(prog: Arc<Program>) -> (KernelProgram, Kinds) {
         for a in &out.asks {
             cx.effect(k.ask, a.to_value(), &[]);
         }
+        for (to, m) in &out.sends {
+            cx.effect(k.send, send_value(to, m), &[]);
+        }
+        for d in &out.decides {
+            cx.effect(k.decide, d.to_value(), &[]);
+        }
         Ok(())
     })
-    .emits(&[k.ask]);
+    .emits(&[k.ask, k.send, k.decide]);
+    t.def("pick", k.pick, k.decide, move |cx| {
+        let d = Decide::from_value(cx.right()).map_err(|e| cx.reject(e))?;
+        let to = cx.left().as_str().ok_or_else(|| cx.reject("a pick names a unit"))?.to_string();
+        let take = Msg::Take { from: d.label.clone(), key: d.key(), taken: d.taken.clone() };
+        cx.effect(k.send, send_value(&to, &take), &[]);
+        Ok(())
+    })
+    .emits(&[k.send]);
     t.def("answer", k.answer, k.ask, move |cx| {
         let ask = Ask::from_value(cx.right()).map_err(|e| cx.reject(e))?;
         let (outcome, data) = answer_from_value(cx.left()).map_err(|e| cx.reject(e))?;

@@ -2,27 +2,49 @@
 //! It is a pure function of the program, the unit and the message, so
 //! replaying the journal reproduces every step.
 
-use suture_lang::ir::{Arith, Body, Cond, Effect, Num, Op, Path, Program, Rule, Step, Ty, CREATED, TIMED_OUT};
+use std::collections::BTreeMap;
 
-use crate::choice::choose;
-use crate::state::{Ask, Facts, Msg, Node, Status, Unit, Val};
+use suture_lang::ir::{Arith, Body, Cond, Criterion, Effect, Num, Op, Path, Program, Rule, Step, Ty, CREATED, TIMED_OUT};
 
-/// What a sentence reads: a unit's tree, and the facts carried into it
-/// (appendix F.2.3).
+use crate::choice::{choose, pick};
+use crate::state::{Ask, Bind, Decide, Fact, Facts, Msg, Node, Status, Unit, Val};
+
+static NO_TOTALS: BTreeMap<String, Val> = BTreeMap::new();
+
+/// What a sentence reads: a unit's tree, the facts carried into it
+/// (appendix F.2.3), and what was taken from it; in a `uses` condition, also
+/// the candidate and the element of `per`.
 #[derive(Clone, Copy)]
 pub struct View<'a> {
     pub root: &'a Node,
     pub facts: &'a Facts,
+    pub taken: &'a BTreeMap<String, Val>,
+    pub cand: Option<&'a str>,
+    pub elem: Option<&'a [usize]>,
 }
 
 impl<'a> View<'a> {
     pub fn of(u: &'a Unit) -> View<'a> {
-        View { root: &u.root, facts: &u.facts }
+        View { root: &u.root, facts: &u.facts, taken: &u.taken, cand: None, elem: None }
+    }
+
+    /// A tree being built, with its facts and nothing taken yet.
+    fn bare(root: &'a Node, facts: &'a Facts) -> View<'a> {
+        View { root, facts, taken: &NO_TOTALS, cand: None, elem: None }
     }
 
     fn with(self, root: &'a Node) -> View<'a> {
-        View { root, facts: self.facts }
+        View { root, ..self }
     }
+}
+
+/// What a step sends out: requests to the outside world, messages to other
+/// units, and choices for the host to make.
+#[derive(Default)]
+struct Out {
+    asks: Vec<Ask>,
+    sends: Vec<(String, Msg)>,
+    decides: Vec<Decide>,
 }
 
 /// Where a walk ends: a node of this unit, or a shared entity's carried facts.
@@ -36,10 +58,25 @@ enum Place {
 /// settles long before this.
 const SETTLE_ROUNDS: usize = 256;
 
-/// The unit after a step, and the requests the step sends out.
+/// The unit after a step, and what the step sends out.
 pub struct Outcome {
     pub unit: Unit,
     pub asks: Vec<Ask>,
+    pub sends: Vec<(String, Msg)>,
+    pub decides: Vec<Decide>,
+}
+
+impl Outcome {
+    fn new(unit: Unit, out: Out) -> Outcome {
+        Outcome { unit, asks: out.asks, sends: out.sends, decides: out.decides }
+    }
+
+    /// The unit as it was, with only a note.
+    fn kept(unit: &Unit, note: String, out: Out) -> Outcome {
+        let mut kept = unit.clone();
+        kept.notes = vec![note];
+        Outcome::new(kept, out)
+    }
 }
 
 /// A new unit for a root entity: its defaults, then the given attributes.
@@ -88,7 +125,17 @@ pub fn new_unit_full(
     // Formulas may read each other and the owner in any order: compute
     // until nothing changes. Each attribute is set at most once.
     while (0..root.parts.len()).fold(formulas(prog, &mut root, &facts, &[]), |changed, i| formulas(prog, &mut root, &facts, &[i]) || changed) {}
-    let unit = Unit { label: label.to_string(), root, notes: vec![], met: vec![], matched: vec![], alerts: vec![], timers: vec![], facts };
+    let unit = Unit {
+        label: label.to_string(),
+        root,
+        notes: vec![],
+        met: vec![],
+        matched: vec![],
+        alerts: vec![],
+        timers: vec![],
+        facts,
+        taken: BTreeMap::new(),
+    };
     if let Some(r) = violated(prog, &step_at(prog, &unit, &Msg::Create, now).unit) {
         return Err(format!("refused by rule {}: {}", r.name, r.paraphrase));
     }
@@ -124,7 +171,7 @@ fn formulas(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize]) -> boo
         if node_at(root, at).attrs.contains_key(&a.name) {
             continue;
         }
-        match num(prog, View { root, facts }, at, f) {
+        match num(prog, View::bare(root, facts), at, f) {
             Some(Val::Count(c)) if c < 0 => {}
             Some(v) => {
                 node_at_mut(root, at).attrs.insert(a.name.clone(), v);
@@ -152,6 +199,7 @@ fn blank(prog: &Program, kind: &str, attempt: u32, now: i64) -> Node {
         waiting: None,
         held: Default::default(),
         slots: Default::default(),
+        binds: Default::default(),
         parts: vec![],
     }
 }
@@ -168,7 +216,7 @@ pub fn step(prog: &Program, unit: &Unit, msg: &Msg) -> Outcome {
 pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
     let mut u = unit.clone();
     u.notes.clear();
-    let mut asks = vec![];
+    let mut out = Out::default();
     match msg {
         Msg::Create => {
             let attrs: Vec<String> = u.root.attrs.iter().map(|(k, v)| format!("{k} {}", v.show(&prog.currency))).collect();
@@ -176,49 +224,294 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
         }
         Msg::GoalDue { goal } => {
             goal_due(prog, &mut u, *goal);
-            return Outcome { unit: u, asks };
+            return Outcome::new(u, out);
         }
         Msg::Patience { id } => {
-            if !patience(prog, &mut u, id) {
-                return Outcome { unit: u, asks };
+            if !patience(prog, &mut u, id, &mut out) {
+                return Outcome::new(u, out);
             }
         }
         Msg::Answer { key, outcome, .. } if outcome == TIMED_OUT => {
-            if let Err(refusal) = deadline(prog, &mut u, key, &mut asks) {
-                let mut kept = unit.clone();
-                kept.notes = vec![refusal.note];
-                return Outcome { unit: kept, asks: vec![] };
+            if let Err(refusal) = deadline(prog, &mut u, key, &mut out) {
+                return Outcome::kept(unit, refusal.note, Out::default());
             }
         }
         Msg::Answer { key, outcome, data } => {
             if let Err(refusal) = answer(prog, &mut u, key, outcome, data) {
-                let mut kept = unit.clone();
-                kept.notes = vec![refusal.note];
-                asks.extend(refusal.again.map(|a| *a));
-                return Outcome { unit: kept, asks };
+                out.asks.extend(refusal.again.map(|a| *a));
+                return Outcome::kept(unit, refusal.note, out);
             }
         }
+        Msg::Take { from, key, taken } => {
+            let mut totals = u.taken.clone();
+            if let Some((name, amount)) = taken {
+                let before = totals.get(name).cloned().unwrap_or_else(|| zero(amount.ty()));
+                let Some(after) = arith(before, Arith::Add, amount.clone()) else {
+                    let refused = Msg::Refused { key: key.clone(), by: u.label.clone(), rule: String::new() };
+                    return Outcome::kept(unit, format!("refused {key}: the total {name} would overflow"), Out { sends: vec![(from.clone(), refused)], ..Out::default() });
+                };
+                totals.insert(name.clone(), after);
+            }
+            if let Some(r) = broken_rule(prog, View { taken: &totals, ..View::of(&u) }) {
+                let refused = Msg::Refused { key: key.clone(), by: u.label.clone(), rule: r.name.clone() };
+                return Outcome::kept(unit, format!("refused {key}: rule {}: {}", r.name, r.paraphrase), Out { sends: vec![(from.clone(), refused)], ..Out::default() });
+            }
+            u.taken = totals;
+            u.notes.push(match taken {
+                Some((name, amount)) => format!("granted {key}: {} {name} taken", amount.show(&prog.currency)),
+                None => format!("granted {key}"),
+            });
+            out.sends.push((from.clone(), Msg::Granted { key: key.clone(), by: u.label.clone(), taken: taken.clone(), facts: own_facts(&u) }));
+            return Outcome::new(u, out);
+        }
+        Msg::Release { from, key, taken } => {
+            if let Some((name, amount)) = taken {
+                let before = u.taken.get(name).cloned().unwrap_or_else(|| zero(amount.ty()));
+                if let Some(after) = arith(before, Arith::Sub, amount.clone()) {
+                    u.taken.insert(name.clone(), after);
+                }
+                u.notes.push(format!("{from} gave back {} {name} ({key})", amount.show(&prog.currency)));
+            } else {
+                u.notes.push(format!("{from} gave back {key}"));
+            }
+            return Outcome::new(u, out);
+        }
+        Msg::Granted { key, by, taken, facts } => granted(prog, &mut u, key, by, taken, facts, &mut out),
+        Msg::Refused { key, by, rule } => {
+            let Some((at, id)) = find_bind(&u, key) else { return Outcome::kept(unit, format!("ignored a refusal for {key}: it is gone"), out) };
+            let n = node_at_mut(&mut u.root, &at);
+            let (Some(Bind::Asked { skip } | Bind::Waiting { skip }), Status::Idle) = (n.binds.get(&id).cloned(), n.status) else {
+                return Outcome::kept(unit, format!("ignored a refusal for {key}: not asked"), out);
+            };
+            let mut skip = skip;
+            skip.push(by.clone());
+            n.binds.insert(id.clone(), Bind::Asked { skip: skip.clone() });
+            let why = if rule.is_empty() { String::new() } else { format!(": rule {rule}") };
+            u.notes.push(format!("{} {by} refused {key}{why}", target_of(&id)));
+            out.decides.extend(decide_for(prog, &u, &at, &id, skip));
+            return Outcome::new(u, out);
+        }
+        Msg::Waiting { key } => {
+            let Some((at, id)) = find_bind(&u, key) else { return Outcome::kept(unit, format!("ignored a wait for {key}: it is gone"), out) };
+            let n = node_at_mut(&mut u.root, &at);
+            if let Some(Bind::Asked { skip }) = n.binds.get(&id).cloned() {
+                n.binds.insert(id.clone(), Bind::Waiting { skip });
+                let kind = n.kind.clone();
+                u.notes.push(format!("{kind} waits for a {}", target_of(&id)));
+            }
+            return Outcome::new(u, out);
+        }
     }
-    settle(prog, &mut u, &mut asks, now);
+    settle(prog, &mut u, &mut out, now);
     goals(prog, &mut u);
     if let (Some(r), Msg::Answer { key, outcome, .. }) = (violated(prog, &u), msg) {
         // A consequence no pass guards, such as a withdrawn part, would
         // break a rule: refuse the answer and ask again (appendix B.3.4).
         // A deadline is not an answer, so nothing is asked again for it.
-        let mut kept = unit.clone();
-        kept.notes = vec![format!("refused by rule {}: {}", r.name, r.paraphrase)];
         let again = open_request(&unit.root, &unit.label, key)
             .filter(|_| outcome != TIMED_OUT)
             .and_then(|at| prog.effect_of(&node_at(&unit.root, &at).kind).map(|e| ask_for(&unit.label, View::of(unit), &at, e)));
-        return Outcome { unit: kept, asks: again.into_iter().collect() };
+        let out = Out { asks: again.into_iter().collect(), ..Out::default() };
+        return Outcome::kept(unit, format!("refused by rule {}: {}", r.name, r.paraphrase), out);
     }
     if let (Some(r), Msg::Patience { .. }) = (violated(prog, &u), msg) {
         // Moving on would break a rule: the slot stays where it is.
-        let mut kept = unit.clone();
-        kept.notes = vec![format!("patience held: rule {}: {}", r.name, r.paraphrase)];
-        return Outcome { unit: kept, asks: vec![] };
+        return Outcome::kept(unit, format!("patience held: rule {}: {}", r.name, r.paraphrase), Out::default());
     }
-    Outcome { unit: u, asks }
+    Outcome::new(u, out)
+}
+
+/// A binding was granted: it is recorded, with the facts of the entity bound.
+/// One that is no longer wanted gives back at once what it took.
+fn granted(prog: &Program, u: &mut Unit, key: &str, by: &str, taken: &Option<(String, Val)>, facts: &Facts, out: &mut Out) {
+    let give_back = |u: &mut Unit, out: &mut Out, why: &str| {
+        u.notes.push(format!("gave back {} {by}: {why}", target_of(key.rsplit_once('@').map_or(key, |(_, id)| id))));
+        out.sends.push((by.to_string(), Msg::Release { from: u.label.clone(), key: key.to_string(), taken: taken.clone() }));
+    };
+    let Some((at, id)) = find_bind(u, key) else { return give_back(u, out, "its part is gone") };
+    let n = node_at_mut(&mut u.root, &at);
+    if n.status != Status::Idle || !matches!(n.binds.get(&id), Some(Bind::Asked { .. } | Bind::Waiting { .. })) {
+        return give_back(u, out, "not asked");
+    }
+    n.binds.insert(id.clone(), Bind::Granted { to: by.to_string(), taken: taken.clone() });
+    let kind = n.kind.clone();
+    for (label, f) in facts {
+        u.facts.entry(label.clone()).or_insert_with(|| f.clone());
+    }
+    let what = match &id.split_once('.') {
+        Some((_, j)) => format!(" for {} {}", element_name(prog, &kind, &target_of(&id)), j.parse::<usize>().map_or(0, |j| j + 1)),
+        None => String::new(),
+    };
+    u.notes.push(format!("{kind} gets {} {by}{what}", target_of(&id)));
+}
+
+/// `line`, for the element of the `per` binding of `kind` to `target`.
+fn element_name(prog: &Program, kind: &str, target: &str) -> String {
+    let b = prog.bindings.iter().find(|b| b.subject == kind && b.target == target);
+    b.and_then(|b| b.per.as_ref()).and_then(|l| prog.lists.iter().find(|x| x.name == *l)).map_or_else(|| "element".into(), |l| l.singular())
+}
+
+/// The kind a binding id binds: `Stock` for `Stock.0`.
+fn target_of(id: &str) -> String {
+    id.split_once('.').map_or(id, |(t, _)| t).to_string()
+}
+
+/// A unit as other units carry it: its own fact, and the facts it carries.
+fn own_facts(u: &Unit) -> Facts {
+    let mut facts = u.facts.clone();
+    facts.insert(u.label.clone(), Fact { kind: u.root.kind.clone(), created: u.root.created, attrs: u.root.attrs.clone() });
+    facts
+}
+
+/// The part and binding id a binding key names, if the part still has it.
+fn find_bind(u: &Unit, key: &str) -> Option<(Vec<usize>, String)> {
+    let (node, id) = key.rsplit_once('@')?;
+    let at = positions(&u.root).into_iter().find(|at| !at.is_empty() && request_key(&u.label, &u.root, at) == node)?;
+    node_at(&u.root, &at).binds.contains_key(id).then(|| (at, id.to_string()))
+}
+
+/// Whether the binding `key` is waiting for a candidate.
+pub fn waiting(u: &Unit, key: &str) -> bool {
+    find_bind(u, key).is_some_and(|(at, id)| matches!(node_at(&u.root, &at).binds.get(&id), Some(Bind::Waiting { .. })))
+}
+
+/// A binding's id, its index in the program, and for `per`, the element's
+/// number and position.
+type BindSlot = (String, usize, Option<(u32, Vec<usize>)>);
+
+/// The bindings the node at `at` has (appendix F.2.5): each id, the
+/// binding's index and, for `per`, the element's number and position.
+fn bind_slots(prog: &Program, root: &Node, at: &[usize]) -> Vec<BindSlot> {
+    let n = node_at(root, at);
+    let mut out = vec![];
+    for (i, b) in prog.bindings.iter().enumerate().filter(|(_, b)| b.subject == n.kind) {
+        let Some(list) = &b.per else {
+            out.push((b.target.clone(), i, None));
+            continue;
+        };
+        // The list belongs to the part or to its nearest owner that has it.
+        let found = (0..=at.len()).rev().find_map(|d| {
+            let owner = node_at(root, &at[..d]);
+            prog.lists.iter().find(|l| l.name == *list && l.owner == owner.kind).map(|l| (d, l))
+        });
+        let Some((d, l)) = found else { continue };
+        let owner = &at[..d];
+        let elements = node_at(root, owner).parts.iter().enumerate().filter(|(_, p)| p.kind == l.element).map(|(j, _)| j);
+        for (j, idx) in elements.enumerate() {
+            out.push((format!("{}.{j}", b.target), i, Some((j as u32, child(owner, idx)))));
+        }
+    }
+    out
+}
+
+/// Whether every binding of the node at `at` is granted.
+fn bound(prog: &Program, root: &Node, at: &[usize]) -> bool {
+    let n = node_at(root, at);
+    bind_slots(prog, root, at).iter().all(|(id, ..)| matches!(n.binds.get(id), Some(Bind::Granted { .. })))
+}
+
+/// The choice request for the binding `id` of the part at `at`, if its
+/// amount is known.
+fn decide_for(prog: &Program, u: &Unit, at: &[usize], id: &str, skip: Vec<String>) -> Option<Decide> {
+    let (_, i, elem) = bind_slots(prog, &u.root, at).into_iter().find(|(x, ..)| x == id)?;
+    let b = &prog.bindings[i];
+    let taken = match &b.taking {
+        None => None,
+        Some(t) => {
+            let v = View { elem: elem.as_ref().map(|(_, p)| p.as_slice()), ..View::of(u) };
+            Some((t.name.clone(), num(prog, v, at, &t.amount)?))
+        }
+    };
+    Some(Decide {
+        label: u.label.clone(),
+        node: request_key(&u.label, &u.root, at),
+        bind: id.to_string(),
+        binding: i as u32,
+        elem: elem.map(|(j, _)| j),
+        taken,
+        skip,
+    })
+}
+
+/// Asks for each binding of a new part (appendix F.2.5). Makes at most one change.
+fn bind_pass(prog: &Program, u: &mut Unit, at: &[usize], out: &mut Out) -> bool {
+    if at.is_empty() || node_at(&u.root, at).status != Status::Idle {
+        return false;
+    }
+    for (id, ..) in bind_slots(prog, &u.root, at) {
+        if node_at(&u.root, at).binds.contains_key(&id) {
+            continue;
+        }
+        let Some(d) = decide_for(prog, u, at, &id, vec![]) else { continue };
+        node_at_mut(&mut u.root, at).binds.insert(id, Bind::Asked { skip: vec![] });
+        out.decides.push(d);
+        return true;
+    }
+    false
+}
+
+/// A part leaves before reaching the outside world: every binding it and its
+/// parts hold gives back what it took (appendix F.2.10).
+fn give_back(label: &str, root: &Node, at: &[usize], out: &mut Out) {
+    let n = node_at(root, at);
+    for (id, b) in &n.binds {
+        if let Bind::Granted { to, taken } = b {
+            let key = format!("{}@{id}", request_key(label, root, at));
+            out.sends.push((to.clone(), Msg::Release { from: label.to_string(), key, taken: taken.clone() }));
+        }
+    }
+    for i in 0..n.parts.len() {
+        give_back(label, root, &child(at, i), out);
+    }
+}
+
+/// What a choice request asks for, read at its part: the pool key.
+pub fn decide_key(prog: &Program, u: &Unit, d: &Decide) -> Option<Val> {
+    let (at, elem) = decide_place(prog, u, d)?;
+    let v = View { elem: elem.as_deref(), ..View::of(u) };
+    num(prog, v, &at, &prog.bindings.get(d.binding as usize)?.key)
+}
+
+fn decide_place(prog: &Program, u: &Unit, d: &Decide) -> Option<(Vec<usize>, Option<Vec<usize>>)> {
+    let at = positions(&u.root).into_iter().find(|at| !at.is_empty() && request_key(&u.label, &u.root, at) == d.node)?;
+    let (_, _, elem) = bind_slots(prog, &u.root, &at).into_iter().find(|(id, ..)| *id == d.bind)?;
+    Some((at, elem.map(|(_, p)| p)))
+}
+
+/// The choice point for a binding (appendix F.2.7): of the candidates, in
+/// creation order, the first `candidates` that meet the binding's filter
+/// are ranked by its `prefer`. Returns the pick and how many were gathered.
+pub fn choose_among(prog: &Program, u: &Unit, d: &Decide, candidates: impl Iterator<Item = Unit>) -> Option<(String, usize)> {
+    let b = prog.bindings.get(d.binding as usize)?;
+    let (at, elem) = decide_place(prog, u, d)?;
+    let mut gathered = vec![];
+    for c in candidates {
+        if gathered.len() >= prog.candidates as usize {
+            break;
+        }
+        let mut facts = u.facts.clone();
+        facts.extend(own_facts(&c));
+        let v = View { facts: &facts, cand: Some(&c.label), elem: elem.as_deref(), ..View::of(u) };
+        if b.filter.iter().all(|f| eval(prog, v, &at, f) == T::Yes) {
+            let scores = b.prefer.iter().map(|cr| score(prog, v, &at, cr)).collect::<Vec<_>>();
+            gathered.push((c.label.clone(), scores));
+        }
+    }
+    let scores: Vec<Vec<(u8, i128)>> = gathered.iter().map(|(_, s)| s.clone()).collect();
+    pick(&scores).map(|i| (gathered[i].0.clone(), gathered.len()))
+}
+
+/// A candidate's rank on one criterion; lower comes first, and an unknown value last.
+fn score(prog: &Program, v: View, at: &[usize], c: &Criterion) -> (u8, i128) {
+    let amount = |n: &Num| match num(prog, v, at, n) {
+        Some(Val::Money(x) | Val::Count(x) | Val::Time(x) | Val::Duration(x)) => Some(i128::from(x)),
+        _ => None,
+    };
+    match c {
+        Criterion::Lowest(n) => amount(n).map_or((1, 0), |x| (0, x)),
+        Criterion::Highest(n) => amount(n).map_or((1, 0), |x| (0, -x)),
+        Criterion::Those(cond) => (u8::from(eval(prog, v, at, cond) != T::Yes), 0),
+    }
 }
 
 /// The position of the requested part whose key is `key`, if it is still open.
@@ -270,7 +563,7 @@ fn answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[(Strin
     let mut notes =
         vec![if shown.is_empty() { format!("{kind} {outcome}") } else { format!("{kind} {outcome}: {}", shown.join(", ")) }];
     react(prog, &mut t, &u.facts, &at, &kind, outcome, &mut notes);
-    if let Some(r) = broken_rule(prog, View { root: &t, facts: &u.facts }) {
+    if let Some(r) = broken_rule(prog, View::of(u).with(&t)) {
         return Err(Refusal { note: format!("refused by rule {}: {}", r.name, r.paraphrase), again });
     }
     u.root = t;
@@ -281,7 +574,7 @@ fn answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[(Strin
 /// A request's deadline passed with no answer (appendix C.3.3): it goes out
 /// again with the same key, or after the last send the part fails as
 /// `timed out`. A timed-out part is never replaced (D9).
-fn deadline(prog: &Program, u: &mut Unit, key: &str, asks: &mut Vec<Ask>) -> Result<(), Refusal> {
+fn deadline(prog: &Program, u: &mut Unit, key: &str, out: &mut Out) -> Result<(), Refusal> {
     let Some(at) = open_request(&u.root, &u.label, key) else {
         return Err(Refusal { note: format!("ignored a deadline for {key}: no open request"), again: None });
     };
@@ -296,7 +589,7 @@ fn deadline(prog: &Program, u: &mut Unit, key: &str, asks: &mut Vec<Ask>) -> Res
             "{kind}: no answer within {}: asking again (send {sends} of {attempts})",
             duration(effect.within_secs)
         ));
-        asks.push(ask_for(&u.label, View::of(u), &at, effect));
+        out.asks.push(ask_for(&u.label, View::of(u), &at, effect));
         return Ok(());
     }
     n.status = Status::Failed;
@@ -335,6 +628,11 @@ fn goal_due(prog: &Program, u: &mut Unit, goal: u32) {
         for (part, rule) in &n.held {
             u.notes.push(format!("  because {part} waits: rule {rule}"));
         }
+        for (id, b) in &n.binds {
+            if matches!(b, Bind::Waiting { .. }) {
+                u.notes.push(format!("  because {} waits for a {}", n.kind, target_of(id)));
+            }
+        }
         let Some((&i, owner)) = at.split_last() else { continue };
         if current(node_at(&u.root, owner), &n.kind) != Some(i) {
             continue;
@@ -363,14 +661,14 @@ pub fn duration(secs: u64) -> String {
 fn react(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize], kind: &str, outcome: &str, notes: &mut Vec<String>) {
     for r in prog.reactions.iter().filter(|r| r.kind == kind && r.outcome == outcome) {
         for a in &r.actions {
-            let Some(target) = here(View { root, facts }, at, &a.target.steps) else { continue };
+            let Some(target) = here(View::bare(root, facts), at, &a.target.steps) else { continue };
             let Some(calc) = &a.becomes else {
                 let n = node_at_mut(root, &target);
                 n.attrs.insert(a.attr.clone(), Val::Bool(a.value));
                 notes.push(format!("{} is {}{}", n.kind, if a.value { "" } else { "not " }, a.attr));
                 continue;
             };
-            let value = match num(prog, View { root, facts }, at, calc) {
+            let value = match num(prog, View::bare(root, facts), at, calc) {
                 None => {
                     notes.push(format!("{} not set: its new value is not known yet", a.attr));
                     continue;
@@ -388,11 +686,11 @@ fn react(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize], kind: &st
     }
 }
 
-fn settle(prog: &Program, u: &mut Unit, asks: &mut Vec<Ask>, now: i64) {
+fn settle(prog: &Program, u: &mut Unit, out: &mut Out, now: i64) {
     for _ in 0..SETTLE_ROUNDS {
-        let changed = positions(&u.root)
-            .iter()
-            .any(|at| needs_pass(prog, u, at, now) || done_pass(prog, u, at) || request_pass(prog, u, at, asks));
+        let changed = positions(&u.root).iter().any(|at| {
+            needs_pass(prog, u, at, now, out) || bind_pass(prog, u, at, out) || done_pass(prog, u, at) || request_pass(prog, u, at, out)
+        });
         if !changed {
             return;
         }
@@ -407,7 +705,7 @@ fn settle(prog: &Program, u: &mut Unit, asks: &mut Vec<Ask>, now: i64) {
 /// works on its current alternative: an empty slot is filled, and one whose
 /// alternative failed for good moves on (appendix D.3). Makes at most one
 /// change.
-fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64) -> bool {
+fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut Out) -> bool {
     enum Change {
         Add(Node, String),
         Remove(usize, String),
@@ -515,7 +813,8 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64) -> bool {
             true
         }
         Some(Change::Remove(i, note)) => {
-            n.parts.remove(i);
+            give_back(&u.label, &u.root, &child(at, i), out);
+            node_at_mut(&mut u.root, at).parts.remove(i);
             u.notes.push(note);
             true
         }
@@ -561,10 +860,13 @@ pub fn patience_due<'p>(prog: &'p Program, unit: &Unit, id: &str) -> Option<(Vec
 }
 
 /// Moves a slot on when its patience ran out: an untouched part is withdrawn.
-fn patience(prog: &Program, u: &mut Unit, id: &str) -> bool {
+fn patience(prog: &Program, u: &mut Unit, id: &str, out: &mut Out) -> bool {
     let Some((at, slot, alt, next)) = patience_due(prog, u, id) else { return false };
     let secs = prog.slot(slot).and_then(|s| s.patience[s.alternatives.iter().position(|a| *a == alt)?]).unwrap_or(0);
     let key = node_key(&u.label, &u.root, &at);
+    if let Some(i) = current(node_at(&u.root, &at), &alt) {
+        give_back(&u.label, &u.root, &child(&at, i), out);
+    }
     let n = node_at_mut(&mut u.root, &at);
     if let Some(i) = current(n, &alt) {
         n.parts.remove(i);
@@ -581,7 +883,7 @@ fn patience(prog: &Program, u: &mut Unit, id: &str) -> bool {
 /// on that rule. A root is never done; its goals describe it.
 fn done_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
     let n = node_at(&u.root, at);
-    if at.is_empty() || n.status != Status::Idle || prog.effect_of(&n.kind).is_some() || !needs_done(prog, View::of(u), at) {
+    if at.is_empty() || n.status != Status::Idle || prog.effect_of(&n.kind).is_some() || !needs_done(prog, View::of(u), at) || !bound(prog, &u.root, at) {
         return false;
     }
     let (kind, waiting) = (n.kind.clone(), n.waiting.clone());
@@ -616,16 +918,16 @@ fn needs_done(prog: &Program, v: View, at: &[usize]) -> bool {
 /// Sends a ready part's request, unless a rule would break. Then the part
 /// waits on that rule, and every later step of the unit checks it again
 /// (appendix B.3.5).
-fn request_pass(prog: &Program, u: &mut Unit, at: &[usize], asks: &mut Vec<Ask>) -> bool {
+fn request_pass(prog: &Program, u: &mut Unit, at: &[usize], out: &mut Out) -> bool {
     let n = node_at(&u.root, at);
     let Some(effect) = prog.effect_of(&n.kind) else { return false };
-    if n.status != Status::Idle || !needs_done(prog, View::of(u), at) {
+    if n.status != Status::Idle || !needs_done(prog, View::of(u), at) || !bound(prog, &u.root, at) {
         return false;
     }
     let (kind, waiting) = (n.kind.clone(), n.waiting.clone());
     let mut t = u.root.clone();
     node_at_mut(&mut t, at).status = Status::Requested;
-    match broken_rule(prog, View { root: &t, facts: &u.facts }) {
+    match broken_rule(prog, View::of(u).with(&t)) {
         Some(r) if waiting.as_deref() == Some(r.name.as_str()) => false,
         Some(r) => {
             node_at_mut(&mut u.root, at).waiting = Some(r.name.clone());
@@ -640,7 +942,7 @@ fn request_pass(prog: &Program, u: &mut Unit, at: &[usize], asks: &mut Vec<Ask>)
             let a = ask_for(&u.label, View::of(u), at, effect);
             let sends: Vec<String> = a.sends.iter().map(|(k, v)| format!("{k} {}", v.show(&prog.currency))).collect();
             u.notes.push(format!("{kind} → {} via {} ({})", effect.verb, effect.adapter, sends.join(", ")));
-            asks.push(a);
+            out.asks.push(a);
             true
         }
     }
@@ -808,6 +1110,10 @@ fn num(prog: &Program, v: View, at: &[usize], n: &Num) -> Option<Val> {
             Some(total)
         }
         Num::Count { of, kind, filter } => Some(Val::Count(relation(prog, v, at, of, kind, filter.as_deref())?.len() as i64)),
+        Num::Taken { of, name, ty } => match locate(v, at, &of.steps)? {
+            Place::Here(p) if p.is_empty() => Some(v.taken.get(name).cloned().unwrap_or_else(|| zero(*ty))),
+            _ => None,
+        },
     }
 }
 
@@ -943,6 +1249,12 @@ fn locate(v: View, from: &[usize], steps: &[Step]) -> Option<Place> {
                 Some(Val::Ref(next)) => Place::There(next.clone()),
                 _ => return None,
             },
+            (Place::Here(at), Step::Bound(k)) => match node_at(v.root, &at).binds.get(k) {
+                Some(Bind::Granted { to, .. }) => Place::There(to.clone()),
+                _ => return None,
+            },
+            (_, Step::Cand) => Place::There(v.cand?.to_string()),
+            (_, Step::Elem) => Place::Here(v.elem?.to_vec()),
             (Place::There(_), _) | (_, Step::Attr(_)) => return None,
         };
         if let Place::There(l) = &place {

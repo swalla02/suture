@@ -189,6 +189,14 @@ fn atom(c: &mut Cursor, bare: bool) -> Result<Num, Error> {
         let of = noun_phrase(c)?;
         return Ok(Num::Number { of, filter: that(c)? });
     }
+    if word_at(c, 0, "the") && word_at(c, 1, "total") && word_at(c, 3, "taken") && word_at(c, 4, "from") {
+        c.expect_word("the")?;
+        c.expect_word("total")?;
+        let attr = c.word()?;
+        c.expect_word("taken")?;
+        c.expect_word("from")?;
+        return Ok(Num::Taken { attr, from: noun_phrase(c)? });
+    }
     if word_at(c, 0, "the") && word_at(c, 1, "total") && word_at(c, 3, "of") {
         c.expect_word("the")?;
         c.expect_word("total")?;
@@ -398,7 +406,7 @@ fn each_in_cond(c: &Cond) -> Option<String> {
     fn num(n: &Num) -> Option<String> {
         let np = |np: &NounPhrase| if let Head::Each(k) = &np.head { Some(k.clone()) } else { None };
         match n {
-            Num::Np(x) | Num::Total { of: x, .. } | Num::Number { of: x, .. } => np(x),
+            Num::Np(x) | Num::Total { of: x, .. } | Num::Number { of: x, .. } | Num::Taken { from: x, .. } => np(x),
             Num::Bin(a, _, b) => num(a).or_else(|| num(b)),
             Num::Over { list, .. } => np(list),
             Num::Lit(_) => None,

@@ -120,3 +120,128 @@ fn scenarios_give_shared_entities() {
     };
     assert!(holds(&r.host.prog, &u, &[], &c));
 }
+
+const SHOP: &str = "module t version 1, currency EUR
+kind Country   { restricted: Bool = no }
+kind Product   { name: Text }
+kind Warehouse { country: Country }
+kind Carrier   { countries: set of Country, fee: Money }
+kind Stock     { warehouse: Warehouse, product: Product, units: Count }
+kind Order     { country: Country, lines: list of Line, cancelled: Bool = no }
+kind Line      { order: Order, product: Product, quantity: Count }
+kind Payment   { order: Order }
+kind Shipment  { order: Order }
+Order needs Payment, Shipment while it is not cancelled
+Shipment uses a Carrier where the Carrier's countries contain the Order's country
+Shipment uses a Stock per line where the Stock's product is the line's product,
+  taking the line's quantity
+effect capture Payment via payments within 30 seconds
+  sends the order's country
+  reports captured | fails with declined
+effect send Shipment via carriers within 7 days
+  sends the Order's country, its Carrier's fee
+  marks sent
+  reports delivered | fails with lost
+define: an Order is paid when its Payment is captured
+rule stock: the total quantity taken from each Stock is at most its units
+rule paid:  no Order has a Shipment that is sent unless it is paid
+when a Payment is declined: its Order is cancelled
+prefer Carrier: lowest fee
+prefer Stock for a line: those whose warehouse's country is the Order's country
+";
+
+const GIVEN: &str = "  given  a Country DE
+  and    a Country FR
+  and    a Product P with name Kettle
+  and    a Product Q with name Mug
+  and    a Warehouse WF with country FR
+  and    a Warehouse WD with country DE
+  and    a Carrier K1 with countries {DE, FR} and fee 9 EUR
+  and    a Carrier K2 with countries DE and fee 5 EUR
+  and    a Carrier K3 with countries FR and fee 1 EUR
+";
+
+fn shop_run(body: &str) -> suture_runtime::scenario::Report {
+    let p = suture_lang::compile(&[("t.st".to_string(), SHOP.to_string())]).unwrap_or_else(|e| panic!("{e:?}"));
+    let src = format!("scenario \"s\":\n{GIVEN}{body}");
+    let sc = &parse_scenarios("t.scenario", &src).unwrap_or_else(|e| panic!("{e}"))[0];
+    let r = run(&p, sc);
+    assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
+    r
+}
+
+#[test]
+fn a_shipment_takes_the_cheapest_carrier_and_stock_in_its_country() {
+    let r = shop_run(
+        "  and    a Stock S1 with warehouse WF, product P and units 5
+  and    a Stock S2 with warehouse WD, product P and units 5
+  and    a Stock S3 with warehouse WD, product Q and units 1
+  when   a new Order O1 with country DE
+         and a line with product P and quantity 2
+         and a line with product Q and quantity 1
+  and    payments answers captured
+  expect O1's Shipment is sent
+  expect the total quantity taken from S2 is 2
+  expect the total quantity taken from S3 is 1
+  expect the total quantity taken from S1 is 0
+",
+    );
+    let trace = r.host.trace.join("\n");
+    assert!(trace.contains("Shipment gets Carrier K2"), "{trace}");
+    assert!(trace.contains("Shipment gets Stock S2 for line 1"), "{trace}");
+    let ask = r.host.pending().into_iter().find(|a| a.adapter == "carriers").unwrap();
+    assert_eq!(ask.sends[1], ("fee".to_string(), Val::Money(500)));
+    assert!(r.host.machine.faults().is_empty(), "{:?}", r.host.machine.faults());
+}
+
+#[test]
+fn a_stock_that_would_run_out_refuses_and_the_next_is_asked() {
+    let r = shop_run(
+        "  and    a Stock S1 with warehouse WD, product P and units 1
+  and    a Stock S2 with warehouse WF, product P and units 3
+  when   a new Order O1 with country DE
+         and a line with product P and quantity 2
+  expect the total quantity taken from S1 is 0
+  expect the total quantity taken from S2 is 2
+",
+    );
+    let trace = r.host.trace.join("\n");
+    assert!(trace.contains("refused O1/Shipment#1@Stock.0: rule stock"), "{trace}");
+    assert!(trace.contains("Stock S1 refused O1/Shipment#1@Stock.0: rule stock"), "{trace}");
+}
+
+#[test]
+fn no_stock_waits_until_some_frees_up() {
+    let r = shop_run(
+        "  and    a Stock S1 with warehouse WD, product P and units 2
+  when   a new Order O1 with country DE
+         and a line with product P and quantity 2
+  and    a new Order O2 with country DE
+         and a line with product P and quantity 1
+  expect the total quantity taken from S1 is 2
+  expect O2's Shipment is not sent
+  when   payments answers declined for O1
+  expect O1 has no Shipment
+  expect the total quantity taken from S1 is 1
+  when   payments answers captured for O2
+  expect O2's Shipment is sent
+",
+    );
+    let trace = r.host.trace.join("\n");
+    assert!(trace.contains("O2  Shipment waits for a Stock"), "{trace}");
+    assert!(trace.contains("O1 gave back 2 quantity"), "{trace}");
+}
+
+#[test]
+fn a_new_stock_wakes_a_waiting_binding() {
+    shop_run(
+        "  when   a new Order O1 with country FR
+         and a line with product Q and quantity 1
+  and    payments answers captured
+  expect O1's Shipment is not sent
+  when   a Stock S9 with warehouse WF, product Q and units 1
+  expect O1's Shipment is sent
+  expect the total quantity taken from S9 is 1
+",
+    );
+}

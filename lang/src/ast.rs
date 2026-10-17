@@ -67,6 +67,8 @@ pub enum Num {
     Number { of: NounPhrase, filter: Option<Box<Cond>> },
     /// `the total of the line's price * the line's quantity over its lines`
     Over { calc: Box<Num>, list: NounPhrase },
+    /// `the total quantity taken from each Stock` (appendix F.2.8)
+    Taken { attr: String, from: NounPhrase },
 }
 
 /// What follows `is`: a literal, a noun phrase, or a bare word that the
@@ -124,6 +126,8 @@ pub struct Module {
     pub currency: String,
     /// `, attempts 5` (appendix E.2.8).
     pub attempts: Option<u32>,
+    /// `, candidates 8` (appendix F.2.7).
+    pub candidates: Option<u32>,
     pub at: Loc,
 }
 
@@ -158,7 +162,32 @@ pub struct SlotDecl {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PreferDecl {
     pub choice: String,
+    /// `for a line`: the element of a `uses … per line` (appendix F.2.7).
+    pub per: Option<String>,
     pub order: Vec<(String, Option<u64>)>,
+    /// For a `uses`: `lowest fee, then those whose …`.
+    pub criteria: Vec<Criterion>,
+    pub at: Loc,
+}
+
+/// How candidates of a `uses` are ranked (appendix F.2.7).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Criterion {
+    Lowest(Num),
+    Highest(Num),
+    /// `those ⟨cond⟩`, `those whose ⟨attr⟩ …`: the candidate is `it`.
+    Those(Cond),
+}
+
+/// `Shipment uses a Stock per line where …, taking the line's quantity` (appendix F.2.5).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UsesDecl {
+    pub subject: String,
+    pub target: String,
+    pub per: Option<String>,
+    pub cond: Cond,
+    pub taking: Option<Num>,
+    pub source: String,
     pub at: Loc,
 }
 
@@ -241,4 +270,5 @@ pub struct Source {
     pub reactions: Vec<ReactionDecl>,
     pub slots: Vec<SlotDecl>,
     pub prefers: Vec<PreferDecl>,
+    pub uses: Vec<UsesDecl>,
 }

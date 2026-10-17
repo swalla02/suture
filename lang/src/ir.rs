@@ -17,8 +17,11 @@ pub struct Program {
     pub reactions: Vec<Reaction>,
     pub slots: Vec<Slot>,
     pub lists: Vec<List>,
+    pub bindings: Vec<Binding>,
     /// Attempts of a part, and sends of a request (appendix E.2.8).
     pub attempts: u32,
+    /// How many candidates a choice among shared entities gathers (appendix F.2.7).
+    pub candidates: u32,
     /// What `suture build` warns about; the program still runs.
     pub warnings: Vec<String>,
 }
@@ -59,6 +62,45 @@ impl List {
         let kind = self.element.to_lowercase();
         if s.contains(&kind) { kind } else { s[0].clone() }
     }
+}
+
+/// `Shipment uses a Stock per line where …, taking …` (appendix F.2.5). Its
+/// conditions are read at the subject, with [`Step::Cand`] for the
+/// candidate and [`Step::Elem`] for the element of `per`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Binding {
+    pub subject: String,
+    pub target: String,
+    /// The list, of the subject or an owner of it, with one binding per element.
+    pub per: Option<String>,
+    /// The candidate's attribute the pool is indexed by.
+    pub key_attr: String,
+    /// Whether that attribute is a set that must contain the key.
+    pub key_member: bool,
+    /// The key, read at the subject; it never reads the candidate.
+    pub key: Num,
+    /// The other `and` parts of the condition.
+    pub filter: Vec<Cond>,
+    pub taking: Option<Taking>,
+    pub prefer: Vec<Criterion>,
+    pub source: String,
+}
+
+/// `taking the line's quantity`: the amount, and the name of the running
+/// total it adds to (`quantity`, after its last attribute).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Taking {
+    pub name: String,
+    pub amount: Num,
+    pub ty: Ty,
+}
+
+/// How a binding ranks its candidates, most important first (appendix F.2.7).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Criterion {
+    Lowest(Num),
+    Highest(Num),
+    Those(Cond),
 }
 
 /// A slot an owner fills with one of its alternatives (appendix D).
@@ -214,6 +256,12 @@ pub enum Step {
     /// Through a reference attribute, to the shared entity's carried facts
     /// (appendix F.2.3).
     Ref(String),
+    /// To the entity a binding to this kind was granted, through its carried facts.
+    Bound(String),
+    /// In a `uses` condition or its `prefer`: the candidate.
+    Cand,
+    /// In a `uses … per`: the element the binding is for.
+    Elem,
 }
 
 /// A calculation (appendix E.2.3). Paths are relative to the node it is
@@ -228,6 +276,9 @@ pub enum Num {
     Sum { of: Path, kind: String, calc: Box<Num>, filter: Option<Box<Cond>>, ty: Ty },
     /// How many parts of `kind` there are under the node at `of`.
     Count { of: Path, kind: String, filter: Option<Box<Cond>> },
+    /// The running total of the amounts taken as `name` from the unit at `of`
+    /// (appendix F.2.8).
+    Taken { of: Path, name: String, ty: Ty },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

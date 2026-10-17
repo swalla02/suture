@@ -96,6 +96,7 @@ fn num_formula(p: &Program, kind: &str, v: &str, n: &Num) -> String {
             let filter = filter.as_ref().map_or_else(String::new, |f| format!(" where {}", cond_formula(p, k, &e, f)));
             format!("count({e} in {}{filter})", relation_formula(p, kind, v, of, k))
         }
+        Num::Taken { of, name, .. } => format!("taken_{name}({})", path_formula(p, kind, v, of)),
     }
 }
 
@@ -118,6 +119,7 @@ fn num_words(p: &Program, kind: &str, n: &Num) -> String {
         Num::Count { of, kind: k, filter } => {
             format!("the number of {}{}", relation_words(p, kind, of, k), that_words(p, k, filter.as_deref()))
         }
+        Num::Taken { of, name, .. } => format!("the total {name} taken from {}", path_words(p, kind, of)),
     }
 }
 
@@ -263,6 +265,12 @@ fn step_names(p: &Program, kind: &str, path: &Path) -> Vec<(String, bool)> {
                 out.push((k.clone(), true));
                 cur = k.clone();
             }
+            Step::Bound(k) => {
+                out.push((k.clone(), true));
+                cur = k.clone();
+            }
+            Step::Cand => out.push(("candidate".into(), false)),
+            Step::Elem => out.push(("element".into(), false)),
             Step::Owner => match p.kind(&cur).and_then(|k| k.owner.clone()) {
                 Some(o) => {
                     out.push((o.attr, false));

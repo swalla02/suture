@@ -140,6 +140,68 @@ impl Fact {
 /// Carried facts, by the label of the unit they come from.
 pub type Facts = BTreeMap<String, Fact>;
 
+fn facts_value(facts: &Facts) -> Value {
+    Value::list(facts.iter().map(|(label, f)| Value::tuple([text(label), f.to_value()])))
+}
+
+fn facts_from(v: &Value) -> Result<Facts, String> {
+    let mut carried = Facts::new();
+    for f in items(v)? {
+        let [label, fact] = fields::<2>(f, "carried fact")?;
+        carried.insert(string(label)?, Fact::from_value(fact)?);
+    }
+    Ok(carried)
+}
+
+/// Where a binding of a part stands (appendix F.2.5–F.2.10).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Bind {
+    /// The host is choosing; these candidates refused it.
+    Asked { skip: Vec<String> },
+    /// No candidate was left; the host wakes it when one may be.
+    Waiting { skip: Vec<String> },
+    /// Granted by the unit `to`, which took `amount` as `name`.
+    Granted { to: String, taken: Option<(String, Val)> },
+}
+
+impl Bind {
+    fn to_value(&self) -> Value {
+        let labels = |ls: &[String]| Value::list(ls.iter().map(|l| text(l)));
+        match self {
+            Bind::Asked { skip } => Value::tuple([Value::from(0i64), labels(skip)]),
+            Bind::Waiting { skip } => Value::tuple([Value::from(1i64), labels(skip)]),
+            Bind::Granted { to, taken } => Value::tuple([Value::from(2i64), text(to), taken_value(taken)]),
+        }
+    }
+
+    fn from_value(v: &Value) -> Result<Bind, String> {
+        let xs = items(v)?;
+        let labels = |x: &Value| items(x)?.iter().map(string).collect::<Result<Vec<_>, _>>();
+        Ok(match (xs.first().map(int), xs.len()) {
+            (Some(Ok(0)), 2) => Bind::Asked { skip: labels(&xs[1])? },
+            (Some(Ok(1)), 2) => Bind::Waiting { skip: labels(&xs[1])? },
+            (Some(Ok(2)), 3) => Bind::Granted { to: string(&xs[1])?, taken: taken_from(&xs[2])? },
+            _ => return Err(format!("not a binding: {v}")),
+        })
+    }
+}
+
+/// An amount taken: the running total's name and the amount, if any.
+fn taken_value(t: &Option<(String, Val)>) -> Value {
+    Value::list(t.iter().map(|(name, v)| Value::tuple([text(name), v.to_value()])))
+}
+
+fn taken_from(v: &Value) -> Result<Option<(String, Val)>, String> {
+    match items(v)? {
+        [] => Ok(None),
+        [x] => {
+            let [name, amount] = fields::<2>(x, "amount taken")?;
+            Ok(Some((string(name)?, Val::from_value(amount)?)))
+        }
+        _ => Err(format!("not an amount taken: {v}")),
+    }
+}
+
 fn attrs_value(attrs: &BTreeMap<String, Val>) -> Value {
     Value::list(attrs.iter().map(|(k, v)| Value::tuple([text(k), v.to_value()])))
 }
@@ -204,6 +266,9 @@ pub struct Node {
     pub held: BTreeMap<String, String>,
     /// Each slot it fills, and the alternative it is on (appendix D.3.1).
     pub slots: BTreeMap<String, String>,
+    /// Its bindings to shared entities, by the kind bound, and for `per`, the
+    /// element's number: `Carrier`, `Stock.0` (appendix F.2.5).
+    pub binds: BTreeMap<String, Bind>,
     /// Its parts, every attempt kept, in the order they were created.
     pub parts: Vec<Node>,
 }
@@ -221,12 +286,18 @@ impl Node {
             text(self.waiting.as_deref().unwrap_or("")),
             Value::list(self.held.iter().map(|(part, rule)| Value::tuple([text(part), text(rule)]))),
             Value::list(self.slots.iter().map(|(slot, alt)| Value::tuple([text(slot), text(alt)]))),
+            Value::list(self.binds.iter().map(|(id, b)| Value::tuple([text(id), b.to_value()]))),
             Value::list(self.parts.iter().map(Node::to_value)),
         ])
     }
 
     fn from_value(v: &Value) -> Result<Node, String> {
-        let [kind, attrs, created, status, outcome, attempt, sends, waiting, held, slots, parts] = fields::<11>(v, "node")?;
+        let [kind, attrs, created, status, outcome, attempt, sends, waiting, held, slots, binds, parts] = fields::<12>(v, "node")?;
+        let mut bound = BTreeMap::new();
+        for b in items(binds)? {
+            let [id, b] = fields::<2>(b, "binding")?;
+            bound.insert(string(id)?, Bind::from_value(b)?);
+        }
         let mut held_by = BTreeMap::new();
         for h in items(held)? {
             let [part, rule] = fields::<2>(h, "held need")?;
@@ -249,6 +320,7 @@ impl Node {
             waiting: some(string(waiting)?),
             held: held_by,
             slots: slot_alts,
+            binds: bound,
             parts: items(parts)?.iter().map(Node::from_value).collect::<Result<_, _>>()?,
         })
     }
@@ -273,6 +345,8 @@ pub struct Unit {
     pub timers: Vec<(String, u64)>,
     /// The shared entities it reads, carried in (appendix F.2.3).
     pub facts: Facts,
+    /// The running totals of what other units took from it, by name (appendix F.2.8).
+    pub taken: BTreeMap<String, Val>,
 }
 
 impl Unit {
@@ -285,17 +359,13 @@ impl Unit {
             indexes(&self.matched),
             indexes(&self.alerts),
             Value::list(self.timers.iter().map(|(id, secs)| Value::tuple([text(id), Value::from(*secs as i64)]))),
-            Value::list(self.facts.iter().map(|(label, f)| Value::tuple([text(label), f.to_value()]))),
+            facts_value(&self.facts),
+            attrs_value(&self.taken),
         ])
     }
 
     pub fn from_value(v: &Value) -> Result<Unit, String> {
-        let [label, root, notes, met, matched, alerts, timers, facts] = fields::<8>(v, "unit")?;
-        let mut carried = Facts::new();
-        for f in items(facts)? {
-            let [label, fact] = fields::<2>(f, "carried fact")?;
-            carried.insert(string(label)?, Fact::from_value(fact)?);
-        }
+        let [label, root, notes, met, matched, alerts, timers, facts, taken] = fields::<9>(v, "unit")?;
         let mut wanted = vec![];
         for t in items(timers)? {
             let [id, secs] = fields::<2>(t, "timer")?;
@@ -309,7 +379,8 @@ impl Unit {
             matched: indexes_from(matched)?,
             alerts: indexes_from(alerts)?,
             timers: wanted,
-            facts: carried,
+            facts: facts_from(facts)?,
+            taken: attrs_from(taken)?,
         })
     }
 }
@@ -325,6 +396,17 @@ pub enum Msg {
     GoalDue { goal: u32 },
     /// A slot's patience ran out (appendix D.3.3).
     Patience { id: String },
+    /// To a shared entity the choice picked: take this amount for the
+    /// binding `key` of the unit `from` (appendix F.2.8).
+    Take { from: String, key: String, taken: Option<(String, Val)> },
+    /// The binding `key` is granted by `by`, with `by`'s facts.
+    Granted { key: String, by: String, taken: Option<(String, Val)>, facts: Facts },
+    /// `by` refused the binding `key`: one of its rules would break.
+    Refused { key: String, by: String, rule: String },
+    /// No candidate is left for the binding `key`; it waits (appendix F.2.9).
+    Waiting { key: String },
+    /// The binding `key` of `from` gives back what it took (appendix F.2.10).
+    Release { from: String, key: String, taken: Option<(String, Val)> },
 }
 
 impl Msg {
@@ -336,6 +418,13 @@ impl Msg {
             }
             Msg::GoalDue { goal } => Value::tuple([Value::from(2i64), Value::from(i64::from(*goal))]),
             Msg::Patience { id } => Value::tuple([Value::from(3i64), text(id)]),
+            Msg::Take { from, key, taken } => Value::tuple([Value::from(4i64), text(from), text(key), taken_value(taken)]),
+            Msg::Granted { key, by, taken, facts } => {
+                Value::tuple([Value::from(5i64), text(key), text(by), taken_value(taken), facts_value(facts)])
+            }
+            Msg::Refused { key, by, rule } => Value::tuple([Value::from(6i64), text(key), text(by), text(rule)]),
+            Msg::Waiting { key } => Value::tuple([Value::from(7i64), text(key)]),
+            Msg::Release { from, key, taken } => Value::tuple([Value::from(8i64), text(from), text(key), taken_value(taken)]),
         }
     }
 
@@ -353,6 +442,26 @@ impl Msg {
             Some(Ok(3)) => {
                 let [_, id] = fields::<2>(v, "patience message")?;
                 Ok(Msg::Patience { id: string(id)? })
+            }
+            Some(Ok(4)) => {
+                let [_, from, key, taken] = fields::<4>(v, "take message")?;
+                Ok(Msg::Take { from: string(from)?, key: string(key)?, taken: taken_from(taken)? })
+            }
+            Some(Ok(5)) => {
+                let [_, key, by, taken, facts] = fields::<5>(v, "granted message")?;
+                Ok(Msg::Granted { key: string(key)?, by: string(by)?, taken: taken_from(taken)?, facts: facts_from(facts)? })
+            }
+            Some(Ok(6)) => {
+                let [_, key, by, rule] = fields::<4>(v, "refused message")?;
+                Ok(Msg::Refused { key: string(key)?, by: string(by)?, rule: string(rule)? })
+            }
+            Some(Ok(7)) => {
+                let [_, key] = fields::<2>(v, "waiting message")?;
+                Ok(Msg::Waiting { key: string(key)? })
+            }
+            Some(Ok(8)) => {
+                let [_, from, key, taken] = fields::<4>(v, "release message")?;
+                Ok(Msg::Release { from: string(from)?, key: string(key)?, taken: taken_from(taken)? })
             }
             _ => Err(format!("not a message: {v}")),
         }
@@ -393,6 +502,54 @@ impl Ask {
             label: string(label)?,
             key: string(key)?,
             sends: pairs_from(sends)?,
+        })
+    }
+}
+
+/// A binding asking for a choice (appendix F.2.7): a kernel effect whose hole
+/// the host fills with the pick. `node` is the part's key, `bind` its
+/// binding's id; `binding` indexes the program's bindings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Decide {
+    pub label: String,
+    pub node: String,
+    pub bind: String,
+    pub binding: u32,
+    /// For `per`: which element, counting from 0.
+    pub elem: Option<u32>,
+    pub taken: Option<(String, Val)>,
+    pub skip: Vec<String>,
+}
+
+impl Decide {
+    /// The binding's key across units: `O1/Delivery#1/Shipment#1@Stock.0`.
+    pub fn key(&self) -> String {
+        format!("{}@{}", self.node, self.bind)
+    }
+
+    pub fn to_value(&self) -> Value {
+        Value::tuple([
+            text(&self.label),
+            text(&self.node),
+            text(&self.bind),
+            Value::from(i64::from(self.binding)),
+            Value::list(self.elem.iter().map(|&e| Value::from(i64::from(e)))),
+            taken_value(&self.taken),
+            Value::list(self.skip.iter().map(|l| text(l))),
+        ])
+    }
+
+    pub fn from_value(v: &Value) -> Result<Decide, String> {
+        let [label, node, bind, binding, elem, taken, skip] = fields::<7>(v, "choice request")?;
+        let small = |x: &Value| int(x).and_then(|i| u32::try_from(i).map_err(|e| e.to_string()));
+        Ok(Decide {
+            label: string(label)?,
+            node: string(node)?,
+            bind: string(bind)?,
+            binding: small(binding)?,
+            elem: items(elem)?.first().map(small).transpose()?,
+            taken: taken_from(taken)?,
+            skip: items(skip)?.iter().map(string).collect::<Result<_, _>>()?,
         })
     }
 }
@@ -490,6 +647,11 @@ mod tests {
             waiting: None,
             held: BTreeMap::new(),
             slots: BTreeMap::new(),
+            binds: BTreeMap::from([
+                ("Carrier".to_string(), Bind::Granted { to: "K1".into(), taken: None }),
+                ("Stock.0".to_string(), Bind::Waiting { skip: vec!["S1".into()] }),
+                ("Stock.1".to_string(), Bind::Granted { to: "S2".into(), taken: Some(("quantity".into(), Val::Count(2))) }),
+            ]),
             parts: vec![],
         };
         let root = Node {
@@ -503,6 +665,7 @@ mod tests {
             waiting: Some("hold".into()),
             held: BTreeMap::from([("Shipment".to_string(), "paid".to_string())]),
             slots: BTreeMap::from([("Delivery".to_string(), "Shipment".to_string())]),
+            binds: BTreeMap::new(),
             parts: vec![part],
         };
         Unit {
@@ -517,6 +680,7 @@ mod tests {
                 "DE".to_string(),
                 Fact { kind: "Country".into(), created: 0, attrs: BTreeMap::from([("countries".to_string(), Val::Set(vec!["A".into(), "B".into()]))]) },
             )]),
+            taken: BTreeMap::from([("quantity".to_string(), Val::Count(3))]),
         }
     }
 
@@ -539,6 +703,19 @@ mod tests {
             sends: vec![("total".into(), Val::Money(12000))],
         };
         assert_eq!(Ask::from_value(&a.to_value()).unwrap(), a);
+        let taken = Some(("quantity".to_string(), Val::Count(2)));
+        for m in [
+            Msg::Take { from: "O1".into(), key: "O1/Shipment#1@Stock.0".into(), taken: taken.clone() },
+            Msg::Granted { key: "k".into(), by: "S1".into(), taken: None, facts: u.facts.clone() },
+            Msg::Refused { key: "k".into(), by: "S1".into(), rule: "stock".into() },
+            Msg::Waiting { key: "k".into() },
+            Msg::Release { from: "O1".into(), key: "k".into(), taken: taken.clone() },
+        ] {
+            assert_eq!(Msg::from_value(&m.to_value()).unwrap(), m);
+        }
+        let d = Decide { label: "O1".into(), node: "O1/Shipment#1".into(), bind: "Stock.0".into(), binding: 1, elem: Some(0), taken, skip: vec!["S1".into()] };
+        assert_eq!(Decide::from_value(&d.to_value()).unwrap(), d);
+        assert_eq!(d.key(), "O1/Shipment#1@Stock.0");
         let (label, msg) = send_from_value(&send_value("O1", &m)).unwrap();
         assert_eq!((label.as_str(), Msg::from_value(&msg).unwrap()), ("O1", m));
         assert!(Unit::from_value(&Value::from(3i64)).is_err());
@@ -558,6 +735,11 @@ mod tests {
 
     #[test]
     fn a_unit_fits_well_under_the_payload_limit() {
-        assert!(unit().to_value().encoded_len() < 1024);
+        let mut u = unit();
+        // The slice-5 fields carry what a unit shares; a plain order stays small.
+        u.facts.clear();
+        u.root.parts[0].binds.clear();
+        assert!(u.to_value().encoded_len() < 1024);
+        assert!(unit().to_value().encoded_len() < 2048);
     }
 }

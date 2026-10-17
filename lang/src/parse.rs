@@ -3,7 +3,7 @@
 
 use crate::ast::*;
 use crate::lex::{statements, Cursor, Error, Stmt, Tok};
-use crate::sentence::{calc_expr, calc_formula, condition, literal, noun_phrase, rule_body, starts_noun_phrase, state_word, subject};
+use crate::sentence::{calc_expr, calc_formula, condition, literal, noun_phrase, predicate, rule_body, starts_noun_phrase, state_word, subject};
 
 /// Parses one source file into `out`.
 pub fn parse_file(file: &str, src: &str, out: &mut Source) -> Result<(), Error> {
@@ -29,6 +29,7 @@ fn statement(st: &Stmt, out: &mut Source) -> Result<(), Error> {
         "when" => reaction(st, at, out),
         "prefer" => prefer(st, at, out),
         w if w.starts_with(char::is_uppercase) && matches!(st.lines[0].get(1), Some(Tok::Word(x)) if x == "is") => slot(st, at, out),
+        w if w.starts_with(char::is_uppercase) && matches!(st.lines[0].get(1), Some(Tok::Word(x)) if x == "uses") => uses(st, at, out),
         w if w.starts_with(char::is_uppercase) => needs(st, at, out),
         _ => Err(st.error(format!(
             "unknown statement `{first}`: expected module, kind, effect, rule, define, desired, when, prefer, `Kind needs …` or `Slot is …`"
@@ -112,17 +113,25 @@ fn module(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     c.expect_sym(',')?;
     c.expect_word("currency")?;
     let currency = c.word()?;
-    let attempts = if c.eat_sym(',') {
-        c.expect_word("attempts")?;
-        Some(number(&mut c, "a number of attempts")?)
-    } else {
-        None
-    };
+    let (mut attempts, mut candidates) = (None, None);
+    while c.eat_sym(',') {
+        if c.eat_word("attempts") {
+            attempts = Some(number(&mut c, "a number of attempts")?);
+        } else if c.eat_word("candidates") {
+            let n: u32 = number(&mut c, "a number of candidates")?;
+            if n == 0 {
+                return Err(c.error("`candidates` must be at least 1"));
+            }
+            candidates = Some(n);
+        } else {
+            return Err(c.error(format!("unknown module setting {}: use `attempts` or `candidates`", c.found())));
+        }
+    }
     c.expect_end()?;
     if out.module.is_some() {
         return Err(st.error("a second `module` statement"));
     }
-    out.module = Some(Module { name, version, currency, attempts, at });
+    out.module = Some(Module { name, version, currency, attempts, candidates, at });
     Ok(())
 }
 
@@ -204,29 +213,87 @@ fn slot(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     Ok(())
 }
 
-/// `prefer Delivery: Shipment, then Refund after 2 days`
+/// `S uses a C [per element] where cond[, taking num]`
+fn uses(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
+    let toks = st.tokens();
+    let mut c = Cursor::new(&toks, &st.file, st.line);
+    let subject = c.kind_name()?;
+    c.expect_word("uses")?;
+    if !c.eat_word("a") {
+        c.expect_word("an")?;
+    }
+    let target = c.kind_name()?;
+    let per = if c.eat_word("per") { Some(c.word()?) } else { None };
+    c.expect_word("where")?;
+    let cond = condition(&mut c)?;
+    let taking = if c.eat_sym(',') {
+        c.expect_word("taking")?;
+        Some(calc_expr(&mut c)?)
+    } else {
+        None
+    };
+    c.expect_end()?;
+    out.uses.push(UsesDecl { subject, target, per, cond, taking, source: text(&toks), at });
+    Ok(())
+}
+
+/// `prefer Delivery: Shipment, then Refund after 2 days`, or for a `uses`,
+/// `prefer Stock for a line: lowest price, then those whose …`
 fn prefer(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     let toks = st.tokens();
     let mut c = Cursor::new(&toks, &st.file, st.line);
     c.expect_word("prefer")?;
     let choice = c.kind_name()?;
-    c.expect_sym(':')?;
-    let criterion = |c: &mut Cursor| {
-        if c.is_word("lowest") || c.is_word("highest") || c.is_word("those") {
-            return Err(c.error("`lowest`, `highest` and `those` choose among shared entities, which come in slice 4"));
+    let per = if c.eat_word("for") {
+        if !c.eat_word("a") {
+            c.expect_word("an")?;
         }
-        c.kind_name()
+        Some(c.word()?)
+    } else {
+        None
     };
-    let mut order = vec![(criterion(&mut c)?, None)];
+    c.expect_sym(':')?;
+    if c.is_word("lowest") || c.is_word("highest") || c.is_word("those") {
+        let mut criteria = vec![criterion(&mut c)?];
+        while c.eat_sym(',') {
+            c.expect_word("then")?;
+            criteria.push(criterion(&mut c)?);
+        }
+        c.expect_end()?;
+        out.prefers.push(PreferDecl { choice, per, order: vec![], criteria, at });
+        return Ok(());
+    }
+    let mut order = vec![(c.kind_name()?, None)];
     while c.eat_sym(',') {
         c.expect_word("then")?;
-        let k = criterion(&mut c)?;
+        let k = c.kind_name()?;
         let after = if c.eat_word("after") { Some(duration(&mut c)?) } else { None };
         order.push((k, after));
     }
     c.expect_end()?;
-    out.prefers.push(PreferDecl { choice, order, at });
+    out.prefers.push(PreferDecl { choice, per, order, criteria: vec![], at });
     Ok(())
+}
+
+/// `lowest fee`, `highest the Order's total`, `those whose warehouse's country is …`, `those that are express`.
+fn criterion(c: &mut Cursor) -> Result<Criterion, Error> {
+    if c.eat_word("those") {
+        if c.eat_word("whose") {
+            let mut steps = vec![c.word()?];
+            while c.eat_poss() {
+                steps.push(c.word()?);
+            }
+            return Ok(Criterion::Those(predicate(c, Num::Np(NounPhrase { head: Head::It, steps }))?));
+        }
+        c.expect_word("that")?;
+        return Ok(Criterion::Those(condition(c)?));
+    }
+    let lowest = c.eat_word("lowest");
+    if !lowest {
+        c.expect_word("highest")?;
+    }
+    let n = calc_formula(c)?;
+    Ok(if lowest { Criterion::Lowest(n) } else { Criterion::Highest(n) })
 }
 
 /// A field that an effect sends: a noun phrase, or a bare attribute such as `amount`.

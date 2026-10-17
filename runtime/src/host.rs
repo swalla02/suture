@@ -11,7 +11,7 @@ use suture_lang::ir::{Program, Ty, TIMED_OUT};
 
 use crate::interp::{self, duration, holds};
 use crate::kernel::{self, Kinds};
-use crate::state::{answer_value, send_from_value, stamped, Ask, Fact, Facts, Msg, Unit, Val};
+use crate::state::{answer_value, send_from_value, stamped, Ask, Decide, Fact, Facts, Msg, Unit, Val};
 
 pub struct Host {
     pub prog: Arc<Program>,
@@ -32,6 +32,25 @@ pub struct Host {
     patience_timers: BTreeSet<String>,
     /// Requests whose deadline passed, so every late answer is noted, not an error.
     expired: Vec<Ask>,
+    /// Shared entities by kind and key attribute, then by key, in creation
+    /// order (appendix F.2.6).
+    pools: BTreeMap<(String, String), BTreeMap<String, Vec<String>>>,
+    /// Bindings with no candidate left, in arrival order (appendix F.2.9).
+    waiters: Vec<Waiter>,
+}
+
+/// A binding waiting on its pool key, with its choice's hole.
+#[derive(Clone)]
+struct Waiter {
+    hole: HoleId,
+    decide: Decide,
+    kind: String,
+    key: String,
+}
+
+/// A pool key as the host indexes it.
+fn key_text(v: &Val) -> String {
+    format!("{v:?}")
 }
 
 /// What a timer is for.
@@ -60,6 +79,8 @@ impl Host {
             goal_timers: BTreeSet::new(),
             patience_timers: BTreeSet::new(),
             expired: vec![],
+            pools: BTreeMap::new(),
+            waiters: vec![],
         }
     }
 
@@ -94,7 +115,107 @@ impl Host {
         self.machine.run(None);
         let noted = self.note(label);
         let pumped = self.pump();
-        noted.and(pumped)
+        noted.and(pumped)?;
+        self.index(label);
+        let woken = self.wake(label);
+        let pumped = self.pump();
+        woken.and(pumped)
+    }
+
+    /// Adds a new unit to the pools of every binding to its kind.
+    fn index(&mut self, label: &str) {
+        let Some(u) = self.unit(label) else { return };
+        for (attr, keys) in self.keys_of(&u) {
+            let pool = self.pools.entry((u.root.kind.clone(), attr)).or_default();
+            for k in keys {
+                pool.entry(k).or_default().push(label.to_string());
+            }
+        }
+    }
+
+    /// The pool keys a shared entity is indexed by, for each key attribute.
+    fn keys_of(&self, u: &Unit) -> Vec<(String, Vec<String>)> {
+        let mut attrs: Vec<&str> = self.prog.bindings.iter().filter(|b| b.target == u.root.kind).map(|b| b.key_attr.as_str()).collect();
+        attrs.sort();
+        attrs.dedup();
+        attrs
+            .into_iter()
+            .map(|a| {
+                let keys = match u.root.attrs.get(a) {
+                    Some(Val::Set(ls)) => ls.iter().map(|l| key_text(&Val::Ref(l.clone()))).collect(),
+                    Some(v) => vec![key_text(v)],
+                    None => vec![],
+                };
+                (a.to_string(), keys)
+            })
+            .collect()
+    }
+
+    /// The choice for a binding (appendix F.2.7): the pick is injected at the
+    /// request's hole, so the journal holds it. With no candidate left, the
+    /// binding waits, and its unit is told.
+    fn decide(&mut self, hole: HoleId, payload: &Value) -> Result<(), String> {
+        let d = Decide::from_value(payload)?;
+        let u = self.unit(&d.label).ok_or_else(|| format!("{}: a choice for a unit that is gone", d.label))?;
+        let b = self.prog.bindings.get(d.binding as usize).ok_or("a choice for an unknown binding")?;
+        let key = interp::decide_key(&self.prog, &u, &d).map(|k| key_text(&k)).unwrap_or_default();
+        let kind = b.target.clone();
+        match self.gather(&u, &d, &key) {
+            Some(label) => self.pick(hole, &label, &d),
+            None => {
+                self.waiters.push(Waiter { hole, decide: d.clone(), kind, key });
+                self.post(&d.label, &Msg::Waiting { key: d.key() })
+            }
+        }
+    }
+
+    /// The pick among the pool's candidates for this key, if any.
+    fn gather(&self, u: &Unit, d: &Decide, key: &str) -> Option<String> {
+        let b = self.prog.bindings.get(d.binding as usize)?;
+        let labels = self.pools.get(&(b.target.clone(), b.key_attr.clone()))?.get(key)?;
+        let candidates = labels.iter().filter(|l| !d.skip.contains(l)).filter_map(|l| self.unit(l));
+        interp::choose_among(&self.prog, u, d, candidates).map(|(label, _)| label)
+    }
+
+    fn pick(&mut self, hole: HoleId, label: &str, d: &Decide) -> Result<(), String> {
+        let sig = self.machine.program().sig.clone();
+        let mut b = NetBuilder::new(&sig);
+        let meet = b.var();
+        b.agent(self.kinds.pick, label, meet, &[]);
+        let net = b.finish().map_err(|e| e.to_string())?;
+        let inj = Injection::new(net).at_hole(meet, hole).key(format!("pick:{:032x}", hole.0));
+        self.machine.inject(inj).map_err(|e| e.to_string())?;
+        self.trace.push(format!("      choice: {label} for {}", d.key()));
+        Ok(())
+    }
+
+    /// Something of `label`'s may have freed up: the bindings waiting on its
+    /// keys gather again from scratch, in arrival order.
+    fn wake(&mut self, label: &str) -> Result<(), String> {
+        let Some(u) = self.unit(label) else { return Ok(()) };
+        let keys: Vec<String> = self.keys_of(&u).into_iter().flat_map(|(_, k)| k).collect();
+        let mut i = 0;
+        while i < self.waiters.len() {
+            let w = self.waiters[i].clone();
+            if w.kind != u.root.kind || !keys.contains(&w.key) {
+                i += 1;
+                continue;
+            }
+            let still = self.unit(&w.decide.label).filter(|r| interp::waiting(r, &w.decide.key()));
+            let Some(requester) = still else {
+                self.waiters.remove(i);
+                continue;
+            };
+            let fresh = Decide { skip: vec![], ..w.decide.clone() };
+            match self.gather(&requester, &fresh, &w.key) {
+                Some(pick) => {
+                    self.waiters.remove(i);
+                    self.pick(w.hole, &pick, &fresh)?;
+                }
+                None => i += 1,
+            }
+        }
+        Ok(())
     }
 
     /// The clock, as entities and messages read it.
@@ -261,6 +382,13 @@ impl Host {
     /// Delivers a message from the host straight to a unit's mailbox, as a
     /// journaled step, and notes what the unit did.
     fn tell(&mut self, label: &str, msg: &Msg) -> Result<(), String> {
+        let posted = self.post(label, msg);
+        let pumped = self.pump();
+        posted.and(pumped)
+    }
+
+    /// [`Host::tell`] without running what the step sends out.
+    fn post(&mut self, label: &str, msg: &Msg) -> Result<(), String> {
         let sig = self.machine.program().sig.clone();
         let mut b = NetBuilder::new(&sig);
         let (to, next) = (b.var(), b.var());
@@ -268,9 +396,7 @@ impl Host {
         let net = b.finish().map_err(|e| e.to_string())?;
         self.machine.inject(Injection::new(net).at_label(to, label).new_hole(next, Some(label))).map_err(|e| e.to_string())?;
         self.machine.run(None);
-        let noted = self.note(label);
-        let pumped = self.pump();
-        noted.and(pumped)
+        self.note(label)
     }
 
     /// A unit's current state, read from the graph.
@@ -302,6 +428,8 @@ impl Host {
             for e in &effects {
                 let done = if e.kind == self.kinds.send {
                     self.route(e.hole, &e.payload)
+                } else if e.kind == self.kinds.decide {
+                    self.decide(e.hole, &e.payload)
                 } else if e.kind == self.kinds.ask {
                     Ask::from_value(&e.payload).map(|a| outside.push((a, e.hole)))
                 } else {
@@ -326,7 +454,8 @@ impl Host {
 
     /// Delivers an internal message to its unit's mailbox, and notes what the unit did.
     fn route(&mut self, hole: HoleId, payload: &Value) -> Result<(), String> {
-        let (label, _) = send_from_value(payload)?;
+        let (label, msg) = send_from_value(payload)?;
+        let release = matches!(Msg::from_value(&msg), Ok(Msg::Release { .. }));
         let sig = self.machine.program().sig.clone();
         let mut b = NetBuilder::new(&sig);
         let (meet, to, next) = (b.var(), b.var(), b.var());
@@ -335,7 +464,8 @@ impl Host {
         let inj = Injection::new(net).at_hole(meet, hole).at_label(to, &label).new_hole(next, Some(&label));
         self.machine.inject(inj).map_err(|e| e.to_string())?;
         self.machine.run(None);
-        self.note(&label)
+        self.note(&label)?;
+        if release { self.wake(&label) } else { Ok(()) }
     }
 
     /// Adds the unit's notes from its last step to the trace.

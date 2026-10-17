@@ -148,7 +148,7 @@ fn slot_mistakes_are_errors() {
     let e = errors(&format!("{base}O needs D\nD is A or B\nprefer D: A, then B after 1 day, then A\n"));
     assert!(e.iter().any(|m| m.contains("prefer D must list each of A, B once")), "{e:?}");
     let e = errors(&format!("{base}O needs D\nD is A or B\nprefer D: lowest n\n"));
-    assert!(e.iter().any(|m| m.contains("slice 4")), "{e:?}");
+    assert!(e.iter().any(|m| m.contains("prefer D: D is a slot; list its alternatives in order: A, B")), "{e:?}");
 }
 
 #[test]

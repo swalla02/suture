@@ -119,3 +119,93 @@ fn reference_mistakes_are_errors() {
     let e = errors(&format!("{REFS}when a Payment is captured: its order's customer's name becomes its order's customer's name\n"));
     assert!(e.iter().any(|e| e.contains("is a shared Customer; a reaction changes only its own unit")), "{e:?}");
 }
+
+const SHOP: &str = "kind Country   { restricted: Bool = no }
+kind Product   { name: Text }
+kind Warehouse { country: Country }
+kind Carrier   { countries: set of Country, fee: Money, express: Bool = no }
+kind Stock     { warehouse: Warehouse, product: Product, units: Count }
+kind Order     { country: Country, lines: list of Line }
+kind Line      { order: Order, product: Product, quantity: Count }
+kind Shipment  { order: Order }
+Order needs Shipment
+Shipment uses a Carrier where the Carrier's countries contain the Order's country
+Shipment uses a Stock per line where the Stock's product is the line's product,
+  taking the line's quantity
+effect send Shipment via carriers within 7 days
+  sends the Order's country, its Carrier's fee
+  reports delivered | fails with lost
+rule stock: the total quantity taken from each Stock is at most its units
+";
+
+#[test]
+fn uses_binds_to_a_pool_key() {
+    let p = prog(&format!("{SHOP}prefer Carrier: lowest fee, then those that are express\nprefer Stock for a line: those whose warehouse's country is the Order's country\n"));
+    assert_eq!(p.candidates, 8);
+    let carrier = &p.bindings[0];
+    assert_eq!((carrier.subject.as_str(), carrier.target.as_str(), carrier.per.as_deref()), ("Shipment", "Carrier", None));
+    assert_eq!((carrier.key_attr.as_str(), carrier.key_member), ("countries", true));
+    assert_eq!(carrier.key, Num::Path(path(&[Step::Owner, attr("country")])));
+    assert!(carrier.filter.is_empty());
+    assert_eq!(
+        carrier.prefer,
+        vec![
+            suture_lang::ir::Criterion::Lowest(Num::Path(path(&[Step::Cand, attr("fee")]))),
+            suture_lang::ir::Criterion::Those(Cond::State { node: path(&[Step::Cand]), state: "express".into(), negated: false }),
+        ]
+    );
+    let stock = &p.bindings[1];
+    assert_eq!(stock.per.as_deref(), Some("lines"));
+    assert_eq!((stock.key_attr.as_str(), stock.key_member), ("product", false));
+    assert_eq!(stock.key, Num::Path(path(&[Step::Elem, attr("product")])));
+    let t = stock.taking.as_ref().unwrap();
+    assert_eq!((t.name.as_str(), t.ty), ("quantity", Ty::Count));
+    assert_eq!(t.amount, Num::Path(path(&[Step::Elem, attr("quantity")])));
+    let want = Cond::Cmp {
+        left: Num::Path(path(&[Step::Cand, Step::Ref("warehouse".into()), attr("country")])),
+        op: Op::Eq,
+        right: Num::Path(path(&[Step::Owner, attr("country")])),
+    };
+    assert_eq!(stock.prefer, vec![suture_lang::ir::Criterion::Those(want)]);
+    assert_eq!(p.effects[0].sends[1].1, path(&[Step::Bound("Carrier".into()), attr("fee")]));
+    let rule = p.rules.iter().find(|r| r.name == "stock").unwrap();
+    assert_eq!(rule.tier, "per-group");
+    assert_eq!(rule.formula, "for each Stock s: taken_quantity(s) ≤ s.units");
+    assert_eq!(rule.paraphrase, "each stock on its own: the total quantity taken from it is at most its units");
+    assert!(p.warnings.is_empty(), "{:?}", p.warnings);
+    let p = prog(SHOP);
+    assert!(p.warnings.iter().any(|w| w.contains("Carrier has no `prefer`; Carriers are chosen in the order they were created")), "{:?}", p.warnings);
+}
+
+#[test]
+fn the_candidates_setting() {
+    let files = vec![("t.st".to_string(), format!("module t version 1, currency EUR, candidates 3\n{SHOP}"))];
+    assert_eq!(compile(&files).unwrap().candidates, 3);
+    let files = vec![("t.st".to_string(), "module t version 1, currency EUR, candidates 0\n".to_string())];
+    let e: Vec<String> = compile(&files).unwrap_err().iter().map(|e| e.to_string()).collect();
+    assert!(e[0].contains("`candidates` must be at least 1"), "{e:?}");
+}
+
+#[test]
+fn uses_mistakes_are_errors() {
+    let e = errors(&SHOP.replace("where the Carrier's countries contain the Order's country", "where the Carrier's fee is at most 5 EUR"));
+    assert!(e.iter().any(|e| e.contains("`Shipment uses a Carrier` needs a pool key")), "{e:?}");
+    let e = errors(&SHOP.replace("per line", "per box"));
+    assert!(e.iter().any(|e| e.contains("`per box`: neither a Shipment nor an owner of it has a list of boxs")), "{e:?}");
+    let e = errors(&SHOP.replace("uses a Carrier", "uses a Line"));
+    assert!(e.iter().any(|e| e.contains("Line is a part, so it is not shared")), "{e:?}");
+    let e = errors(&SHOP.replace("taking the line's quantity", "taking the line's quantity + 1"));
+    assert!(e.iter().any(|e| e.contains("name the attribute taken")), "{e:?}");
+    let e = errors(&SHOP.replace("quantity taken", "units taken"));
+    assert!(e.iter().any(|e| e.contains("no `uses a Stock` takes units")), "{e:?}");
+    let e = errors(&format!("{SHOP}prefer Carrier: lowest countries\n"));
+    assert!(e.iter().any(|e| e.contains("`its countries` is Set; `lowest` and `highest` rank")), "{e:?}");
+    let e = errors(&format!("{SHOP}prefer Stock: lowest units\n"));
+    assert!(e.iter().any(|e| e.contains("prefer Stock: it does not match how its `uses` binds; write `prefer Stock for a line`")), "{e:?}");
+    let e = errors(&format!("{SHOP}prefer Product: lowest name\n"));
+    assert!(e.iter().any(|e| e.contains("prefer Product: no kind `uses` a Product")), "{e:?}");
+    let e = errors(&format!("{SHOP}prefer Carrier: Stock\n"));
+    assert!(e.iter().any(|e| e.contains("prefer Carrier: rank the Carriers with `lowest …`")), "{e:?}");
+    let e = errors(&format!("{SHOP}rule x: every Shipment's Carrier is cheap\n"));
+    assert!(e.iter().any(|e| e.contains("`its Carrier` is a shared Carrier; compare its attributes, or a state: express")), "{e:?}");
+}
