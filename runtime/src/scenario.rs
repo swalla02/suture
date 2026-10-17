@@ -5,7 +5,7 @@ use suture_lang::ir::Program;
 use suture_lang::scenario::{Scenario, ScenarioStep};
 
 use crate::host::Host;
-use crate::interp::{duration, in_state};
+use crate::interp::{duration, holds, in_state};
 use crate::state::Val;
 
 /// What a scenario did: its host, with the trace, and the steps that failed.
@@ -43,6 +43,10 @@ pub fn run(prog: &Program, sc: &Scenario) -> Report {
             ScenarioStep::Alert { name, negated } => {
                 let r = alert(&host, name, *negated);
                 checked(&mut host, r, format!("expect {} alert for {name}", if *negated { "no" } else { "an" }))
+            }
+            ScenarioStep::ExpectCond { name, cond, text } => {
+                let r = expect_cond(&host, name, cond, text);
+                checked(&mut host, r, format!("expect {text}"))
             }
             ScenarioStep::Pass { secs } => {
                 host.trace.push(format!("  … {} pass", duration(*secs)));
@@ -103,6 +107,14 @@ fn expect(host: &Host, name: &str, part: Option<&str>, state: &str, negated: boo
         return Err(format!("expected {whose} is {}{state}", not(negated)));
     }
     Ok(())
+}
+
+/// Any condition about the unit, checked against the program like a sentence.
+fn expect_cond(host: &Host, name: &str, cond: &suture_lang::ast::Cond, text: &str) -> Result<(), String> {
+    let unit = host.unit(name).ok_or_else(|| format!("there is no unit {name}"))?;
+    let c = suture_lang::check::condition(&host.prog, &unit.root.kind, cond)
+        .map_err(|es| es.iter().map(|e| e.msg.clone()).collect::<Vec<_>>().join("; "))?;
+    if holds(&host.prog, &unit.root, &[], &c) { Ok(()) } else { Err(format!("expected {text}")) }
 }
 
 fn alert(host: &Host, name: &str, negated: bool) -> Result<(), String> {

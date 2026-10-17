@@ -39,6 +39,22 @@ pub enum Head {
     It,
     /// `the Order`: the subject if it is an Order, otherwise its owner of that kind.
     The(String),
+    /// `each Order`: in a bound for each entity, the subject (appendix E.2.4).
+    Each(String),
+}
+
+/// A calculation (spec §3.3 "Numbers", appendix E).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Num {
+    /// A value attribute.
+    Np(NounPhrase),
+    Lit(Literal),
+    /// `a + b`, `a - b`, `a * b`, `a / b`.
+    Bin(Box<Num>, char, Box<Num>),
+    /// `the total amount of its Refunds [that …]`
+    Total { attr: String, of: NounPhrase, filter: Option<Box<Cond>> },
+    /// `the number of its Shipments [that …]`
+    Number { of: NounPhrase, filter: Option<Box<Cond>> },
 }
 
 /// What follows `is`: a literal, a noun phrase, or a bare word that the
@@ -48,6 +64,8 @@ pub enum Term {
     Lit(Literal),
     Np(NounPhrase),
     Word(String),
+    /// Any other calculation: `its total / 10 + 1 EUR`.
+    Calc(Num),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,9 +79,9 @@ pub enum CmpOp {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Cond {
     /// `x is y`, `x is not y`
-    Is { left: NounPhrase, negated: bool, right: Term },
+    Is { left: Num, negated: bool, right: Term },
     /// `x is at most y`, `x is at least y`, `x is more than y`, `x is less than y`
-    Cmp { left: NounPhrase, op: CmpOp, right: Term },
+    Cmp { left: Num, op: CmpOp, right: Term },
     /// `x has a K [that is s]`, `x has no K [that is s]`
     Has { owner: NounPhrase, negated: bool, kind: String, state: Option<String> },
     And(Vec<Cond>),
@@ -90,6 +108,8 @@ pub struct Module {
     pub name: String,
     pub version: u32,
     pub currency: String,
+    /// `, attempts 5` (appendix E.2.8).
+    pub attempts: Option<u32>,
     pub at: Loc,
 }
 
@@ -103,6 +123,8 @@ pub struct AttrDecl {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KindDecl {
     pub name: String,
+    /// `kind Person (plural People)`
+    pub plural: Option<String>,
     pub attrs: Vec<AttrDecl>,
     pub at: Loc,
 }

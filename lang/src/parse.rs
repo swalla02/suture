@@ -37,7 +37,7 @@ fn statement(st: &Stmt, out: &mut Source) -> Result<(), Error> {
 }
 
 /// Tokens back to text, for read-backs: no space before `'s` or `,`.
-fn text(toks: &[Tok]) -> String {
+pub(crate) fn text(toks: &[Tok]) -> String {
     let mut out = String::new();
     for t in toks {
         if !out.is_empty() && !matches!(t, Tok::Poss | Tok::Sym(',')) {
@@ -102,11 +102,17 @@ fn module(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     c.expect_sym(',')?;
     c.expect_word("currency")?;
     let currency = c.word()?;
+    let attempts = if c.eat_sym(',') {
+        c.expect_word("attempts")?;
+        Some(number(&mut c, "a number of attempts")?)
+    } else {
+        None
+    };
     c.expect_end()?;
     if out.module.is_some() {
         return Err(st.error("a second `module` statement"));
     }
-    out.module = Some(Module { name, version, currency, at });
+    out.module = Some(Module { name, version, currency, attempts, at });
     Ok(())
 }
 
@@ -116,6 +122,14 @@ fn kind(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     let mut c = Cursor::new(&toks, &st.file, st.line);
     c.expect_word("kind")?;
     let name = c.kind_name()?;
+    let plural = if c.eat_sym('(') {
+        c.expect_word("plural")?;
+        let p = c.kind_name()?;
+        c.expect_sym(')')?;
+        Some(p)
+    } else {
+        None
+    };
     c.expect_sym('{')?;
     let mut attrs = vec![];
     if !c.eat_sym('}') {
@@ -139,7 +153,7 @@ fn kind(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
         }
     }
     c.expect_end()?;
-    out.kinds.push(KindDecl { name, attrs, at });
+    out.kinds.push(KindDecl { name, plural, attrs, at });
     Ok(())
 }
 

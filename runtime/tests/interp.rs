@@ -474,3 +474,33 @@ when a Ping is up: its Order is not paused
     assert_eq!(moved.root.slots.get("Delivery").map(String::as_str), Some("B"));
     ask(&asks, "bs");
 }
+
+#[test]
+fn a_bound_for_each_entity_holds_back_a_part() {
+    let p = program(
+        "kind Order { total: Money }
+kind Shipment { order: Order }
+Order needs Shipment
+effect send Shipment via carriers within 1 day
+  sends    the order's total
+  reports  delivered | fails with lost
+rule few: the number of each Order's Shipments is at most 2
+",
+    );
+    let (mut u, mut asks) = placed(&p, 50);
+    for _ in 0..2 {
+        let parcel = ask(&asks, "carriers").clone();
+        (u, asks) = answer(&p, &u, &parcel, "lost", &[]);
+    }
+    assert!(has_note(&u, "Shipment waits: rule few"), "{:?}", u.notes);
+    assert_eq!(u.root.parts.iter().filter(|n| n.kind == "Shipment").count(), 2);
+    assert!(violated(&p, &u.root).is_none());
+}
+
+#[test]
+fn math_in_a_rule_refuses_a_creation() {
+    let p = program(&format!("{PAY}Order needs Payment\nrule cap: every Order's total is at most 100 EUR - 1 EUR\n"));
+    let err = new_unit(&p, "O1", "Order", &[("total".to_string(), Val::Money(10_000))]).unwrap_err();
+    assert!(err.contains("refused by rule cap"), "{err}");
+    assert!(new_unit(&p, "O2", "Order", &[("total".to_string(), Val::Money(9_900))]).is_ok());
+}

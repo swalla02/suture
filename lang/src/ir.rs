@@ -16,6 +16,8 @@ pub struct Program {
     pub goals: Vec<Goal>,
     pub reactions: Vec<Reaction>,
     pub slots: Vec<Slot>,
+    /// Attempts of a part, and sends of a request (appendix E.2.8).
+    pub attempts: u32,
     /// What `suture build` warns about; the program still runs.
     pub warnings: Vec<String>,
 }
@@ -34,6 +36,8 @@ pub struct Slot {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Kind {
     pub name: String,
+    /// `Refunds`, `People`: how relations name it (appendix E.2.2).
+    pub plural: String,
     /// Value attributes, including the ones an effect's answer sets.
     pub attrs: Vec<Attr>,
     /// For a part: the attribute that names its owner, and the owner's kind.
@@ -154,10 +158,26 @@ pub enum Step {
     Owner,
 }
 
+/// A calculation (appendix E.2.3). Paths are relative to the node it is
+/// evaluated at; a `Sum` or `Count` evaluates its `calc` and `filter` at
+/// each entity of its relation.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Operand {
+pub enum Num {
     Path(Path),
     Lit(Lit),
+    Bin(Box<Num>, Arith, Box<Num>),
+    /// Every part of `kind` under the node at `of`, added up.
+    Sum { of: Path, kind: String, calc: Box<Num>, filter: Option<Box<Cond>>, ty: Ty },
+    /// How many parts of `kind` there are under the node at `of`.
+    Count { of: Path, kind: String, filter: Option<Box<Cond>> },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Arith {
+    Add,
+    Sub,
+    Mul,
+    Div,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -173,7 +193,7 @@ pub enum Op {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Cond {
     /// Compares a value with a literal or another value.
-    Cmp { left: Path, op: Op, right: Operand },
+    Cmp { left: Num, op: Op, right: Num },
     /// A node is (or is not) in a state.
     State { node: Path, state: String, negated: bool },
     /// A node has (or has no) part of a kind, optionally in a state.

@@ -4,7 +4,7 @@
 
 use crate::ast::{self, CmpOp, Head, Literal, Loc, NounPhrase, Source, Term, TypeName};
 use crate::ir::{
-    Action, Attr, Body, Cond, Define, Effect, Goal, Kind, Lit, Need, Op, Operand, OwnerRef, Path, Program, Reaction,
+    Action, Arith, Attr, Body, Cond, Define, Effect, Goal, Kind, Lit, Need, Num, Op, OwnerRef, Path, Program, Reaction,
     Rule, Slot, Step, Ty, TIMED_OUT,
 };
 use crate::lex::Error;
@@ -15,6 +15,66 @@ pub fn check(src: &Source) -> Result<Program, Vec<Error>> {
     let mut cx = Checker { errors: vec![] };
     let prog = cx.program(src);
     if cx.errors.is_empty() { Ok(prog) } else { Err(cx.errors) }
+}
+
+/// Resolves a condition about a `kind` against a compiled program, as a
+/// scenario's `expect` needs (appendix E.2.9).
+pub fn condition(p: &Program, kind: &str, c: &ast::Cond) -> Result<Cond, Vec<Error>> {
+    let mut cx = Checker { errors: vec![] };
+    let at = Loc { file: String::new(), line: 0 };
+    match cx.cond(p, &at, kind, c) {
+        Some(c) if cx.errors.is_empty() => Ok(c),
+        _ => Err(cx.errors),
+    }
+}
+
+/// `Refunds`, `Boxes`, `Branches`: the regular plural (spec §3.1).
+fn plural_of(name: &str) -> String {
+    let es = ["s", "x", "ch", "sh"].iter().any(|e| name.ends_with(e));
+    format!("{name}{}", if es { "es" } else { "s" })
+}
+
+/// `a Payment`, `an Order`.
+fn a(k: &str) -> String {
+    let an = k.starts_with(|c: char| "AEIOUaeiou".contains(c));
+    format!("{} {k}", if an { "an" } else { "a" })
+}
+
+fn show_num(n: &ast::Num) -> String {
+    match n {
+        ast::Num::Np(np) => show(np),
+        ast::Num::Lit(l) => format!("{l:?}"),
+        ast::Num::Bin(x, op, y) => format!("{} {op} {}", show_num(x), show_num(y)),
+        ast::Num::Total { attr, of, .. } => format!("the total {attr} of {}", show(of)),
+        ast::Num::Number { of, .. } => format!("the number of {}", show(of)),
+    }
+}
+
+/// The kind of the parts of `owner` whose plural is `word`, if any.
+fn plural_kind(p: &Program, owner: &str, word: &str) -> Option<String> {
+    p.kinds.iter().find(|k| k.plural == word && p.has_part(owner, &k.name)).map(|k| k.name.clone())
+}
+
+/// Whether a rule adds up or counts a relation: then its cost is per-group.
+fn body_sums(b: &Body) -> bool {
+    fn num(n: &Num) -> bool {
+        match n {
+            Num::Sum { .. } | Num::Count { .. } => true,
+            Num::Bin(x, _, y) => num(x) || num(y),
+            Num::Path(_) | Num::Lit(_) => false,
+        }
+    }
+    fn cond(c: &Cond) -> bool {
+        match c {
+            Cond::Cmp { left, right, .. } => num(left) || num(right),
+            Cond::And(cs) | Cond::Or(cs) => cs.iter().any(cond),
+            Cond::State { .. } | Cond::Has { .. } => false,
+        }
+    }
+    match b {
+        Body::Every(c) => cond(c),
+        Body::No { pred, unless } => cond(pred) || unless.as_ref().is_some_and(cond),
+    }
 }
 
 /// Where a noun phrase ends: at a node of some kind, or at a value of some type.
@@ -43,6 +103,7 @@ fn show(np: &NounPhrase) -> String {
         (Head::It, true) => "it".to_string(),
         (Head::It, false) => "its".to_string(),
         (Head::The(k), _) => format!("the {k}"),
+        (Head::Each(k), _) => format!("each {k}"),
     };
     for (i, w) in np.steps.iter().enumerate() {
         s.push_str(if i == 0 && matches!(np.head, Head::It) { " " } else { "'s " });
@@ -76,6 +137,7 @@ impl Checker {
             goals: vec![],
             reactions: vec![],
             slots: vec![],
+            attempts: src.module.as_ref().and_then(|m| m.attempts).unwrap_or(3),
             warnings: vec![],
         };
         self.kinds(src, &mut p);
@@ -127,7 +189,8 @@ impl Checker {
                 };
                 attrs.push(Attr { name: a.name.clone(), ty, default });
             }
-            p.kinds.push(Kind { name: k.name.clone(), attrs, owner: None });
+            let plural = k.plural.clone().unwrap_or_else(|| plural_of(&k.name));
+            p.kinds.push(Kind { name: k.name.clone(), plural, attrs, owner: None });
         }
     }
 
@@ -398,6 +461,7 @@ impl Checker {
                     Body::No { pred, unless }
                 }
             };
+            let tier = if body_sums(&body) { "per-group" } else { "local" };
             let mut rule = Rule {
                 name: r.name.clone(),
                 subject: subject.kind.clone(),
@@ -406,7 +470,7 @@ impl Checker {
                 source: r.source.clone(),
                 formula: String::new(),
                 paraphrase: String::new(),
-                tier: "local".into(),
+                tier: tier.into(),
             };
             rule.formula = readback::formula(p, &rule);
             rule.paraphrase = readback::paraphrase(p, &rule);
@@ -478,11 +542,107 @@ impl Checker {
         s.filter.iter().map(|c| self.cond(p, at, &s.kind, c)).collect()
     }
 
+    /// A calculation and its type (appendix E.2.3).
+    fn num(&mut self, p: &Program, at: &Loc, from: &str, n: &ast::Num) -> Option<(Num, Ty)> {
+        match n {
+            ast::Num::Lit(l) => {
+                let (lit, ty) = self.lit(at, l, &p.currency)?;
+                Some((Num::Lit(lit), ty))
+            }
+            ast::Num::Np(np) => match self.np(p, at, from, np)? {
+                (path, End::Value(ty)) => Some((Num::Path(path), ty)),
+                (_, End::Node(k)) => {
+                    self.errors.push(err(at, format!("`{}` is {}, not a value", show(np), a(&k))));
+                    None
+                }
+            },
+            ast::Num::Bin(x, op, y) => {
+                let (l, lt) = self.num(p, at, from, x)?;
+                let (r, rt) = self.num(p, at, from, y)?;
+                let (arith, ty) = match (op, lt, rt) {
+                    ('+', Ty::Money, Ty::Money) | ('-', Ty::Money, Ty::Money) => (if *op == '+' { Arith::Add } else { Arith::Sub }, Ty::Money),
+                    ('+', Ty::Count, Ty::Count) | ('-', Ty::Count, Ty::Count) => (if *op == '+' { Arith::Add } else { Arith::Sub }, Ty::Count),
+                    ('*', Ty::Money, Ty::Count) | ('*', Ty::Count, Ty::Money) => (Arith::Mul, Ty::Money),
+                    ('*', Ty::Count, Ty::Count) => (Arith::Mul, Ty::Count),
+                    ('/', Ty::Money, Ty::Count) => (Arith::Div, Ty::Money),
+                    ('/', Ty::Count, Ty::Count) => (Arith::Div, Ty::Count),
+                    _ => {
+                        let what = match op {
+                            '+' => format!("cannot add a {lt:?} and a {rt:?}"),
+                            '-' => format!("cannot subtract a {rt:?} from a {lt:?}"),
+                            '*' => format!("cannot multiply a {lt:?} by a {rt:?}"),
+                            _ => format!("cannot divide a {lt:?} by a {rt:?}"),
+                        };
+                        self.errors.push(err(at, format!("`{}`: {what}", show_num(n))));
+                        return None;
+                    }
+                };
+                Some((Num::Bin(Box::new(l), arith, Box::new(r)), ty))
+            }
+            ast::Num::Total { attr, of, filter } => {
+                let (path, kind) = self.rel(p, at, from, of)?;
+                let ty = match p.kind(&kind).and_then(|k| k.attr(attr)).map(|a| a.ty) {
+                    Some(t @ (Ty::Money | Ty::Count)) => t,
+                    Some(t) => {
+                        self.errors.push(err(at, format!("`the total {attr} of {}`: {attr} is {t:?}; only amounts and counts add up", show(of))));
+                        return None;
+                    }
+                    None => {
+                        self.errors.push(err(at, format!("{} has no attribute {attr}", a(&kind))));
+                        return None;
+                    }
+                };
+                let filter = match filter {
+                    Some(f) => Some(Box::new(self.cond(p, at, &kind, f)?)),
+                    None => None,
+                };
+                let calc = Box::new(Num::Path(Path { steps: vec![Step::Attr(attr.clone())] }));
+                Some((Num::Sum { of: path, kind, calc, filter, ty }, ty))
+            }
+            ast::Num::Number { of, filter } => {
+                let (path, kind) = self.rel(p, at, from, of)?;
+                let filter = match filter {
+                    Some(f) => Some(Box::new(self.cond(p, at, &kind, f)?)),
+                    None => None,
+                };
+                Some((Num::Count { of: path, kind, filter }, Ty::Count))
+            }
+        }
+    }
+
+    /// A relation, `its Refunds` or `each Order's Shipments`: the path to the
+    /// node that owns them, and their kind (appendix E.2.1).
+    fn rel(&mut self, p: &Program, at: &Loc, from: &str, np: &NounPhrase) -> Option<(Path, String)> {
+        let Some((last, rest)) = np.steps.split_last() else {
+            self.errors.push(err(at, format!("`{}` is not a relation; name one, such as `its Refunds`", show(np))));
+            return None;
+        };
+        let owner = NounPhrase { head: np.head.clone(), steps: rest.to_vec() };
+        let (path, end) = self.np(p, at, from, &owner)?;
+        let End::Node(k) = end else {
+            self.errors.push(err(at, format!("`{}` is a value; only an entity has a relation", show(&owner))));
+            return None;
+        };
+        match plural_kind(p, &k, last) {
+            Some(kind) => Some((path, kind)),
+            None => {
+                self.errors.push(err(at, format!("{} has no {last}", a(&k))));
+                None
+            }
+        }
+    }
+
     /// Resolves a noun phrase from a node of kind `from` (spec B.3.8): each
     /// word is an attribute, a part, or the owner, tried in that order.
     fn np(&mut self, p: &Program, at: &Loc, from: &str, np: &NounPhrase) -> Option<(Path, End)> {
         let mut steps = vec![];
         let mut cur = from.to_string();
+        if let Head::Each(k) = &np.head {
+            if k != from {
+                self.errors.push(err(at, format!("`each {k}`: this sentence is about {}", a(from))));
+                return None;
+            }
+        }
         if let Head::The(k) = &np.head {
             while cur != *k {
                 // A valid chain of owners is shorter than the number of kinds;
@@ -500,6 +660,13 @@ impl Checker {
             }
         }
         for (i, w) in np.steps.iter().enumerate() {
+            if plural_kind(p, &cur, w).is_some() {
+                self.errors.push(err(
+                    at,
+                    format!("`{}` is a relation; count it with `the number of …` or add it up with `the total … of …`", show(np)),
+                ));
+                return None;
+            }
             let kind = p.kind(&cur)?;
             if let Some(a) = kind.attr(w) {
                 if let Some(next) = np.steps.get(i + 1) {
@@ -562,21 +729,14 @@ impl Checker {
                 Some(Cond::Has { node, part: kind.clone(), state: state.clone(), negated: *negated })
             }
             ast::Cond::Cmp { left, op, right } => {
-                let (path, end) = self.np(p, at, from, left)?;
-                let ty = match end {
-                    End::Value(t @ (Ty::Money | Ty::Count)) => t,
-                    End::Value(t) => {
-                        self.errors.push(err(
-                            at,
-                            format!("`{}` is {t:?}; only amounts and counts compare with at most, at least, more than or less than", show(left)),
-                        ));
-                        return None;
-                    }
-                    End::Node(k) => {
-                        self.errors.push(err(at, format!("`{}` is a {k}, not an amount or a count", show(left))));
-                        return None;
-                    }
-                };
+                let (num, ty) = self.num(p, at, from, left)?;
+                if !matches!(ty, Ty::Money | Ty::Count) {
+                    self.errors.push(err(
+                        at,
+                        format!("`{}` is {ty:?}; only amounts and counts compare with at most, at least, more than or less than", show_num(left)),
+                    ));
+                    return None;
+                }
                 let right = self.operand(p, at, from, right, ty)?;
                 let op = match op {
                     CmpOp::AtMost => Op::Le,
@@ -584,9 +744,14 @@ impl Checker {
                     CmpOp::MoreThan => Op::Gt,
                     CmpOp::LessThan => Op::Lt,
                 };
-                Some(Cond::Cmp { left: path, op, right })
+                Some(Cond::Cmp { left: num, op, right })
             }
             ast::Cond::Is { left, negated, right } => {
+                let ast::Num::Np(left) = left else {
+                    let (num, ty) = self.num(p, at, from, left)?;
+                    let right = self.operand(p, at, from, right, ty)?;
+                    return Some(Cond::Cmp { left: num, op: if *negated { Op::Ne } else { Op::Eq }, right });
+                };
                 let (path, end) = self.np(p, at, from, left)?;
                 match end {
                     End::Node(k) => {
@@ -599,7 +764,7 @@ impl Checker {
                     }
                     End::Value(ty) => {
                         let right = self.operand(p, at, from, right, ty)?;
-                        Some(Cond::Cmp { left: path, op: if *negated { Op::Ne } else { Op::Eq }, right })
+                        Some(Cond::Cmp { left: Num::Path(path), op: if *negated { Op::Ne } else { Op::Eq }, right })
                     }
                 }
             }
@@ -608,24 +773,16 @@ impl Checker {
 
     /// The other side of a comparison with a value of type `ty`. A bare word
     /// is text when `ty` is Text (spec B.3.7).
-    fn operand(&mut self, p: &Program, at: &Loc, from: &str, t: &Term, ty: Ty) -> Option<Operand> {
+    fn operand(&mut self, p: &Program, at: &Loc, from: &str, t: &Term, ty: Ty) -> Option<Num> {
         let (operand, found) = match t {
-            Term::Lit(l) => {
-                let (lit, t) = self.lit(at, l, &p.currency)?;
-                (Operand::Lit(lit), t)
-            }
-            Term::Word(w) if ty == Ty::Text => (Operand::Lit(Lit::Text(w.clone())), Ty::Text),
+            Term::Word(w) if ty == Ty::Text => (Num::Lit(Lit::Text(w.clone())), Ty::Text),
             Term::Word(w) => {
                 self.errors.push(err(at, format!("expected a {ty:?} value, found `{w}`")));
                 return None;
             }
-            Term::Np(np) => match self.np(p, at, from, np)? {
-                (path, End::Value(t)) => (Operand::Path(path), t),
-                (_, End::Node(k)) => {
-                    self.errors.push(err(at, format!("`{}` is a {k}, not a value", show(np))));
-                    return None;
-                }
-            },
+            Term::Lit(l) => self.num(p, at, from, &ast::Num::Lit(l.clone()))?,
+            Term::Np(np) => self.num(p, at, from, &ast::Num::Np(np.clone()))?,
+            Term::Calc(n) => self.num(p, at, from, n)?,
         };
         if found != ty {
             self.errors.push(err(at, format!("cannot compare a {ty:?} with a {found:?}")));

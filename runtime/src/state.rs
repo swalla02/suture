@@ -107,7 +107,7 @@ pub struct Node {
     /// Which attempt of its need this part is, from 1.
     pub attempt: u32,
     /// How many times its request has gone out: 0 until it is requested, at
-    /// most `ATTEMPTS` (appendix C.3.3).
+    /// the program's `attempts` (appendix C.3.3, E.2.8).
     pub sends: u32,
     /// The rule its request is waiting on, if any. A part with no effect uses
     /// it for the rule that keeps it from being done.

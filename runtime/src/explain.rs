@@ -2,7 +2,7 @@
 
 use suture_lang::ir::Program;
 
-use crate::interp::{duration, holds, in_state, request_key, ATTEMPTS};
+use crate::interp::{duration, holds, in_state, request_key};
 use crate::state::{Node, Status, Unit};
 
 /// One line for the unit, one per goal, and one per part, indented by depth.
@@ -51,7 +51,7 @@ fn part(prog: &Program, unit: &Unit, at: &[usize], due: &impl Fn(&str) -> Option
         (Status::Requested, _) => {
             let left = due(&request_key(&unit.label, &unit.root, at)).map(|s| format!(", answer due in {}", duration(s)));
             let adapter = effect.map_or("?", |e| e.adapter.as_str());
-            format!("requested from {adapter}, send {} of {ATTEMPTS}{}", n.sends, left.unwrap_or_default())
+            format!("requested from {adapter}, send {} of {}{}", n.sends, prog.attempts, left.unwrap_or_default())
         }
         (Status::Done, _) => n.outcome.clone().unwrap_or_else(|| "done".to_string()),
         (Status::Failed, _) => format!("failed ({})", n.outcome.as_deref().unwrap_or("?")),

@@ -130,7 +130,7 @@ pub fn tokens(text: &str) -> Result<Vec<Tok>, String> {
                 out.push(Tok::Poss);
                 i += 2;
             }
-        } else if "{}:,=|()".contains(c) {
+        } else if "{}:,=|()+-*/×−".contains(c) {
             out.push(Tok::Sym(c));
             i += 1;
         } else {
@@ -141,6 +141,7 @@ pub fn tokens(text: &str) -> Result<Vec<Tok>, String> {
 }
 
 /// A position in a statement's tokens, with the helpers the parsers share.
+#[derive(Clone)]
 pub struct Cursor<'a> {
     toks: &'a [Tok],
     pos: usize,

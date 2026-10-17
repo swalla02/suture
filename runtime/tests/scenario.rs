@@ -64,3 +64,13 @@ fn time_passes_in_scenarios() {
     let r = run(&p, sc);
     assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
 }
+
+#[test]
+fn expectations_take_any_condition() {
+    let p = shop();
+    let src = "scenario \"counts\":\n  when   a new Order P1 with country Japan and total 90 EUR\n  and    payments answers captured\n  and    carriers answers lost\n  and    carriers answers lost\n  expect the number of P1's Shipments is 3\n  expect the number of P1's Shipments that are lost is 2\n  expect P1's total is at most 90 EUR\n  expect P1's total is more than 90 EUR\n";
+    let sc = &parse_scenarios("t.scenario", src).unwrap()[0];
+    let r = run(&p, sc);
+    assert_eq!(r.failures.len(), 1, "{:?}\n{}", r.failures, r.host.trace.join("\n"));
+    assert!(r.failures[0].contains("expected P1's total is more than 90 EUR"), "{:?}", r.failures);
+}

@@ -1,7 +1,7 @@
 //! Read-backs (spec §3.4): a rule's formula and its paraphrase, generated
 //! from the compiled rule with fixed templates. No model is involved (D4).
 
-use crate::ir::{Body, Cond, Lit, Op, Operand, Path, Program, Rule, Step};
+use crate::ir::{Arith, Body, Cond, Lit, Num, Op, Path, Program, Rule, Step};
 
 /// `for each Declaration d: d.value ≤ d.form.order.total`
 pub fn formula(p: &Program, r: &Rule) -> String {
@@ -42,12 +42,9 @@ pub fn paraphrase(p: &Program, r: &Rule) -> String {
 
 fn cond_formula(p: &Program, kind: &str, v: &str, c: &Cond) -> String {
     match c {
-        Cond::Cmp { left, op, right } => format!(
-            "{} {} {}",
-            path_formula(p, kind, v, left),
-            op_symbol(*op),
-            operand(p, right, |x| path_formula(p, kind, v, x))
-        ),
+        Cond::Cmp { left, op, right } => {
+            format!("{} {} {}", num_formula(p, kind, v, left), op_symbol(*op), num_formula(p, kind, v, right))
+        }
         Cond::State { node, state, negated } => format!("{} is {}{state}", path_formula(p, kind, v, node), not(*negated)),
         Cond::Has { node, part, state, negated } => {
             let filter = state.as_ref().map_or_else(String::new, |s| format!(" where s is {s}"));
@@ -61,12 +58,7 @@ fn cond_formula(p: &Program, kind: &str, v: &str, c: &Cond) -> String {
 
 fn cond_words(p: &Program, kind: &str, c: &Cond) -> String {
     match c {
-        Cond::Cmp { left, op, right } => format!(
-            "{} {} {}",
-            path_words(p, kind, left),
-            op_words(*op),
-            operand(p, right, |x| path_words(p, kind, x))
-        ),
+        Cond::Cmp { left, op, right } => format!("{} {} {}", num_words(p, kind, left), op_words(*op), num_words(p, kind, right)),
         Cond::State { node, state, negated } => format!("{} is {}{state}", path_words(p, kind, node), not(*negated)),
         Cond::Has { node, part, state, negated } => {
             let that = state.as_ref().map_or_else(String::new, |s| format!(" that is {s}"));
@@ -82,11 +74,100 @@ fn not(negated: bool) -> &'static str {
     if negated { "not " } else { "" }
 }
 
-fn operand(p: &Program, o: &Operand, path: impl Fn(&Path) -> String) -> String {
-    match o {
-        Operand::Lit(l) => lit_text(p, l),
-        Operand::Path(x) => path(x),
+/// `sum(r in o.refunds where r is refunded: r.amount)`, `o.total / 10 + 1 EUR`
+fn num_formula(p: &Program, kind: &str, v: &str, n: &Num) -> String {
+    match n {
+        Num::Path(x) => path_formula(p, kind, v, x),
+        Num::Lit(l) => lit_text(p, l),
+        Num::Bin(x, op, y) => bin(*op, x, y, |m| num_formula(p, kind, v, m)),
+        Num::Sum { of, kind: k, calc, filter, .. } => {
+            let e = element_var(k, v);
+            let filter = filter.as_ref().map_or_else(String::new, |f| format!(" where {}", cond_formula(p, k, &e, f)));
+            format!("sum({e} in {}{filter}: {})", relation_formula(p, kind, v, of, k), num_formula(p, k, &e, calc))
+        }
+        Num::Count { of, kind: k, filter } => {
+            let e = element_var(k, v);
+            let filter = filter.as_ref().map_or_else(String::new, |f| format!(" where {}", cond_formula(p, k, &e, f)));
+            format!("count({e} in {}{filter})", relation_formula(p, kind, v, of, k))
+        }
     }
+}
+
+/// `the total amount of its refunds that are refunded`, `its total / 10 + 1 EUR`
+fn num_words(p: &Program, kind: &str, n: &Num) -> String {
+    match n {
+        Num::Path(x) => path_words(p, kind, x),
+        Num::Lit(l) => lit_text(p, l),
+        Num::Bin(x, op, y) => bin(*op, x, y, |m| num_words(p, kind, m)),
+        Num::Sum { of, kind: k, calc, filter, .. } => {
+            let what = match calc.as_ref() {
+                Num::Path(Path { steps }) if steps.len() == 1 => match &steps[0] {
+                    Step::Attr(a) => a.clone(),
+                    _ => num_words(p, k, calc),
+                },
+                other => num_words(p, k, other),
+            };
+            format!("the total {what} of {}{}", relation_words(p, kind, of, k), that_words(p, k, filter.as_deref()))
+        }
+        Num::Count { of, kind: k, filter } => {
+            format!("the number of {}{}", relation_words(p, kind, of, k), that_words(p, k, filter.as_deref()))
+        }
+    }
+}
+
+/// `x op y`, with parentheses where the reading needs them.
+fn bin(op: Arith, x: &Num, y: &Num, show: impl Fn(&Num) -> String) -> String {
+    let prec = |a: Arith| if matches!(a, Arith::Add | Arith::Sub) { 1 } else { 2 };
+    let side = |m: &Num, right: bool| match m {
+        Num::Bin(_, inner, _) if prec(*inner) < prec(op) || (right && prec(*inner) == prec(op) && matches!(op, Arith::Sub | Arith::Div)) => {
+            format!("({})", show(m))
+        }
+        _ => show(m),
+    };
+    let sym = match op {
+        Arith::Add => "+",
+        Arith::Sub => "−",
+        Arith::Mul => "×",
+        Arith::Div => "/",
+    };
+    format!("{} {sym} {}", side(x, false), side(y, true))
+}
+
+/// The variable for each entity of a relation: its kind's initial, unless
+/// the subject already has that one.
+fn element_var(kind: &str, subject: &str) -> String {
+    let e: String = kind.chars().next().map_or_else(|| "e".to_string(), |c| c.to_lowercase().collect());
+    if e == subject { format!("{e}2") } else { e }
+}
+
+fn plural_words(p: &Program, k: &str) -> String {
+    words_of_kind(&p.kind(k).map_or_else(|| format!("{k}s"), |x| x.plural.clone()))
+}
+
+/// `o.refunds`
+fn relation_formula(p: &Program, kind: &str, v: &str, of: &Path, k: &str) -> String {
+    format!("{}.{}", path_formula(p, kind, v, of), plural_words(p, k).replace(' ', "_"))
+}
+
+/// `its refunds`, `its form's declarations`
+fn relation_words(p: &Program, kind: &str, of: &Path, k: &str) -> String {
+    let owner = path_words(p, kind, of);
+    if owner == "it" { format!("its {}", plural_words(p, k)) } else { format!("{owner}'s {}", plural_words(p, k)) }
+}
+
+/// ` that are lost`, from the condition about each entity.
+fn that_words(p: &Program, k: &str, f: Option<&Cond>) -> String {
+    let Some(f) = f else { return String::new() };
+    let w = cond_words(p, k, f);
+    let w = w.strip_prefix("it ").unwrap_or(&w);
+    let w = if let Some(rest) = w.strip_prefix("is ") {
+        format!("are {rest}")
+    } else if let Some(rest) = w.strip_prefix("has ") {
+        format!("have {rest}")
+    } else {
+        w.to_string()
+    };
+    format!(" that {w}")
 }
 
 /// A literal as it is written: `"France"`, `120 EUR`, `12.50 EUR`, `3`, `yes`.

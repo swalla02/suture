@@ -1,4 +1,4 @@
-use suture_lang::ir::{Cond, Lit, Op, Operand, Path, Program, Step};
+use suture_lang::ir::{Cond, Lit, Num, Op, Path, Program, Step};
 use suture_lang::{compile, compile_dir};
 
 fn shop() -> Program {
@@ -50,7 +50,7 @@ fn bare_words_are_text_or_states() {
     let p = shop();
     let form = p.needs.iter().find(|n| n.part == "CustomsForm").unwrap();
     let country = path(&[Step::Attr("country".into())]);
-    assert_eq!(form.cond, Some(Cond::Cmp { left: country, op: Op::Eq, right: Operand::Lit(Lit::Text("France".into())) }));
+    assert_eq!(form.cond, Some(Cond::Cmp { left: Num::Path(country), op: Op::Eq, right: Num::Lit(Lit::Text("France".into())) }));
     let pay = p.needs.iter().find(|n| n.part == "Payment").unwrap();
     assert_eq!(pay.cond, Some(Cond::State { node: path(&[]), state: "cancelled".into(), negated: true }));
 }
@@ -155,4 +155,69 @@ fn slot_mistakes_are_errors() {
 fn has_a_slot_is_an_error() {
     let e = errors("kind O { }\nkind A { o: O }\nkind B { o: O }\nO needs D\nD is A or B\nprefer D: A, then B\ndefine: an O is going when it has a D\n");
     assert!(e.iter().any(|m| m.contains("D is a slot; name an alternative")), "{e:?}");
+}
+
+const NUMS: &str = "kind Order { total: Money, fee: Money = 0 EUR, items: Count = 1 }
+kind Refund { order: Order }
+kind Shipment { order: Order }
+Order needs Refund, Shipment
+effect pay Refund via payments within 30 seconds
+  sends    the order's total
+  reports  refunded with amount: Money | fails with bounced
+effect send Shipment via carriers within 1 day
+  sends    the order's total
+  reports  delivered | fails with lost
+";
+
+fn prog(src: &str) -> Program {
+    compile(&[("t.st".to_string(), format!("module t version 1, currency EUR\n{src}"))]).unwrap_or_else(|e| panic!("{e:?}"))
+}
+
+fn rule<'a>(p: &'a Program, name: &str) -> &'a suture_lang::ir::Rule {
+    p.rules.iter().find(|r| r.name == name).unwrap()
+}
+
+#[test]
+fn totals_counts_and_math_read_back() {
+    let p = prog(&format!(
+        "{NUMS}rule cap: the total amount of each Order's Refunds is at most its total
+rule few: the number of each Order's Shipments that are lost is at most 2
+rule fees: every Order's fee is at most its total / 10 + 1 EUR
+rule big: no Order whose total is at least 1000 EUR has a Shipment or a Refund unless its items is more than 2 * (3 - 1)
+"
+    ));
+    let cap = rule(&p, "cap");
+    assert_eq!(cap.formula, "for each Order o: sum(r in o.refunds: r.amount) ≤ o.total");
+    assert_eq!(cap.paraphrase, "each order on its own: the total amount of its refunds is at most its total");
+    assert_eq!(cap.tier, "per-group");
+    assert_eq!(rule(&p, "few").formula, "for each Order o: count(s in o.shipments where s is lost) ≤ 2");
+    assert_eq!(rule(&p, "fees").formula, "for each Order o: o.fee ≤ o.total / 10 + 1 EUR");
+    assert_eq!(rule(&p, "fees").tier, "local");
+    assert_eq!(
+        rule(&p, "big").formula,
+        "for each Order o: o.total ≥ 1000 EUR and (exists(s in o.Shipment) or exists(s in o.Refund)) implies o.items > 2 × (3 − 1)"
+    );
+}
+
+#[test]
+fn number_mistakes_are_errors() {
+    let e = errors(&format!("{NUMS}rule r: every Order's total is at most its total * its fee\n"));
+    assert!(e.iter().any(|m| m.contains("cannot multiply a Money by a Money")), "{e:?}");
+    let e = errors(&format!("{NUMS}rule r: every Order's items is at most its total + 1\n"));
+    assert!(e.iter().any(|m| m.contains("cannot add a Money and a Count")), "{e:?}");
+    let e = errors(&format!("{NUMS}rule r: every Order's items is at most its Shipments\n"));
+    assert!(e.iter().any(|m| m.contains("`its Shipments` is a relation")), "{e:?}");
+    let e = errors(&format!("{NUMS}rule r: the total amount of each Order's Payments is at most 3 EUR\n"));
+    assert!(e.iter().any(|m| m.contains("an Order has no Payments")), "{e:?}");
+    let e = errors(&format!("{NUMS}rule r: the total amount of each Order's Refunds is at most 3\n"));
+    assert!(e.iter().any(|m| m.contains("cannot compare a Money with a Count")), "{e:?}");
+}
+
+#[test]
+fn plurals_and_the_attempts_setting() {
+    let p = prog("kind Team { }\nkind Person (plural People) { team: Team }\nkind Box { team: Team, n: Count }\nTeam needs Person, Box\nrule r: the number of each Team's People is at most 5\nrule s: the total n of each Team's Boxes is at most 9\n");
+    assert_eq!(rule(&p, "r").formula, "for each Team t: count(p in t.people) ≤ 5");
+    assert_eq!(p.attempts, 3);
+    let five = compile(&[("t.st".to_string(), "module t version 1, currency EUR, attempts 5\nkind A { }\n".to_string())]).unwrap();
+    assert_eq!(five.attempts, 5);
 }

@@ -56,7 +56,12 @@ fn money(n: &str) -> Result<i64, String> {
 }
 
 pub fn starts_noun_phrase(c: &Cursor) -> bool {
-    ["it", "its", "their", "the"].iter().any(|w| c.is_word(w))
+    ["it", "its", "their", "the", "each"].iter().any(|w| c.is_word(w))
+}
+
+/// Whether a calculation starts here: a noun phrase, a number or `(`.
+pub fn starts_calc(c: &Cursor) -> bool {
+    starts_noun_phrase(c) || matches!(c.peek(), Some(Tok::Num(_) | Tok::Sym('(')))
 }
 
 /// `it`, `its x`, `their x`, `the Kind`, `the x`, followed by any number of `'s y`.
@@ -65,6 +70,8 @@ pub fn noun_phrase(c: &mut Cursor) -> Result<NounPhrase, Error> {
         NounPhrase { head: Head::It, steps: vec![] }
     } else if c.eat_word("its") || c.eat_word("their") {
         NounPhrase { head: Head::It, steps: vec![c.word()?] }
+    } else if c.eat_word("each") {
+        NounPhrase { head: Head::Each(c.kind_name()?), steps: vec![] }
     } else if c.eat_word("the") {
         let w = c.word()?;
         if w.starts_with(char::is_uppercase) {
@@ -85,15 +92,83 @@ fn it() -> NounPhrase {
     NounPhrase { head: Head::It, steps: vec![] }
 }
 
-/// What follows `is` or `is not`.
+/// What follows `is` or `is not`: a calculation, or a bare word.
 fn term(c: &mut Cursor) -> Result<Term, Error> {
+    let calc = starts_calc(c) || matches!(c.peek(), Some(Tok::Str(_))) || ["yes", "no", "true", "false"].iter().any(|w| c.is_word(w));
+    if !calc {
+        return Ok(Term::Word(state_word(c)?));
+    }
+    Ok(match calc_expr(c)? {
+        Num::Lit(l) => Term::Lit(l),
+        Num::Np(np) => Term::Np(np),
+        n => Term::Calc(n),
+    })
+}
+
+/// A calculation: sums of products, `×` and `/` binding tighter (appendix E.2.3).
+pub fn calc_expr(c: &mut Cursor) -> Result<Num, Error> {
+    let mut left = product(c)?;
+    loop {
+        let op = if c.eat_sym('+') {
+            '+'
+        } else if c.eat_sym('-') || c.eat_sym('−') {
+            '-'
+        } else {
+            return Ok(left);
+        };
+        left = Num::Bin(Box::new(left), op, Box::new(product(c)?));
+    }
+}
+
+fn product(c: &mut Cursor) -> Result<Num, Error> {
+    let mut left = atom(c)?;
+    loop {
+        let op = if c.eat_sym('*') || c.eat_sym('×') {
+            '*'
+        } else if c.eat_sym('/') {
+            '/'
+        } else {
+            return Ok(left);
+        };
+        left = Num::Bin(Box::new(left), op, Box::new(atom(c)?));
+    }
+}
+
+fn word_at(c: &Cursor, k: usize, w: &str) -> bool {
+    matches!(c.peek_at(k), Some(Tok::Word(x)) if x == w)
+}
+
+/// `( … )`, a literal, `the number of …`, `the total ⟨attr⟩ of …`, or a noun phrase.
+fn atom(c: &mut Cursor) -> Result<Num, Error> {
+    if c.eat_sym('(') {
+        let n = calc_expr(c)?;
+        c.expect_sym(')')?;
+        return Ok(n);
+    }
+    if word_at(c, 0, "the") && word_at(c, 1, "number") && word_at(c, 2, "of") {
+        c.expect_word("the")?;
+        c.expect_word("number")?;
+        c.expect_word("of")?;
+        let of = noun_phrase(c)?;
+        return Ok(Num::Number { of, filter: that(c)? });
+    }
+    if word_at(c, 0, "the") && word_at(c, 1, "total") && word_at(c, 3, "of") {
+        c.expect_word("the")?;
+        c.expect_word("total")?;
+        let attr = c.word()?;
+        c.expect_word("of")?;
+        let of = noun_phrase(c)?;
+        return Ok(Num::Total { attr, of, filter: that(c)? });
+    }
     if let Some(l) = literal(c)? {
-        return Ok(Term::Lit(l));
+        return Ok(Num::Lit(l));
     }
-    if starts_noun_phrase(c) {
-        return Ok(Term::Np(noun_phrase(c)?));
-    }
-    Ok(Term::Word(state_word(c)?))
+    Ok(Num::Np(noun_phrase(c)?))
+}
+
+/// `that ⟨cond⟩` after a relation: a condition about each of its entities.
+fn that(c: &mut Cursor) -> Result<Option<Box<Cond>>, Error> {
+    Ok(if c.eat_word("that") { Some(Box::new(condition(c)?)) } else { None })
 }
 
 /// A state's name: one word, or `timed out` (appendix C.2).
@@ -104,8 +179,11 @@ pub fn state_word(c: &mut Cursor) -> Result<String, Error> {
 
 /// What follows a noun phrase: `is [not] t`, `is at most t` and the other
 /// comparisons, `has a K [that is s]`, or `has no K [that is s]`.
-pub fn predicate(c: &mut Cursor, left: NounPhrase) -> Result<Cond, Error> {
-    if c.eat_word("has") {
+pub fn predicate(c: &mut Cursor, left: Num) -> Result<Cond, Error> {
+    if c.eat_word("has") || c.eat_word("have") {
+        let Num::Np(left) = left else {
+            return Err(c.error("only a noun phrase has parts; a calculation has none"));
+        };
         let negated = if c.eat_word("no") {
             true
         } else if c.eat_word("a") || c.eat_word("an") {
@@ -120,9 +198,26 @@ pub fn predicate(c: &mut Cursor, left: NounPhrase) -> Result<Cond, Error> {
         } else {
             None
         };
-        return Ok(Cond::Has { owner: left, negated, kind, state });
+        let first = Cond::Has { owner: left.clone(), negated, kind, state };
+        if !negated && c.is_word("or") && (word_at(c, 1, "a") || word_at(c, 1, "an")) {
+            c.expect_word("or")?;
+            if !c.eat_word("a") {
+                c.expect_word("an")?;
+            }
+            let kind = c.kind_name()?;
+            let state = if c.eat_word("that") {
+                c.expect_word("is")?;
+                Some(state_word(c)?)
+            } else {
+                None
+            };
+            return Ok(Cond::Or(vec![first, Cond::Has { owner: left, negated: false, kind, state }]));
+        }
+        return Ok(first);
     }
-    c.expect_word("is")?;
+    if !(c.eat_word("is") || c.eat_word("are")) {
+        return Err(c.error(format!("expected `is`, found {}", c.found())));
+    }
     let op = if c.eat_word("at") {
         if c.eat_word("most") {
             Some(CmpOp::AtMost)
@@ -148,7 +243,8 @@ pub fn predicate(c: &mut Cursor, left: NounPhrase) -> Result<Cond, Error> {
 
 /// One condition. One that starts with `is` or `has` is about the subject.
 fn simple(c: &mut Cursor) -> Result<Cond, Error> {
-    let left = if c.is_word("is") || c.is_word("has") { it() } else { noun_phrase(c)? };
+    let about_it = ["is", "are", "has", "have"].iter().any(|w| c.is_word(w));
+    let left = if about_it { Num::Np(it()) } else { calc_expr(c)? };
     predicate(c, left)
 }
 
@@ -163,7 +259,7 @@ pub fn condition(c: &mut Cursor) -> Result<Cond, Error> {
     };
     let mut parts = vec![first];
     while c.eat_word(&joiner) {
-        let next = if c.is_word("is") || c.is_word("has") || starts_noun_phrase(c) {
+        let next = if ["is", "are", "has", "have"].iter().any(|w| c.is_word(w)) || starts_calc(c) {
             simple(c)?
         } else {
             let Some(Cond::Is { left, .. }) = parts.last() else {
@@ -194,13 +290,11 @@ pub fn subject(c: &mut Cursor) -> Result<Subject, Error> {
     let kind = c.kind_name()?;
     let mut filter = vec![];
     if let Some(state) = adjective {
-        filter.push(Cond::Is { left: it(), negated: false, right: Term::Word(state) });
+        filter.push(Cond::Is { left: Num::Np(it()), negated: false, right: Term::Word(state) });
     }
     if c.eat_word("whose") {
         let attr = c.word()?;
-        c.expect_word("is")?;
-        let negated = c.eat_word("not");
-        filter.push(Cond::Is { left: NounPhrase { head: Head::It, steps: vec![attr] }, negated, right: term(c)? });
+        filter.push(predicate(c, Num::Np(NounPhrase { head: Head::It, steps: vec![attr] }))?);
     }
     if c.eat_word("that") {
         filter.push(condition(c)?);
@@ -210,22 +304,47 @@ pub fn subject(c: &mut Cursor) -> Result<Subject, Error> {
 
 /// `every S's attr …`, `every S is …`, `no S has … [unless cond]`, `no S is … [unless cond]`.
 pub fn rule_body(c: &mut Cursor) -> Result<RuleBody, Error> {
+    if c.is_word("the") {
+        // A bound for each entity: `the total amount of each Order's Refunds is at most its total`.
+        let cond = condition(c)?;
+        let Some(kind) = each_in_cond(&cond) else {
+            return Err(c.error("a bound names what it is about with `each`, as in `the total amount of each Order's Refunds`"));
+        };
+        return Ok(RuleBody::Every { subject: Subject { kind, filter: vec![] }, cond });
+    }
     if c.eat_word("every") {
         let subject = subject(c)?;
         let mut left = it();
         while c.eat_poss() {
             left.steps.push(c.word()?);
         }
-        let cond = predicate(c, left)?;
+        let cond = predicate(c, Num::Np(left))?;
         return Ok(RuleBody::Every { subject, cond });
     }
     if !c.eat_word("no") {
         return Err(c.error(format!("a rule starts with `every` or `no`, found {}", c.found())));
     }
     let subject = subject(c)?;
-    let pred = predicate(c, it())?;
+    let pred = predicate(c, Num::Np(it()))?;
     let unless = if c.eat_word("unless") { Some(condition(c)?) } else { None };
     Ok(RuleBody::No { subject, pred, unless })
+}
+
+/// The kind named by `each` in a bound, if any.
+fn each_in_cond(c: &Cond) -> Option<String> {
+    fn num(n: &Num) -> Option<String> {
+        let np = |np: &NounPhrase| if let Head::Each(k) = &np.head { Some(k.clone()) } else { None };
+        match n {
+            Num::Np(x) | Num::Total { of: x, .. } | Num::Number { of: x, .. } => np(x),
+            Num::Bin(a, _, b) => num(a).or_else(|| num(b)),
+            Num::Lit(_) => None,
+        }
+    }
+    match c {
+        Cond::Is { left, .. } | Cond::Cmp { left, .. } => num(left),
+        Cond::And(cs) | Cond::Or(cs) => cs.iter().find_map(each_in_cond),
+        Cond::Has { .. } => None,
+    }
 }
 
 #[cfg(test)]
@@ -250,7 +369,7 @@ mod tests {
     }
 
     fn is(left: NounPhrase, negated: bool, right: &str) -> Cond {
-        Cond::Is { left, negated, right: word(right) }
+        Cond::Is { left: Num::Np(left), negated, right: word(right) }
     }
 
     #[test]
@@ -292,7 +411,7 @@ mod tests {
         assert_eq!(with("it is not cancelled", condition).unwrap(), is(np(&[]), true, "cancelled"));
         assert_eq!(
             with("its value is at most its form's order's total", condition).unwrap(),
-            Cond::Cmp { left: np(&["value"]), op: CmpOp::AtMost, right: Term::Np(np(&["form", "order", "total"])) }
+            Cond::Cmp { left: Num::Np(np(&["value"])), op: CmpOp::AtMost, right: Term::Np(np(&["form", "order", "total"])) }
         );
         assert_eq!(
             with("has a Shipment that is sent", condition).unwrap(),

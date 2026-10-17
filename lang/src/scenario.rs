@@ -27,6 +27,9 @@ pub enum ScenarioStep {
     Pass { secs: u64 },
     /// `expect [an|no] alert for O1`
     Alert { name: String, negated: bool },
+    /// `expect the number of P1's Shipments is 3`: any condition, with the
+    /// unit's name standing for the subject (appendix E.2.9).
+    ExpectCond { name: String, cond: crate::ast::Cond, text: String },
 }
 
 pub fn parse_scenarios(file: &str, src: &str) -> Result<Vec<Scenario>, Error> {
@@ -66,15 +69,14 @@ fn step(c: &mut Cursor) -> Result<ScenarioStep, Error> {
             c.expect_word("for")?;
             return Ok(ScenarioStep::Alert { name: c.word()?, negated });
         }
-        let name = c.word()?;
-        let part = if c.eat_poss() { Some(c.kind_name()?) } else { None };
-        c.expect_word("is")?;
-        let negated = c.eat_word("not");
-        let state = state_word(c)?;
-        return Ok(match part {
-            Some(part) => ScenarioStep::ExpectPart { name, part, state, negated },
-            None => ScenarioStep::Expect { name, state, negated },
-        });
+        let saved = c.clone();
+        if let Ok(short) = short_expect(c) {
+            if c.at_end() {
+                return Ok(short);
+            }
+        }
+        *c = saved;
+        return expect_cond(c);
     }
     if !(c.eat_word("when") || c.eat_word("and")) {
         return Err(c.error(format!("expected `when`, `and` or `expect`, found {}", c.found())));
@@ -99,6 +101,52 @@ fn step(c: &mut Cursor) -> Result<ScenarioStep, Error> {
     let data = if c.eat_word("with") { pairs(c)? } else { vec![] };
     let target = if c.eat_word("for") { Some(c.word()?) } else { None };
     Ok(ScenarioStep::Answer { adapter, outcome, data, target })
+}
+
+/// `expect O1 is [not] paid`, `expect O1's Payment is [not] timed out`.
+fn short_expect(c: &mut Cursor) -> Result<ScenarioStep, Error> {
+    let name = c.word()?;
+    let part = if c.eat_poss() { Some(c.kind_name()?) } else { None };
+    c.expect_word("is")?;
+    let negated = c.eat_word("not");
+    let state = state_word(c)?;
+    Ok(match part {
+        Some(part) => ScenarioStep::ExpectPart { name, part, state, negated },
+        None => ScenarioStep::Expect { name, state, negated },
+    })
+}
+
+/// Any condition about one unit: its name, followed by `'s` or by `is` or
+/// `has`, stands where a subject would, so `P1's` reads as `its`.
+fn expect_cond(c: &mut Cursor) -> Result<ScenarioStep, Error> {
+    let toks: Vec<Tok> = c.by_ref().cloned().collect();
+    let text = crate::parse::text(&toks);
+    let is_name = |i: usize| {
+        matches!(&toks[i], Tok::Word(w) if w.starts_with(char::is_uppercase))
+            && (i == 0 || toks[i - 1] != Tok::Poss)
+            && matches!(toks.get(i + 1), Some(Tok::Poss) | Some(Tok::Word(_)))
+            && match toks.get(i + 1) {
+                Some(Tok::Word(w)) => w == "is" || w == "has",
+                _ => true,
+            }
+    };
+    let Some(at) = (0..toks.len()).find(|&i| is_name(i)) else {
+        return Err(c.error(format!("`expect {text}`: name the unit it is about, as in `expect P1's total is 90 EUR`")));
+    };
+    let Tok::Word(name) = toks[at].clone() else { unreachable!("is_name checked it is a word") };
+    let mut rewritten = toks.clone();
+    if rewritten.get(at + 1) == Some(&Tok::Poss) {
+        rewritten.splice(at..at + 2, [Tok::Word("its".into())]);
+    } else {
+        rewritten[at] = Tok::Word("it".into());
+    }
+    if (0..rewritten.len()).any(|i| matches!(&rewritten[i], Tok::Word(w) if *w == name)) {
+        return Err(c.error(format!("`expect {text}`: an expectation is about one unit, {name}")));
+    }
+    let mut inner = Cursor::new(&rewritten, "", 0);
+    let cond = crate::sentence::condition(&mut inner).map_err(|e| c.error(format!("`expect {text}`: {}", e.msg)))?;
+    inner.expect_end().map_err(|e| c.error(format!("`expect {text}`: {}", e.msg)))?;
+    Ok(ScenarioStep::ExpectCond { name, cond, text })
 }
 
 /// `a 1, b "x" and c 3 EUR`. A bare word is text.

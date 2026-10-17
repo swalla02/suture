@@ -2,13 +2,10 @@
 //! It is a pure function of the program, the unit and the message, so
 //! replaying the journal reproduces every step.
 
-use suture_lang::ir::{Body, Cond, Effect, Op, Operand, Path, Program, Rule, Step, TIMED_OUT};
+use suture_lang::ir::{Arith, Body, Cond, Effect, Num, Op, Path, Program, Rule, Step, Ty, TIMED_OUT};
 
 use crate::choice::choose;
 use crate::state::{Ask, Msg, Node, Status, Unit, Val};
-
-/// The most attempts of a part before its need gives up (spec §3.2).
-pub const ATTEMPTS: u32 = 3;
 
 /// A bound on settling. A unit's parts are bounded, so a valid program
 /// settles long before this.
@@ -186,11 +183,12 @@ fn deadline(prog: &Program, u: &mut Unit, key: &str, asks: &mut Vec<Ask>) -> Res
     let kind = node_at(&u.root, &at).kind.clone();
     let effect = prog.effect_of(&kind).expect("a requested part has an effect");
     let n = node_at_mut(&mut u.root, &at);
-    if n.sends < ATTEMPTS {
+    let attempts = prog.attempts;
+    if n.sends < attempts {
         n.sends += 1;
         let sends = n.sends;
         u.notes.push(format!(
-            "{kind}: no answer within {}: asking again (send {sends} of {ATTEMPTS})",
+            "{kind}: no answer within {}: asking again (send {sends} of {attempts})",
             duration(effect.within_secs)
         ));
         asks.push(ask_for(&u.label, &u.root, &at, effect));
@@ -198,7 +196,7 @@ fn deadline(prog: &Program, u: &mut Unit, key: &str, asks: &mut Vec<Ask>) -> Res
     }
     n.status = Status::Failed;
     n.outcome = Some(TIMED_OUT.to_string());
-    u.notes.push(format!("{kind} timed out after {ATTEMPTS} sends"));
+    u.notes.push(format!("{kind} timed out after {attempts} sends"));
     // A time-out is a fact: it is always recorded. Reactions that would
     // break a rule are held back instead.
     let mut t = u.root.clone();
@@ -323,7 +321,7 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
             let add = match current(n, &want).map(|i| (i, &n.parts[i])) {
                 None if active => Some((blank(prog, &want, 1), format!("needs {want}"))),
                 Some((_, p))
-                    if active && p.status == Status::Failed && p.attempt < ATTEMPTS && p.outcome.as_deref() != Some(TIMED_OUT) =>
+                    if active && p.status == Status::Failed && p.attempt < prog.attempts && p.outcome.as_deref() != Some(TIMED_OUT) =>
                 {
                     let note = format!("{want} {}: attempt {}", p.outcome.as_deref().unwrap_or("failed"), p.attempt + 1);
                     Some((blank(prog, &want, p.attempt + 1), note))
@@ -613,15 +611,8 @@ fn truth(b: bool) -> T {
 fn eval(prog: &Program, root: &Node, at: &[usize], c: &Cond) -> T {
     match c {
         Cond::Cmp { left, op, right } => {
-            let Some(l) = value(root, at, left) else { return T::Unknown };
-            let r = match right {
-                Operand::Lit(lit) => Val::from_lit(lit),
-                Operand::Path(p) => match value(root, at, p) {
-                    Some(v) => v.clone(),
-                    None => return T::Unknown,
-                },
-            };
-            compare(l, &r, *op).map_or(T::No, truth)
+            let (Some(l), Some(r)) = (num(prog, root, at, left), num(prog, root, at, right)) else { return T::Unknown };
+            compare(&l, &r, *op).map_or(T::No, truth)
         }
         Cond::State { node, state, negated } => {
             let yes = locate(root, at, &node.steps).is_some_and(|n| in_state(prog, root, &n, state));
@@ -655,6 +646,55 @@ fn eval(prog: &Program, root: &Node, at: &[usize], c: &Cond) -> T {
                 T::No
             }
         }
+    }
+}
+
+/// A calculation's value at the node at `at`, or `None` while a value it
+/// needs is unknown, or on overflow or division by zero (appendix E.2.3).
+pub fn num(prog: &Program, root: &Node, at: &[usize], n: &Num) -> Option<Val> {
+    match n {
+        Num::Path(p) => value(root, at, p).cloned(),
+        Num::Lit(l) => Some(Val::from_lit(l)),
+        Num::Bin(x, op, y) => arith(num(prog, root, at, x)?, *op, num(prog, root, at, y)?),
+        Num::Sum { of, kind, calc, filter, ty } => {
+            let mut total = if *ty == Ty::Money { Val::Money(0) } else { Val::Count(0) };
+            for pos in relation(prog, root, at, of, kind, filter.as_deref())? {
+                total = arith(total, Arith::Add, num(prog, root, &pos, calc)?)?;
+            }
+            Some(total)
+        }
+        Num::Count { of, kind, filter } => Some(Val::Count(relation(prog, root, at, of, kind, filter.as_deref())?.len() as i64)),
+    }
+}
+
+/// Every part of `kind` under the node at `of`, all attempts, that the
+/// filter is known to hold for (appendix E.2.1).
+fn relation(prog: &Program, root: &Node, at: &[usize], of: &Path, kind: &str, filter: Option<&Cond>) -> Option<Vec<Vec<usize>>> {
+    let owner = locate(root, at, &of.steps)?;
+    let n = node_at(root, &owner);
+    Some(
+        (0..n.parts.len())
+            .filter(|&i| n.parts[i].kind == kind)
+            .map(|i| child(&owner, i))
+            .filter(|pos| filter.is_none_or(|f| eval(prog, root, pos, f) == T::Yes))
+            .collect(),
+    )
+}
+
+/// Checked arithmetic on amounts and counts; division rounds toward zero.
+fn arith(x: Val, op: Arith, y: Val) -> Option<Val> {
+    let f = |a: i64, b: i64| match op {
+        Arith::Add => a.checked_add(b),
+        Arith::Sub => a.checked_sub(b),
+        Arith::Mul => a.checked_mul(b),
+        Arith::Div => a.checked_div(b),
+    };
+    match (x, y) {
+        (Val::Money(a), Val::Money(b)) if matches!(op, Arith::Add | Arith::Sub) => f(a, b).map(Val::Money),
+        (Val::Money(a), Val::Count(b)) if matches!(op, Arith::Mul | Arith::Div) => f(a, b).map(Val::Money),
+        (Val::Count(a), Val::Money(b)) if op == Arith::Mul => f(a, b).map(Val::Money),
+        (Val::Count(a), Val::Count(b)) => f(a, b).map(Val::Count),
+        _ => None,
     }
 }
 
