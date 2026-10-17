@@ -40,6 +40,9 @@ pub struct Host {
     waiters: Vec<Waiter>,
     /// Every decision of the gate, in order (appendix G.2.2).
     pub gate: Vec<String>,
+    /// For each unit, the units that carry its facts: those that refer to
+    /// it, and those it granted a binding (appendix G.2.7).
+    readers: BTreeMap<String, BTreeSet<String>>,
 }
 
 /// A binding waiting on its pool key, with its choice's hole.
@@ -85,6 +88,7 @@ impl Host {
             pools: BTreeMap::new(),
             waiters: vec![],
             gate: vec![],
+            readers: BTreeMap::new(),
         };
         // One unit holds each total `checked globally` (appendix F.2.13).
         for g in h.prog.globals.clone() {
@@ -139,6 +143,47 @@ impl Host {
         }
     }
 
+    /// A caller's admitted change to an attribute (appendix G.2.5, G.2.7).
+    /// It passes the gate; then the changed unit and every unit that carries
+    /// its facts are checked with the new value before anything changes.
+    pub fn input_change(&mut self, by: Option<&Caller>, target: &str, attr: &str, value: Val) -> Result<(), String> {
+        let unit = self.unit(target).ok_or_else(|| format!("there is no unit {target}"))?;
+        let kind = unit.root.kind.clone();
+        let ty = self.prog.kind(&kind).and_then(|k| k.attr(attr)).map(|a| a.ty).ok_or_else(|| format!("{} has no attribute {attr}", interp::a_kind(&kind)))?;
+        let value = match (ty, value) {
+            (Ty::Ref | Ty::Set, _) => return Err(format!("{kind}.{attr} refers to shared entities, which cannot be changed yet")),
+            (t, v) if v.ty() == t => v,
+            (t, v) => return Err(format!("{kind}.{attr} is {t:?}, not {}", v.show(&self.prog.currency))),
+        };
+        let fits = |a: &Admitted| matches!(a, Admitted::Change { kind: k, attr: x } if by.is_some_and(|c| c.verb == "changes") && *k == kind && x == attr);
+        self.gate(by, fits, &format!("{target}'s {attr} to {}", value.show(&self.prog.currency)), &unit)?;
+        let who = by.map_or(String::new(), |c| format!("{} {}", c.role, c.name));
+        let msg = Msg::Change { attr: attr.to_string(), value, by: who };
+        let refusal = |u: &Unit| u.notes.iter().find_map(|n| n.split_once(": refused by rule ").map(|(_, r)| r.to_string()));
+        let after = interp::step_at(&self.prog, &unit, &msg, self.clock()).unit;
+        if let Some(r) = refusal(&after) {
+            self.trace.push(format!("{target:<3} {}", after.notes.join("; ")));
+            return Err(format!("refused by rule {r}"));
+        }
+        let fact = Fact { kind, created: after.root.created, attrs: after.root.attrs.clone() };
+        let refresh = Msg::Refresh { facts: Facts::from([(target.to_string(), fact)]) };
+        let readers: Vec<String> = self.readers.get(target).map(|r| r.iter().cloned().collect()).unwrap_or_default();
+        for r in &readers {
+            let Some(u) = self.unit(r) else { continue };
+            let after = interp::step_at(&self.prog, &u, &refresh, self.clock()).unit;
+            if let Some(rule) = refusal(&after) {
+                self.trace.push(format!("{target:<3} change refused: {r} would break rule {rule}"));
+                return Err(format!("refused by rule {rule} (in {r})"));
+            }
+        }
+        self.tell(target, &msg)?;
+        for r in &readers {
+            self.tell(r, &refresh)?;
+        }
+        self.wake(target)?;
+        self.pump()
+    }
+
     fn make(
         &mut self,
         gated: Option<Option<&Caller>>,
@@ -174,6 +219,9 @@ impl Host {
         let net = b.finish().map_err(|e| e.to_string())?;
         self.machine.inject(Injection::new(net).new_hole(rest, Some(label))).map_err(|e| e.to_string())?;
         self.machine.run(None);
+        for l in unit.facts.keys() {
+            self.readers.entry(l.clone()).or_default().insert(label.to_string());
+        }
         let noted = self.note(label);
         let pumped = self.pump();
         // A unit that exists is a candidate, even if its first step reported an error.
@@ -572,6 +620,11 @@ impl Host {
     fn route(&mut self, hole: HoleId, payload: &Value) -> Result<(), String> {
         let (label, msg) = send_from_value(payload)?;
         let release = matches!(Msg::from_value(&msg), Ok(Msg::Release { .. }));
+        if let Ok(Msg::Granted { facts, .. }) = Msg::from_value(&msg) {
+            for l in facts.keys() {
+                self.readers.entry(l.clone()).or_default().insert(label.clone());
+            }
+        }
         let sig = self.machine.program().sig.clone();
         let mut b = NetBuilder::new(&sig);
         let (meet, to, next) = (b.var(), b.var(), b.var());

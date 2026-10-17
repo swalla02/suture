@@ -33,6 +33,8 @@ pub enum ScenarioStep {
     },
     /// `when support Sam cancels O1 [is refused …]`: an admitted event (appendix G.2.4).
     Event { by: Caller, target: String, refused: Option<Refused> },
+    /// `when staff Tom changes S1's units to 3 [is refused …]` (appendix G.2.5).
+    Change { by: Caller, target: String, attr: String, value: Literal, refused: Option<Refused> },
     /// `and forms answers filled with licence "L-77" [for O1]`
     Answer { adapter: String, outcome: String, data: Vec<(String, Literal)>, target: Option<String> },
     /// `expect O1 is [not] settled`
@@ -150,6 +152,20 @@ fn step(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {
         }
         Some(Caller { role, name, verb })
     };
+    if let Some(by) = by.clone().filter(|b| b.verb == "changes") {
+        let target = c.word()?;
+        if !c.eat_poss() {
+            return Err(c.error(format!("`changes {target}`: name the attribute, as in `changes {target}'s units to 3`")));
+        }
+        let attr = c.word()?;
+        c.expect_word("to")?;
+        let value = match literal(c)? {
+            Some(l) => l,
+            None => Literal::Text(c.word()?),
+        };
+        let refused = refusal(c)?;
+        return Ok(ScenarioStep::Change { by, target, attr, value, refused });
+    }
     if let Some(by) = by.clone().filter(|_| !(c.is_word("a") || c.is_word("an"))) {
         let target = c.word()?;
         let refused = refusal(c)?;
@@ -341,6 +357,10 @@ mod tests {
         let s = &parse_scenarios("o.scenario", src).unwrap()[0];
         let by = Caller { role: "support".into(), name: "Sam".into(), verb: "cancels".into() };
         assert_eq!(s.steps[0], ScenarioStep::Event { by, target: "O1".into(), refused: Some(Refused::Rule("late".into())) });
+        let src = "scenario \"x\":\n  when   staff Tom changes S1's units to 3\n";
+        let s = &parse_scenarios("o.scenario", src).unwrap()[0];
+        let by = Caller { role: "staff".into(), name: "Tom".into(), verb: "changes".into() };
+        assert_eq!(s.steps[0], ScenarioStep::Change { by, target: "S1".into(), attr: "units".into(), value: Literal::Count(3), refused: None });
         let e = parse_scenarios("o.scenario", "scenario \"x\":\n  given  customer Ada places a new Order O1\n").unwrap_err();
         assert!(e.msg.contains("a `given` is the world"), "{e}");
     }

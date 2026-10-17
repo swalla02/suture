@@ -337,10 +337,107 @@ fn across(p: &Program, from: &str, of: &NounPhrase) -> Option<(String, Option<St
     }
 }
 
-/// Attributes that change after creation: set by a reaction or an effect's answer.
+/// Attributes that change after creation: set by a reaction, an effect's
+/// answer or an admitted change (appendix G.2.6).
 fn changeable(p: &Program) -> Vec<String> {
     let mut out: Vec<String> = p.reactions.iter().flat_map(|r| r.actions.iter().map(|a| a.attr.clone())).collect();
     out.extend(p.effects.iter().flat_map(|e| e.data.iter().map(|(n, _)| n.clone())));
+    out.extend(admitted_changes(p).into_iter().map(|(_, a)| a));
+    out
+}
+
+/// The attributes callers may change, as (kind, attribute).
+fn admitted_changes(p: &Program) -> Vec<(String, String)> {
+    p.admits
+        .iter()
+        .filter_map(|a| match &a.what {
+            Admitted::Change { kind, attr } => Some((kind.clone(), attr.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Why an attribute cannot be changed by a caller in slice 6 (appendix G.2.5).
+fn unchangeable(p: &Program, kind: &str, attr: &str) -> Option<String> {
+    if attr == CREATED {
+        return Some(format!("`{CREATED}` is the clock when the {kind} was created, so it never changes"));
+    }
+    let Some(a) = p.kind(kind).and_then(|k| k.attr(attr)) else {
+        return Some(format!("{} has no attribute `{attr}`", self::a(kind)));
+    };
+    if matches!(a.ty, Ty::Ref | Ty::Set) {
+        return Some(format!("`{attr}` refers to shared entities; changing a reference or a set waits for a later slice"));
+    }
+    if a.formula.is_some() {
+        return Some(format!("`{attr}` is calculated when the {kind} is created, so it cannot be changed"));
+    }
+    if let Some(b) = p.bindings.iter().find(|b| b.target == kind && b.key_attr == attr) {
+        return Some(format!("`{attr}` keys the pool of `{} uses a {kind}`, and changing a pool key waits for a later slice", b.subject));
+    }
+    None
+}
+
+/// The changeable attributes of other units a rule reads through carried
+/// facts: each needs a watch (appendix G.2.7).
+fn watched(p: &Program, r: &Rule) -> Vec<String> {
+    let changes = admitted_changes(p);
+    let mut out = vec![];
+    let mut see = |x: &Path, last: Option<&str>| {
+        if !x.steps.iter().any(|s| matches!(s, Step::Ref(_) | Step::Bound(_))) {
+            return;
+        }
+        if let Some(a) = last {
+            for (k, c) in &changes {
+                if c == a && !out.contains(&format!("{k}'s {c}")) {
+                    out.push(format!("{k}'s {c}"));
+                }
+            }
+        }
+    };
+    fn num(n: &Num, see: &mut dyn FnMut(&Path, Option<&str>)) {
+        match n {
+            Num::Path(x) => see(x, match x.steps.last() { Some(Step::Attr(a)) => Some(a.as_str()), _ => None }),
+            Num::Bin(a, _, b) => {
+                num(a, see);
+                num(b, see);
+            }
+            Num::Sum { calc, filter, .. } => {
+                num(calc, see);
+                if let Some(f) = filter {
+                    cond(f, see);
+                }
+            }
+            Num::Count { filter: Some(f), .. } => cond(f, see),
+            _ => {}
+        }
+    }
+    fn cond(c: &Cond, see: &mut dyn FnMut(&Path, Option<&str>)) {
+        match c {
+            Cond::Cmp { left, right, .. } => {
+                num(left, see);
+                num(right, see);
+            }
+            Cond::Contains { set, item, .. } => {
+                num(set, see);
+                num(item, see);
+            }
+            Cond::State { node, state, .. } => see(node, Some(state)),
+            Cond::Has { .. } => {}
+            Cond::And(cs) | Cond::Or(cs) => cs.iter().for_each(|c| cond(c, see)),
+        }
+    }
+    for c in &r.filter {
+        cond(c, &mut see);
+    }
+    match &r.body {
+        Body::Every(c) => cond(c, &mut see),
+        Body::No { pred, unless } => {
+            cond(pred, &mut see);
+            if let Some(u) = unless {
+                cond(u, &mut see);
+            }
+        }
+    }
     out
 }
 
@@ -355,7 +452,7 @@ fn fixed_rule(p: &Program, r: &Rule) -> bool {
             return false;
         }
         if through_ref(x) {
-            return true;
+            return !matches!(x.steps.last(), Some(Step::Attr(a)) if ch.contains(a));
         }
         x.steps.iter().all(|s| matches!(s, Step::Owner | Step::Attr(_))) && matches!(x.steps.last(), Some(Step::Attr(a)) if !ch.contains(a))
     };
@@ -374,7 +471,7 @@ fn fixed_rule(p: &Program, r: &Rule) -> bool {
             Cond::State { node, state, .. } => {
                 let bool_attr = p.kinds.iter().any(|k| k.attr(state).is_some_and(|a| a.ty == Ty::Bool));
                 let other = p.defines.iter().any(|d| d.state == *state) || p.effects.iter().any(|e| p.states(&e.kind).contains(state));
-                let carried = through_ref(node) && !node.steps.iter().any(|s| matches!(s, Step::Bound(_) | Step::Cand));
+                let carried = through_ref(node) && !node.steps.iter().any(|s| matches!(s, Step::Bound(_) | Step::Cand)) && !ch.contains(state);
                 carried || (bool_attr && !other && !ch.contains(state) && node.steps.iter().all(|s| *s == Step::Owner))
             }
             Cond::Has { .. } => false,
@@ -463,6 +560,10 @@ impl Checker {
         self.reactions(src, &mut p);
         for i in 0..p.rules.len() {
             p.rules[i].fixed = fixed_rule(&p, &p.rules[i]);
+            let w = watched(&p, &p.rules[i]);
+            if !w.is_empty() && p.rules[i].tier == "local" {
+                p.rules[i].tier = format!("per-group (watches {})", w.join(", "));
+            }
         }
         p
     }
@@ -1273,6 +1374,12 @@ impl Checker {
                         continue;
                     }
                     Some(_) => {}
+                }
+                if let Admitted::Change { kind, attr } = &what {
+                    if let Some(why) = unchangeable(p, kind, attr) {
+                        self.errors.push(err(&a.at, format!("`admit {}`: {why}", a.source)));
+                        continue;
+                    }
                 }
                 self.caller = Some(caller.clone());
                 let cond = match &a.cond {

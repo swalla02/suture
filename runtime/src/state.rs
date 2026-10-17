@@ -429,6 +429,10 @@ pub enum Msg {
     /// An admitted event from a caller (`customer Ada`), by its verb as
     /// written (`cancels`), for the reactions to it (appendix G.2.4).
     Event { verb: String, by: String },
+    /// An admitted change from a caller: set the root's attribute (appendix G.2.5).
+    Change { attr: String, value: Val, by: String },
+    /// New values of the facts a reader carries (appendix G.2.7).
+    Refresh { facts: Facts },
 }
 
 impl Msg {
@@ -448,6 +452,8 @@ impl Msg {
             Msg::Waiting { key } => Value::tuple([Value::from(7i64), text(key)]),
             Msg::Release { from, key, taken } => Value::tuple([Value::from(8i64), text(from), text(key), taken_value(taken)]),
             Msg::Event { verb, by } => Value::tuple([Value::from(9i64), text(verb), text(by)]),
+            Msg::Change { attr, value, by } => Value::tuple([Value::from(10i64), pairs_value(&[(attr.clone(), value.clone())]), text(by)]),
+            Msg::Refresh { facts } => Value::tuple([Value::from(11i64), facts_value(facts)]),
         }
     }
 
@@ -489,6 +495,17 @@ impl Msg {
             Some(Ok(9)) => {
                 let [_, verb, by] = fields::<3>(v, "event message")?;
                 Ok(Msg::Event { verb: string(verb)?, by: string(by)? })
+            }
+            Some(Ok(10)) => {
+                let [_, change, by] = fields::<3>(v, "change message")?;
+                let Ok([(attr, value)]) = <[(String, Val); 1]>::try_from(pairs_from(change)?) else {
+                    return Err(format!("a change message sets one attribute: {v}"));
+                };
+                Ok(Msg::Change { attr, value, by: string(by)? })
+            }
+            Some(Ok(11)) => {
+                let [_, facts] = fields::<2>(v, "refresh message")?;
+                Ok(Msg::Refresh { facts: facts_from(facts)? })
             }
             _ => Err(format!("not a message: {v}")),
         }
@@ -738,6 +755,8 @@ mod tests {
             Msg::Waiting { key: "k".into() },
             Msg::Release { from: "O1".into(), key: "k".into(), taken: taken.clone() },
             Msg::Event { verb: "cancels".into(), by: "customer Ada".into() },
+            Msg::Change { attr: "units".into(), value: Val::Count(2), by: "staff Tom".into() },
+            Msg::Refresh { facts: u.facts.clone() },
         ] {
             assert_eq!(Msg::from_value(&m.to_value()).unwrap(), m);
         }

@@ -308,6 +308,20 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
             return Outcome::new(u, out);
         }
         Msg::Granted { key, by, taken, facts } => granted(prog, &mut u, key, by, taken, facts, &mut out),
+        Msg::Change { attr, value, by } => {
+            u.notes.push(format!("{by} changes {attr} to {}", value.show(&prog.currency)));
+            u.root.attrs.insert(attr.clone(), value.clone());
+        }
+        Msg::Refresh { facts } => {
+            // Only the facts it carries; each is a fact, never refused here:
+            // the host checks a change against its readers first.
+            for (l, f) in facts {
+                if let Some(old) = u.facts.get_mut(l) {
+                    *old = f.clone();
+                }
+            }
+            u.notes.push(format!("refreshed {}", facts.keys().cloned().collect::<Vec<_>>().join(", ")));
+        }
         Msg::Event { verb, by } => {
             u.notes.push(format!("{by} {verb} it"));
             let kind = u.root.kind.clone();
@@ -359,6 +373,13 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
         // The event's step would break a rule: it is refused, and its caller
         // is told which rule (appendix G.2.4).
         return Outcome::kept(unit, format!("refused {by} {verb} it: refused by rule {}: {}", r.name, r.paraphrase), Out::default());
+    }
+    if let (Some(r), Msg::Change { .. } | Msg::Refresh { .. }) = (newly_violated(prog, unit, &u), msg) {
+        let by = match msg {
+            Msg::Change { by, attr, .. } => format!("{by} changes {attr}"),
+            _ => "a change it reads".to_string(),
+        };
+        return Outcome::kept(unit, format!("refused {by}: refused by rule {}: {}", r.name, r.paraphrase), Out::default());
     }
     if let (Some(r), Msg::Patience { .. }) = (violated(prog, &u), msg) {
         // Moving on would break a rule: the slot stays where it is.

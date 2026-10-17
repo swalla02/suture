@@ -116,3 +116,85 @@ fn an_event_that_would_break_a_rule_is_refused_by_it() {
     let r = events("  when   support Sam cancels O9\n");
     assert!(r.failures[0].contains("there is no unit O9"), "{:?}", r.failures);
 }
+
+const CHANGES: &str = "module t version 1, currency EUR
+role staff
+role customer
+kind Country  { code: Text, restricted: Bool = no }
+kind Product  { name: Text }
+kind Stock    { product: Product, units: Count }
+kind Order    { country: Country, product: Product, quantity: Count }
+kind Shipment { order: Order }
+Order needs Shipment
+Shipment uses a Stock where the Stock's product is the Order's product, taking the Order's quantity
+prefer Stock: highest units
+effect send Shipment via carriers within 7 days
+  sends the order's quantity
+  reports delivered
+rule stock: the total quantity taken from each Stock is at most its units
+rule embargo: no Order whose country is restricted has a Shipment that is delivered
+admit place a new Order by customer
+admit change Stock's units by staff
+admit change Country's restricted by staff where its code is not \"DE\"
+";
+
+fn changes(steps: &str) -> suture_runtime::scenario::Report {
+    let p = suture_lang::compile(&[("t.st".to_string(), CHANGES.to_string())]).unwrap_or_else(|e| panic!("{e:?}"));
+    let src = format!(
+        "scenario \"t\":\n  given  a Country DE with code DE\n  and    a Country FR with code FR\n  and    a Product Kettle with name Kettle\n  and    a Stock S1 with product Kettle and units 3\n{steps}"
+    );
+    let sc = &parse_scenarios("t.scenario", &src).unwrap_or_else(|e| panic!("{e}"))[0];
+    run(&p, sc)
+}
+
+#[test]
+fn a_change_is_checked_by_the_changed_units_rules() {
+    let r = changes(
+        "  when   customer Ada places a new Order O1 with country FR, product Kettle and quantity 2\n\
+         \x20 and    staff Tom changes S1's units to 1\n         is refused by rule stock\n\
+         \x20 expect S1's units is 3\n\
+         \x20 when   staff Tom changes S1's units to 2\n\
+         \x20 expect S1's units is 2\n\
+         \x20 when   customer Bo changes S1's units to 9\n         is refused at the gate\n",
+    );
+    assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
+}
+
+#[test]
+fn raising_a_shared_entity_wakes_what_waits_for_it() {
+    let r = changes(
+        "  when   customer Ada places a new Order O1 with country FR, product Kettle and quantity 5\n\
+         \x20 expect O1's Shipment is not delivered\n\
+         \x20 when   staff Tom changes S1's units to 5\n\
+         \x20 and    carriers answers delivered\n\
+         \x20 expect O1's Shipment is delivered\n\
+         \x20 expect the total quantity taken from S1 is 5\n",
+    );
+    assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
+    assert!(r.host.trace.iter().any(|l| l.contains("waits for")), "{}", r.host.trace.join("\n"));
+}
+
+#[test]
+fn a_change_its_readers_cannot_take_is_refused() {
+    let r = changes(
+        "  when   customer Ada places a new Order O1 with country FR, product Kettle and quantity 1\n\
+         \x20 and    carriers answers delivered\n\
+         \x20 and    staff Tom changes FR's restricted to yes\n         is refused by rule embargo\n\
+         \x20 expect FR is not restricted\n\
+         \x20 when   staff Tom changes DE's restricted to yes\n         is refused at the gate\n",
+    );
+    assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
+    assert!(r.host.trace.iter().any(|l| l.contains("O1 would break rule embargo")), "{}", r.host.trace.join("\n"));
+}
+
+#[test]
+fn readers_see_a_change_they_can_take() {
+    let r = changes(
+        "  when   customer Ada places a new Order O1 with country FR, product Kettle and quantity 1\n\
+         \x20 and    staff Tom changes FR's restricted to yes\n\
+         \x20 expect O1's country's restricted is yes\n\
+         \x20 when   carriers answers delivered\n\
+         \x20 expect O1's Shipment is not delivered\n",
+    );
+    assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
+}

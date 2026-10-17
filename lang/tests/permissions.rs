@@ -98,3 +98,45 @@ fn event_mistakes_are_errors() {
     let e = errors(&format!("{SHOP}admit fix Order by support\nwhen a support fixes an Order: the Order is fixed\n"));
     assert!(e[0].contains("no Bool attribute `fixed`"), "{e:?}");
 }
+
+const CHANGES: &str = "role staff
+kind Country  { code: Text, restricted: Bool = no }
+kind Product  { name: Text, price: Money }
+kind Stock    { product: Product, units: Count, label: Text = product's name }
+kind Order    { country: Country, product: Product, quantity: Count }
+kind Shipment { order: Order }
+Order needs Shipment
+Shipment uses a Stock where the Stock's product is the Order's product, taking the Order's quantity
+prefer Stock: highest units
+rule stock: the total quantity taken from each Stock is at most its units
+rule embargo: no Order whose country is restricted has a Shipment
+";
+
+#[test]
+fn admitted_changes_make_facts_changeable() {
+    let fixed = prog(CHANGES);
+    assert!(fixed.rules[1].fixed, "no one changes restricted");
+    assert_eq!(fixed.rules[1].tier, "local");
+    let p = prog(&format!("{CHANGES}admit change Stock's units by staff\nadmit change Country's restricted by staff\n"));
+    assert_eq!(p.admits[0].what, Admitted::Change { kind: "Stock".into(), attr: "units".into() });
+    assert!(!p.rules[1].fixed, "a caller can change restricted, so the refusal is not fixed");
+    assert_eq!(p.rules[1].tier, "per-group (watches Country's restricted)");
+}
+
+#[test]
+fn change_mistakes_are_errors() {
+    let e = errors(&format!("{CHANGES}admit change Stock's colour by staff\n"));
+    assert!(e[0].contains("a Stock has no attribute `colour`"), "{e:?}");
+    let e = errors(&format!("{CHANGES}admit change Stock's product by staff\n"));
+    assert!(e[0].contains("`product` refers to shared entities"), "{e:?}");
+    let e = errors(&format!("{CHANGES}admit change Stock's label by staff\n"));
+    assert!(e[0].contains("`label` is calculated when the Stock is created"), "{e:?}");
+    let e = errors(&format!("{CHANGES}admit change Stock's created by staff\n"));
+    assert!(e[0].contains("`created` is the clock"), "{e:?}");
+    let e = errors(&format!("{CHANGES}kind Carrier {{ zone: Text }}\nShipment uses a Carrier where the Carrier's zone is \"EU\"\nprefer Carrier: highest 1\nadmit change Carrier's zone by staff\n"));
+    assert!(e.iter().any(|e| e.contains("`zone` keys the pool of `Shipment uses a Carrier`")), "{e:?}");
+    let e = errors(&format!("{CHANGES}admit change Shipment's order by staff\n"));
+    assert!(e[0].contains("Shipment is a part of Order"), "{e:?}");
+    let e = errors(&format!("{CHANGES}admit change Stock by staff\n"));
+    assert!(e[0].contains("name the attribute"), "{e:?}");
+}

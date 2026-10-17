@@ -36,6 +36,10 @@ pub fn run(prog: &Program, sc: &Scenario) -> Report {
                 let r = host.input_event(Some(by), target);
                 refusal(&mut host, target, refused.as_ref(), r, "it was admitted")
             }
+            ScenarioStep::Change { by, target, attr, value, refused } => {
+                let r = values(prog, &[(attr.clone(), value.clone())]).and_then(|v| host.input_change(Some(by), target, attr, v[0].1.clone()));
+                refusal(&mut host, target, refused.as_ref(), r, "it was changed")
+            }
             ScenarioStep::Answer { adapter, outcome, data, target } => {
                 values(prog, data).and_then(|v| host.answer(adapter, outcome, &v, target.as_deref()))
             }

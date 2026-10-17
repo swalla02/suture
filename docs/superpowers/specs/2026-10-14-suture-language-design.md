@@ -1041,7 +1041,7 @@ Slice 6 lets callers in. Until now a scenario created units and answered for ada
 | `admit ⟨verb⟩ K by r[, r] [where ⟨cond⟩]`, and reactions `when a r [or r] ⟨verb⟩s a K: …` | events with data (`cancels an Order with reason …`) |
 | `admit change K's a by r[, r] [where ⟨cond⟩]` | changing a reference, a set, a calculated attribute or a pool key |
 | `the caller` and `the caller's a` in an `admit` condition | `the caller` in rules and reactions |
-| changeable carried facts: readers are refreshed and checked | |
+| changeable carried facts: readers are refreshed and checked | refreshing carried facts that a shared entity's own reactions or answers change |
 | scenarios: `when r N ⟨verb⟩s [a new] K M …`, `when r N changes M's a to ⟨value⟩`, `is refused at the gate` | |
 | `suture build` lists roles, what is admitted, and the watches | |
 
