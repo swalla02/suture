@@ -122,8 +122,9 @@ impl Host {
         self.machine.run(None);
         let noted = self.note(label);
         let pumped = self.pump();
-        noted.and(pumped)?;
+        // A unit that exists is a candidate, even if its first step reported an error.
         self.index(label);
+        noted.and(pumped)?;
         let woken = self.wake(label);
         let pumped = self.pump();
         woken.and(pumped)
@@ -166,6 +167,8 @@ impl Host {
     /// binding waits, and its unit is told.
     fn decide(&mut self, hole: HoleId, payload: &Value) -> Result<(), String> {
         let d = Decide::from_value(payload)?;
+        // A newer request for the same binding supersedes any waiter for it.
+        self.waiters.retain(|w| w.decide.key() != d.key());
         let u = self.unit(&d.label).ok_or_else(|| format!("{}: a choice for a unit that is gone", d.label))?;
         let b = self.prog.bindings.get(d.binding as usize).ok_or("a choice for an unknown binding")?;
         let key = match interp::decide_key(&self.prog, &u, &d) {

@@ -337,3 +337,23 @@ fn a_global_budget_holds_every_refund_to_one_total() {
     assert_eq!(total(&r, "all Refunds", "amount of Refunds"), Some(Val::Money(6_000)));
     assert_eq!(total(&r, "C3", "amount of Refunds per month@2026-01"), Some(Val::Money(5_000)), "C3 granted its part");
 }
+
+#[test]
+fn a_woken_binding_forgets_earlier_refusals() {
+    // O1 waits after both Stocks refuse it. When O0 gives back 4 at S2, the
+    // woken binding gathers from scratch: S1 refuses again, and S2 is asked.
+    let r = shop_run(
+        "  and    a Stock S1 with warehouse WD, product P and units 1
+  and    a Stock S2 with warehouse WF, product P and units 5
+  when   a new Order O0 with country DE
+         and a line with product P and quantity 4
+  and    a new Order O1 with country DE
+         and a line with product P and quantity 5
+  expect the total quantity taken from S2 is 4
+  when   payments answers declined for O0
+  expect the total quantity taken from S2 is 5
+  expect the total quantity taken from S1 is 0
+",
+    );
+    assert!(r.host.trace.join("\n").contains("O1  Shipment gets Stock S2"), "{}", r.host.trace.join("\n"));
+}

@@ -345,6 +345,11 @@ fn changeable(p: &Program) -> Vec<String> {
 fn fixed_rule(p: &Program, r: &Rule) -> bool {
     let ch = changeable(p);
     let path = |x: &Path| {
+        // A bound entity is known only once its binding is granted, after the
+        // part exists, so only references are fixed.
+        if x.steps.iter().any(|s| matches!(s, Step::Bound(_) | Step::Cand)) {
+            return false;
+        }
         if through_ref(x) {
             return true;
         }
@@ -365,7 +370,8 @@ fn fixed_rule(p: &Program, r: &Rule) -> bool {
             Cond::State { node, state, .. } => {
                 let bool_attr = p.kinds.iter().any(|k| k.attr(state).is_some_and(|a| a.ty == Ty::Bool));
                 let other = p.defines.iter().any(|d| d.state == *state) || p.effects.iter().any(|e| p.states(&e.kind).contains(state));
-                through_ref(node) || (bool_attr && !other && !ch.contains(state) && node.steps.iter().all(|s| *s == Step::Owner))
+                let carried = through_ref(node) && !node.steps.iter().any(|s| matches!(s, Step::Bound(_) | Step::Cand));
+                carried || (bool_attr && !other && !ch.contains(state) && node.steps.iter().all(|s| *s == Step::Owner))
             }
             Cond::Has { .. } => false,
             Cond::And(cs) | Cond::Or(cs) => cs.iter().all(|c| cond(p, c, ch, path)),

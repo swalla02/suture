@@ -283,10 +283,13 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
         Msg::Refused { key, by, rule } => {
             let Some((at, id)) = find_bind(&u, key) else { return Outcome::kept(unit, format!("ignored a refusal for {key}: it is gone"), out) };
             let n = node_at_mut(&mut u.root, &at);
-            let (Some(Bind::Asked { skip } | Bind::Waiting { skip }), Status::Idle) = (n.binds.get(&id).cloned(), n.status) else {
-                return Outcome::kept(unit, format!("ignored a refusal for {key}: not asked"), out);
+            // A woken binding gathered again from scratch (appendix F.2.9), so
+            // only this refusal counts.
+            let mut skip = match (n.binds.get(&id).cloned(), n.status) {
+                (Some(Bind::Asked { skip }), Status::Idle) => skip,
+                (Some(Bind::Waiting { .. }), Status::Idle) => vec![],
+                _ => return Outcome::kept(unit, format!("ignored a refusal for {key}: not asked"), out),
             };
-            let mut skip = skip;
             skip.push(by.clone());
             n.binds.insert(id.clone(), Bind::Asked { skip: skip.clone() });
             let why = if rule.is_empty() { String::new() } else { format!(": rule {rule}") };

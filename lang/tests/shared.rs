@@ -268,3 +268,16 @@ fn relation_and_period_mistakes_are_errors() {
     let e = errors(&format!("{REFUNDS}rule cap: the total amount of all Pigs is at most 2 EUR, checked globally\n"));
     assert!(e[0].contains("no kind is called Pigs"), "{e:?}");
 }
+
+#[test]
+fn a_rule_that_reads_a_bound_entity_is_not_fixed() {
+    let p = prog(&format!(
+        "{REFUNDS}kind Carrier {{ fee: Money }}
+Shipment uses a Carrier where the Carrier's fee is the Order's total
+rule fee: no Order has a Shipment unless its Shipment's Carrier's fee is at most 10 EUR
+"
+    ));
+    let r = p.rules.iter().find(|r| r.name == "fee").unwrap();
+    assert!(!r.fixed, "the Carrier is known only once it is bound");
+    assert!(p.rules.iter().find(|r| r.name == "embargo").unwrap().fixed);
+}
