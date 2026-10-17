@@ -313,8 +313,8 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
             u.root.attrs.insert(attr.clone(), value.clone());
         }
         Msg::Refresh { facts } => {
-            // Only the facts it carries; each is a fact, never refused here:
-            // the host checks a change against its readers first.
+            // Only the facts it carries. A refresh is a fact and is never
+            // refused: the host checked the change against every reader first.
             for (l, f) in facts {
                 if let Some(old) = u.facts.get_mut(l) {
                     *old = f.clone();
@@ -326,7 +326,8 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
             u.notes.push(format!("{by} {verb} it"));
             let kind = u.root.kind.clone();
             let mut notes = vec![];
-            react(prog, &mut u.root, &unit.facts, &[], &kind, verb, true, &mut notes);
+            let role = by.split_once(' ').map_or(by.as_str(), |(r, _)| r);
+            react(prog, &mut u.root, &unit.facts, &[], &kind, verb, Some(role), &mut notes);
             u.notes.extend(notes);
         }
         Msg::Refused { key, by, rule } => {
@@ -374,12 +375,8 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
         // is told which rule (appendix G.2.4).
         return Outcome::kept(unit, format!("refused {by} {verb} it: refused by rule {}: {}", r.name, r.paraphrase), Out::default());
     }
-    if let (Some(r), Msg::Change { .. } | Msg::Refresh { .. }) = (newly_violated(prog, unit, &u), msg) {
-        let by = match msg {
-            Msg::Change { by, attr, .. } => format!("{by} changes {attr}"),
-            _ => "a change it reads".to_string(),
-        };
-        return Outcome::kept(unit, format!("refused {by}: refused by rule {}: {}", r.name, r.paraphrase), Out::default());
+    if let (Some(r), Msg::Change { by, attr, .. }) = (newly_violated(prog, unit, &u), msg) {
+        return Outcome::kept(unit, format!("refused {by} changes {attr}: refused by rule {}: {}", r.name, r.paraphrase), Out::default());
     }
     if let (Some(r), Msg::Patience { .. }) = (violated(prog, &u), msg) {
         // Moving on would break a rule: the slot stays where it is.
@@ -648,7 +645,7 @@ fn answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[(Strin
     let shown: Vec<String> = data.iter().map(|(k, v)| format!("{k} {}", v.show(&prog.currency))).collect();
     let mut notes =
         vec![if shown.is_empty() { format!("{kind} {outcome}") } else { format!("{kind} {outcome}: {}", shown.join(", ")) }];
-    react(prog, &mut t, &u.facts, &at, &kind, outcome, false, &mut notes);
+    react(prog, &mut t, &u.facts, &at, &kind, outcome, None, &mut notes);
     if let Some(r) = broken_rule(prog, View::of(u).with(&t)) {
         return Err(Refusal { note: format!("refused by rule {}: {}", r.name, r.paraphrase), again });
     }
@@ -685,7 +682,7 @@ fn deadline(prog: &Program, u: &mut Unit, key: &str, out: &mut Out) -> Result<()
     // break a rule are held back instead.
     let mut t = u.root.clone();
     let mut notes = vec![];
-    react(prog, &mut t, &u.facts, &at, &kind, TIMED_OUT, false, &mut notes);
+    react(prog, &mut t, &u.facts, &at, &kind, TIMED_OUT, None, &mut notes);
     match newly_broken(prog, View::of(u), &t) {
         Some(r) => u.notes.push(format!("reaction held: rule {}: {}", r.name, r.paraphrase)),
         None => {
@@ -744,10 +741,15 @@ pub fn duration(secs: u64) -> String {
 }
 
 /// Applies the `when` reactions to an outcome (spec §3.3).
-/// Applies the reactions to an outcome, or with `event` to an admitted event.
+/// Applies the reactions to an outcome, or with the caller's `role` to an
+/// admitted event: only those that name that role (appendix G.2.4).
 #[allow(clippy::too_many_arguments)]
-fn react(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize], kind: &str, outcome: &str, event: bool, notes: &mut Vec<String>) {
-    for r in prog.reactions.iter().filter(|r| r.kind == kind && r.outcome == outcome && r.by.is_empty() != event) {
+fn react(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize], kind: &str, outcome: &str, role: Option<&str>, notes: &mut Vec<String>) {
+    let fits = |r: &&suture_lang::ir::Reaction| match role {
+        None => r.by.is_empty(),
+        Some(x) => r.by.iter().any(|b| b == x),
+    };
+    for r in prog.reactions.iter().filter(|r| r.kind == kind && r.outcome == outcome).filter(fits) {
         for a in &r.actions {
             let Some(target) = here(View::bare(root, facts), at, &a.target.steps) else { continue };
             let Some(calc) = &a.becomes else {
@@ -1107,7 +1109,7 @@ pub fn a_kind(kind: &str) -> String {
 }
 
 /// A rule `after` breaks that `before` did not.
-fn newly_violated<'p>(prog: &'p Program, before: &Unit, after: &Unit) -> Option<&'p Rule> {
+pub fn newly_violated<'p>(prog: &'p Program, before: &Unit, after: &Unit) -> Option<&'p Rule> {
     prog.rules.iter().find(|r| broken(prog, View::of(after), r) && !broken(prog, View::of(before), r))
 }
 

@@ -198,3 +198,32 @@ fn readers_see_a_change_they_can_take() {
     );
     assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
 }
+
+#[test]
+fn an_event_runs_only_the_reactions_for_the_callers_role() {
+    let src = EVENTS.replace(
+        "when a customer or support cancels an Order: the Order is cancelled",
+        "when a customer cancels an Order: the Order is cancelled\nwhen a support cancels an Order: the Order is cancelled and the Order is flagged",
+    )
+    .replace("cancelled: Bool = no }", "cancelled: Bool = no, flagged: Bool = no }");
+    let p = suture_lang::compile(&[("t.st".to_string(), src)]).unwrap_or_else(|e| panic!("{e:?}"));
+    let steps = "scenario \"t\":\n  given  a Customer Ada with name Ada\n  and    a new Order O1 with customer Ada and total 50 EUR\n  and    a new Order O2 with customer Ada and total 50 EUR\n  when   customer Ada cancels O1\n  and    support Sam cancels O2\n  expect O1 is not flagged\n  expect O2 is flagged\n";
+    let r = run(&p, &parse_scenarios("t.scenario", steps).unwrap()[0]);
+    assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
+}
+
+#[test]
+fn a_pool_key_never_changes_even_without_admits() {
+    let mut h = suture_runtime::host::Host::new(
+        suture_lang::compile(&[("t.st".to_string(), "module t version 1, currency EUR\nkind Zone { name: Text }\nkind Depot { zone: Text }\nkind Site { zone: Text }\nkind Pick { site: Site }\nSite needs Pick\nPick uses a Depot where the Depot's zone is the Site's zone\nprefer Depot: highest 1\n".to_string())]).unwrap(),
+    );
+    h.create("Depot", "D1", &[("zone".to_string(), suture_runtime::state::Val::Text("EU".into()))]).unwrap();
+    let e = h.input_change(None, "D1", "zone", suture_runtime::state::Val::Text("US".into())).unwrap_err();
+    assert!(e.contains("keys the pool"), "{e}");
+}
+
+#[test]
+fn a_refusal_names_exactly_its_rule() {
+    let r = events("  when   payments answers captured\n  and    support Sam cancels O1\n         is refused by rule kep\n");
+    assert_eq!(r.failures.len(), 1, "rule `kep` is not rule `kept`: {:?}", r.failures);
+}

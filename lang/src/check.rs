@@ -358,7 +358,7 @@ fn admitted_changes(p: &Program) -> Vec<(String, String)> {
 }
 
 /// Why an attribute cannot be changed by a caller in slice 6 (appendix G.2.5).
-fn unchangeable(p: &Program, kind: &str, attr: &str) -> Option<String> {
+pub fn unchangeable(p: &Program, kind: &str, attr: &str) -> Option<String> {
     if attr == CREATED {
         return Some(format!("`{CREATED}` is the clock when the {kind} was created, so it never changes"));
     }
@@ -374,7 +374,44 @@ fn unchangeable(p: &Program, kind: &str, attr: &str) -> Option<String> {
     if let Some(b) = p.bindings.iter().find(|b| b.target == kind && b.key_attr == attr) {
         return Some(format!("`{attr}` keys the pool of `{} uses a {kind}`, and changing a pool key waits for a later slice", b.subject));
     }
+    if let Some(b) = p.bindings.iter().find(|b| key_reads(p, b).iter().any(|(k, a)| k == kind && a == attr)) {
+        return Some(format!("`{attr}` is the key `{} uses a {}` looks up its pool by, and changing a pool key waits for a later slice", b.subject, b.target));
+    }
     None
+}
+
+/// The attributes a binding's key reads, as (kind, attribute), through
+/// owners and references from its subject.
+fn key_reads(p: &Program, b: &Binding) -> Vec<(String, String)> {
+    fn num(p: &Program, from: &str, n: &Num, out: &mut Vec<(String, String)>) {
+        match n {
+            Num::Path(x) => {
+                let mut cur = from.to_string();
+                for s in &x.steps {
+                    match s {
+                        Step::Owner => match p.kind(&cur).and_then(|k| k.owner.clone()) {
+                            Some(o) => cur = o.kind,
+                            None => return,
+                        },
+                        Step::Ref(a) => match p.kind(&cur).and_then(|k| k.attr(a)).and_then(|a| a.of.clone()) {
+                            Some(k) => cur = k,
+                            None => return,
+                        },
+                        Step::Attr(a) => out.push((cur.clone(), a.clone())),
+                        _ => return,
+                    }
+                }
+            }
+            Num::Bin(x, _, y) => {
+                num(p, from, x, out);
+                num(p, from, y, out);
+            }
+            _ => {}
+        }
+    }
+    let mut out = vec![];
+    num(p, &b.subject, &b.key, &mut out);
+    out
 }
 
 /// The changeable attributes of other units a rule reads through carried
@@ -1354,8 +1391,14 @@ impl Checker {
             if kinds.len() < a.roles.len() {
                 continue;
             }
+            kinds.sort();
             kinds.dedup();
-            let caller = if kinds.len() == 1 { kinds.pop().expect("one kind") } else { String::new() };
+            // Empty when a role has no kind, `*` when the roles' kinds differ.
+            let caller = match kinds.as_slice() {
+                [k] => k.clone(),
+                ks if ks.iter().any(String::is_empty) => String::new(),
+                _ => "*".to_string(),
+            };
             let targets: Vec<Admitted> = match &a.what {
                 ast::Admitted::New { verb, kinds } => kinds.iter().map(|k| Admitted::New { verb: verb.clone(), kind: k.clone() }).collect(),
                 ast::Admitted::Event { verb, kind } => vec![Admitted::Event { verb: verb.clone(), kind: kind.clone() }],
@@ -1394,8 +1437,10 @@ impl Checker {
                 };
                 self.caller = None;
                 if let Admitted::Event { verb, kind } = &what {
-                    if !src.reactions.iter().any(|r| !r.by.is_empty() && r.kind == *kind && r.outcome == third_person(verb)) {
-                        let who = a.roles.join(" or ");
+                    let handled = |role: &String| src.reactions.iter().any(|r| r.by.contains(role) && r.kind == *kind && r.outcome == third_person(verb));
+                    let missing: Vec<&String> = a.roles.iter().filter(|r| !handled(r)).collect();
+                    if !missing.is_empty() {
+                        let who = missing.iter().map(|r| r.as_str()).collect::<Vec<_>>().join(" or ");
                         self.errors.push(err(&a.at, format!("`admit {}`: no reaction handles it; add `when a {who} {} {}: …`", a.source, third_person(verb), self::a(kind))));
                     }
                 }
@@ -1623,6 +1668,10 @@ impl Checker {
             if w == "caller" && p.kind(from).is_none_or(|k| k.attr("caller").is_none()) {
                 if ck.is_empty() {
                     self.errors.push(err(at, format!("`{}`: a caller of this admit has a role with no kind, so it is only a name; write `role … is a ⟨Kind⟩`", show(np))));
+                    return None;
+                }
+                if ck == "*" {
+                    self.errors.push(err(at, format!("`{}`: the roles of this admit are of different kinds; write one admit for each", show(np))));
                     return None;
                 }
                 steps.push(Step::Caller);

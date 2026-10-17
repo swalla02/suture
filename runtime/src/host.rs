@@ -42,7 +42,8 @@ pub struct Host {
     pub gate: Vec<String>,
     /// For each unit, the units that carry its facts: those that refer to
     /// it, and those it granted a binding (appendix G.2.7).
-    readers: BTreeMap<String, BTreeSet<String>>,
+    /// In the order they started reading it.
+    readers: BTreeMap<String, Vec<String>>,
 }
 
 /// A binding waiting on its pool key, with its choice's hole.
@@ -132,7 +133,7 @@ impl Host {
         let fits = |a: &Admitted| matches!(a, Admitted::Event { verb, kind: k } if by.is_some_and(|c| third_person(verb) == c.verb) && *k == kind);
         self.gate(by, fits, target, &unit)?;
         let Some(by) = by else { return Ok(()) };
-        if !self.prog.reactions.iter().any(|r| r.kind == kind && r.outcome == by.verb && !r.by.is_empty()) {
+        if !self.prog.reactions.iter().any(|r| r.kind == kind && r.outcome == by.verb && r.by.contains(&by.role)) {
             return Err(format!("nothing reacts when a {} {} {}", by.role, by.verb, interp::a_kind(&kind)));
         }
         self.tell(target, &Msg::Event { verb: by.verb.clone(), by: format!("{} {}", by.role, by.name) })?;
@@ -149,6 +150,9 @@ impl Host {
     pub fn input_change(&mut self, by: Option<&Caller>, target: &str, attr: &str, value: Val) -> Result<(), String> {
         let unit = self.unit(target).ok_or_else(|| format!("there is no unit {target}"))?;
         let kind = unit.root.kind.clone();
+        if let Some(why) = suture_lang::check::unchangeable(&self.prog, &kind, attr) {
+            return Err(why);
+        }
         let ty = self.prog.kind(&kind).and_then(|k| k.attr(attr)).map(|a| a.ty).ok_or_else(|| format!("{} has no attribute {attr}", interp::a_kind(&kind)))?;
         let value = match (ty, value) {
             (Ty::Ref | Ty::Set, _) => return Err(format!("{kind}.{attr} refers to shared entities, which cannot be changed yet")),
@@ -167,21 +171,36 @@ impl Host {
         }
         let fact = Fact { kind, created: after.root.created, attrs: after.root.attrs.clone() };
         let refresh = Msg::Refresh { facts: Facts::from([(target.to_string(), fact)]) };
-        let readers: Vec<String> = self.readers.get(target).map(|r| r.iter().cloned().collect()).unwrap_or_default();
+        let readers: Vec<String> = self.readers.get(target).cloned().unwrap_or_default();
         for r in &readers {
             let Some(u) = self.unit(r) else { continue };
             let after = interp::step_at(&self.prog, &u, &refresh, self.clock()).unit;
-            if let Some(rule) = refusal(&after) {
-                self.trace.push(format!("{target:<3} change refused: {r} would break rule {rule}"));
-                return Err(format!("refused by rule {rule} (in {r})"));
+            if let Some(rule) = interp::newly_violated(&self.prog, &u, &after) {
+                self.trace.push(format!("{target:<3} change refused: {r} would break rule {}", rule.name));
+                return Err(format!("refused by rule {}: {} (in {r})", rule.name, rule.paraphrase));
             }
         }
+        // Bindings already waiting get the change first, in arrival order
+        // (appendix F.2.9); then each reader, in the order it started reading.
         self.tell(target, &msg)?;
+        self.wake(target)?;
+        self.pump()?;
         for r in &readers {
             self.tell(r, &refresh)?;
         }
-        self.wake(target)?;
-        self.pump()
+        Ok(())
+    }
+
+    fn read_by(&mut self, read: &str, by: &str) {
+        let readers = self.readers.entry(read.to_string()).or_default();
+        if !readers.iter().any(|r| r == by) {
+            readers.push(by.to_string());
+        }
+    }
+
+    /// The gate's decisions about the unit called `name`.
+    pub fn gate_for(&self, name: &str) -> Vec<&String> {
+        self.gate.iter().filter(|l| l.split(|c: char| !c.is_alphanumeric()).any(|w| w == name)).collect()
     }
 
     fn make(
@@ -220,7 +239,7 @@ impl Host {
         self.machine.inject(Injection::new(net).new_hole(rest, Some(label))).map_err(|e| e.to_string())?;
         self.machine.run(None);
         for l in unit.facts.keys() {
-            self.readers.entry(l.clone()).or_default().insert(label.to_string());
+            self.read_by(l, label);
         }
         let noted = self.note(label);
         let pumped = self.pump();
@@ -622,7 +641,7 @@ impl Host {
         let release = matches!(Msg::from_value(&msg), Ok(Msg::Release { .. }));
         if let Ok(Msg::Granted { facts, .. }) = Msg::from_value(&msg) {
             for l in facts.keys() {
-                self.readers.entry(l.clone()).or_default().insert(label.clone());
+                self.read_by(l, &label);
             }
         }
         let sig = self.machine.program().sig.clone();

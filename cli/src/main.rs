@@ -104,6 +104,9 @@ fn scenarios(dir: &Path, file: &Path, explain: Option<&str>) -> Result<bool, Str
             for line in suture_runtime::explain::explain(&prog, &unit, |k| host.deadline(k).map(|d| d - host.now)) {
                 println!("  {line}");
             }
+            for line in host.gate_for(&unit.label) {
+                println!("  gate: {line}");
+            }
         }
         for f in &report.failures {
             println!("  ✗ {f}");

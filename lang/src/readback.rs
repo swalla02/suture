@@ -300,7 +300,7 @@ pub fn watches(p: &Program) -> Vec<String> {
         }
         let plural = |k: &str| p.kind(k).map_or(k.to_string(), |x| x.plural.clone());
         let mut readers: Vec<String> = carry[1..].iter().map(|k| format!("{} that refer to {}", plural(k), a_kind(kind))).collect();
-        for b in p.bindings.iter().filter(|b| b.target == *kind && !b.key_attr.is_empty()) {
+        for b in p.bindings.iter().filter(|b| b.target == *kind) {
             readers.push(format!("{} bound to {}", plural(&b.subject), a_kind(kind)));
         }
         readers.dedup();

@@ -140,3 +140,16 @@ fn change_mistakes_are_errors() {
     let e = errors(&format!("{CHANGES}admit change Stock by staff\n"));
     assert!(e[0].contains("name the attribute"), "{e:?}");
 }
+
+#[test]
+fn review_fixes_in_the_checker() {
+    // Each role of an admitted event needs a reaction that names it.
+    let e = errors(&format!("{SHOP}admit cancel Order by customer, support\nwhen a customer cancels an Order: the Order is cancelled\n"));
+    assert!(e[0].contains("no reaction handles it; add `when a support cancels an Order: …`"), "{e:?}");
+    // The requester's side of a pool key cannot change either.
+    let e = errors(&format!("{CHANGES}role team\nadmit change Order's quantity by staff\nadmit change Product's name by staff\nkind Zone {{ name: Text }}\nkind Depot {{ zone: Text }}\nkind Site {{ zone: Text }}\nkind Pick {{ site: Site }}\nSite needs Pick\nPick uses a Depot where the Depot's zone is the Site's zone\nprefer Depot: highest 1\nadmit change Site's zone by team\n"));
+    assert!(e.len() == 1 && e[0].contains("`zone` is the key `Pick uses a Depot` looks up its pool by"), "{e:?}");
+    // Roles of different kinds.
+    let e = errors(&format!("{SHOP}role clerk is a Product\nadmit add a new Country by customer, clerk where the caller's name is \"x\"\n"));
+    assert!(e[0].contains("the roles of this admit are of different kinds"), "{e:?}");
+}

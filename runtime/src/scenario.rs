@@ -79,7 +79,7 @@ fn refusal(host: &mut Host, name: &str, refused: Option<&Refused>, r: Result<(),
         Some(Refused::Gate) => ("refused at the gate".to_string(), "is refused at the gate".to_string()),
     };
     match r {
-        Err(e) if e.contains(&want) => {
+        Err(e) if e.match_indices(&want).any(|(i, _)| !e[i + want.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '_')) => {
             host.trace.push(format!("✓ {name} {why}"));
             Ok(())
         }
