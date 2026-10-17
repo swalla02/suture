@@ -84,3 +84,11 @@ fn golden_sentence_errors() {
 fn golden_name_errors() {
     golden("names");
 }
+
+#[test]
+fn odd_input_never_panics() {
+    for s in ["rule", "rule x", "rule x:", "rule x: can't", "rule é: no Ördér can't be", "define", "when: isn't", "rule x: the total", "rule x: no no no unless", "kind K { a: Text }\nrule x: every K's a can't be more than \"ü\""] {
+        let _ = shop_with(&format!("{s}\n"));
+    }
+    assert_eq!(tokens("Ada's order's").unwrap(), [Tok::Word("Ada".into()), Tok::Poss, Tok::Word("order".into()), Tok::Poss]);
+}
