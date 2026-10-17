@@ -1062,3 +1062,32 @@ Slice 6 lets callers in. Until now a scenario created units and answered for ada
 - **The shop** gets §3.6's roles and admits. Scenarios: a customer places an order; a customer cancels someone else's order and is refused at the gate; support cancels an order before shipping, which releases its stock; a cancellation after sending is refused by rule `late`; staff lowering units below what is taken is refused by rule `stock`; staff raising units wakes an order that waited for stock.
 - **Workspace provisioning:** admins add clusters and tenants place workspaces; resizing a cluster below its taken seats is refused, and adding a cluster wakes a waiting workspace.
 - Every scenario of both apps replays to the same state.
+
+## Appendix H. Prototype slice 7: errors and suggestions (2026-10-17)
+
+Slice 7 makes mistakes cheap to fix. Until now an error said where parsing stopped and what it expected. Slice 7 adds §3.5: the phrasing table, the closest pattern, and a suggestion that is shown only when it compiles.
+
+### H.1 What slice 7 adds
+
+| Added in slice 7 | Still waits |
+|---|---|
+| contractions lex as one word (`can't`, `doesn't`), so they reach the phrasing table instead of failing the file | |
+| the phrasing table: fixed alternative phrasings and their canonical phrase | phrasings learned from use (never: D4) |
+| the closest pattern for a `rule` that matches no pattern, and `did you mean` filled with the user's words and the program's declarations | closest patterns for `define`, `desired` and `when` (they get the phrasing table only) |
+| every statement of a file is parsed, so one bad sentence no longer hides the errors after it | |
+| `did you mean` for a misspelt kind, attribute or state (at most two letters off) | |
+
+### H.2 Semantics that slice 7 settles
+
+1. **Fixed and deterministic.** The table, the patterns, the scoring and the tie-breaks are fixed code. No model is used (D4). The same program always gets the same errors.
+2. **The phrasing table** maps a phrase to its canonical form: `can't be more than`, `may not exceed`, `must be at most` and `is no more than` to `is at most`; `must be at least` to `is at least`; `is greater than` to `is more than`; `is smaller than` to `is less than`; `equals` and `is equal to` to `is`; `isn't` and `must not be` to `is not`; `doesn't have` to `has no`; `the sum of` to `the total`; `how many` to `the number of`; and a few more. Words compare ignoring case, and the longest phrase wins. A program that uses a table phrase is an error, `"⟨phrase⟩" is not a Suture phrase; write "⟨canonical⟩"`; programs only use the canonical phrase.
+3. **Patterns.** The rule patterns are the forms of §3.3: `every ⟨Kind⟩ is ⟨state⟩`, `every ⟨Kind⟩'s ⟨attr⟩ is at most ⟨num⟩`, `no ⟨Kind⟩ has a ⟨Kind⟩ unless ⟨cond⟩`, `no ⟨Kind⟩ has a ⟨Kind⟩ that is ⟨state⟩`, `no ⟨Kind⟩ whose ⟨attr⟩ is ⟨value⟩ has a ⟨Kind⟩`, `the total ⟨attr⟩ of each ⟨Kind⟩'s ⟨Kinds⟩ is at most ⟨num⟩`, `the number of each ⟨Kind⟩'s ⟨Kinds⟩ is at most ⟨num⟩`, `the total ⟨attr⟩ taken from each ⟨Kind⟩ is at most ⟨num⟩`, and `for each ⟨Kind⟩ and ⟨period⟩, the total ⟨attr⟩ of their ⟨Kinds⟩ is at most ⟨num⟩`. The comparison in a pattern takes whichever of the four the user wrote.
+4. **The closest pattern** is the one with the fewest differing words, after the phrasing table. Word order is ignored. A user word fills a slot if it fits: a declared kind for `⟨Kind⟩`, a declared plural (in any case) for `⟨Kinds⟩`, a declared attribute for `⟨attr⟩`, a declared state for `⟨state⟩`, a period for `⟨period⟩`; `⟨num⟩` and `⟨cond⟩` take what follows the comparison or `unless`. Every other word counts as differing, on either side, except `a`, `an`, `the`, `each`, `every` and `'s`. Ties go to the pattern listed first.
+5. **Did you mean.** A slot no user word fills is filled from the declarations, where one choice is clear: the `⟨attr⟩` of a total is the first Money attribute of that kind (else the first Count), and of `taken from` the binding's amount. The suggestion is shown only if the program compiles with it in place of the rule. Otherwise only the closest pattern is shown.
+6. **Names.** An unknown kind, attribute or state at most two letters away from exactly one declared name gets `did you mean ⟨name⟩?`.
+
+### H.3 Acceptance
+
+- The §3.5 example gives exactly the error shown there.
+- Golden tests (§7.5): a file of wrong sentences, each with its expected message, checked word for word.
+- No suggestion that is shown fails to compile, and a file with several bad statements reports all of them.
