@@ -504,3 +504,44 @@ fn math_in_a_rule_refuses_a_creation() {
     assert!(err.contains("refused by rule cap"), "{err}");
     assert!(new_unit(&p, "O2", "Order", &[("total".to_string(), Val::Money(9_900))]).is_ok());
 }
+
+const LINES: &str = "kind Order { lines: list of Line, credit: Money = 0 EUR, n: Count = 0,
+                   total: Money = the total of the line's price * the line's quantity over its lines }
+kind Line { order: Order, price: Money, quantity: Count }
+kind Payment { order: Order, amount: Money = order's total }
+Order needs Payment
+effect capture Payment via payments within 30 seconds
+  sends    its amount
+  reports  captured | fails with declined
+when a Payment is captured: its order's credit becomes its order's credit + its amount
+when a Payment is declined: its order's n becomes its order's n - 1
+";
+
+fn with_lines(p: &Program) -> (Unit, Vec<Ask>) {
+    let line = |price: i64, quantity: i64| vec![("price".to_string(), Val::Money(price * 100)), ("quantity".to_string(), Val::Count(quantity))];
+    let items = vec![("lines".to_string(), line(3, 2)), ("lines".to_string(), line(10, 1))];
+    let u = suture_runtime::interp::new_unit_with(p, "O1", "Order", &[], &items).unwrap();
+    run(p, &u, Msg::Create)
+}
+
+#[test]
+fn formulas_and_lists_are_computed_at_creation() {
+    let p = program(LINES);
+    let (u, asks) = with_lines(&p);
+    assert_eq!(u.root.attrs.get("total"), Some(&Val::Money(1_600)));
+    assert_eq!(u.root.parts.iter().filter(|n| n.kind == "Line").count(), 2);
+    assert_eq!(ask(&asks, "payments").sends, vec![("amount".to_string(), Val::Money(1_600))]);
+    assert!(!has_note(&u, "Line done"), "list elements are done from the start: {:?}", u.notes);
+}
+
+#[test]
+fn becomes_sets_a_value_and_never_makes_a_count_negative() {
+    let p = program(LINES);
+    let (u, asks) = with_lines(&p);
+    let (paid, _) = answer(&p, &u, ask(&asks, "payments"), "captured", &[]);
+    assert_eq!(paid.root.attrs.get("credit"), Some(&Val::Money(1_600)));
+    assert!(has_note(&paid, "Order's credit becomes 16 EUR"), "{:?}", paid.notes);
+    let (declined, _) = answer(&p, &u, ask(&asks, "payments"), "declined", &[]);
+    assert_eq!(declined.root.attrs.get("n"), Some(&Val::Count(0)));
+    assert!(has_note(&declined, "n not set: a count cannot be negative"), "{:?}", declined.notes);
+}

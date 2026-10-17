@@ -23,8 +23,8 @@ fn compiles_the_shop_example() {
     assert_eq!(form.owner.as_ref().map(|o| (o.attr.as_str(), o.kind.as_str())), Some(("order", "Order")));
     assert!(p.kind("Declaration").unwrap().attr("contents").is_some(), "answers add attributes");
     let names: Vec<&str> = p.rules.iter().map(|r| r.name.as_str()).collect();
-    assert_eq!(names, ["declared", "licence", "hold", "paid", "refund", "late"]);
-    assert!(p.rules.iter().all(|r| r.tier == "local"));
+    assert_eq!(names, ["declared", "licence", "hold", "paid", "refund", "late", "cap"]);
+    assert!(p.rules.iter().all(|r| r.tier == if r.name == "cap" { "per-group" } else { "local" }));
 }
 
 #[test]
@@ -220,4 +220,41 @@ fn plurals_and_the_attempts_setting() {
     assert_eq!(p.attempts, 3);
     let five = compile(&[("t.st".to_string(), "module t version 1, currency EUR, attempts 5\nkind A { }\n".to_string())]).unwrap();
     assert_eq!(five.attempts, 5);
+}
+
+#[test]
+fn formulas_lists_and_becomes_compile() {
+    let p = compile_dir(std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/workspaces"))).unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!(rule(&p, "seats").formula, "for each Workspace w: count(m in w.members) ≤ w.seats");
+    let price = p.kind("Workspace").unwrap().attr("price").unwrap();
+    assert!(price.formula.is_some() && price.default.is_none());
+    assert!(p.lists.iter().any(|l| l.owner == "Workspace" && l.name == "members" && l.element == "Member"));
+    let q = prog("kind Order { lines: list of Line, credit: Money = 0 EUR,
+                   total: Money = the total of the line's price * the line's quantity over its lines }
+kind Line { order: Order, price: Money, quantity: Count }
+kind Payment { order: Order }
+Order needs Payment
+effect capture Payment via payments within 30 seconds
+  sends    the order's total
+  reports  captured | fails with declined
+when a Payment is captured: its order's credit becomes its order's credit + its order's total
+");
+    let total = q.kind("Order").unwrap().attr("total").unwrap();
+    assert!(total.formula.is_some());
+    assert!(q.reactions[0].actions[0].becomes.is_some());
+}
+
+#[test]
+fn formula_list_and_becomes_mistakes_are_errors() {
+    let base = "kind Order { lines: list of Line, n: Count = 0 }\nkind Line { order: Order, price: Money }\n";
+    let e = errors(&format!("{base}kind Box {{ order: Order, x: Count = order's lines }}\nOrder needs Box\n"));
+    assert!(e.iter().any(|m| m.contains("`its order's lines` is a relation")), "{e:?}");
+    let e = errors("kind Order { total: Money = n + 1, n: Count = 0 }\n");
+    assert!(e.iter().any(|m| m.contains("Order.total is Money, but its formula gives a Count")), "{e:?}");
+    let e = errors(&format!("{base}kind Ping {{ line: Line }}\nLine needs Ping\n"));
+    assert!(e.iter().any(|m| m.contains("Line is an element of a list")), "{e:?}");
+    let e = errors(&format!("{base}kind Payment {{ order: Order }}\nOrder needs Payment\neffect capture Payment via payments within 30 seconds\n  sends    the order's n\n  reports  captured\nwhen a Payment is captured: its order's n becomes its order's n + 1 EUR\n"));
+    assert!(e.iter().any(|m| m.contains("cannot add a Count and a Money")), "{e:?}");
+    let e = errors(&format!("{base}kind Payment {{ order: Order }}\nOrder needs Payment\neffect capture Payment via payments within 30 seconds\n  sends    the order's n\n  reports  captured\nwhen a Payment is captured: its order's n becomes 3 EUR\n"));
+    assert!(e.iter().any(|m| m.contains("Order.n is Count, but it would become a Money")), "{e:?}");
 }

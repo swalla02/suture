@@ -15,6 +15,8 @@ pub enum TypeName {
     Count,
     /// A reference to another kind; in slice 1, only to a part's owner.
     Kind(String),
+    /// `list of Line`: elements given with their owner (appendix E.2.6).
+    List(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,6 +57,8 @@ pub enum Num {
     Total { attr: String, of: NounPhrase, filter: Option<Box<Cond>> },
     /// `the number of its Shipments [that …]`
     Number { of: NounPhrase, filter: Option<Box<Cond>> },
+    /// `the total of the line's price * the line's quantity over its lines`
+    Over { calc: Box<Num>, list: NounPhrase },
 }
 
 /// What follows `is`: a literal, a noun phrase, or a bare word that the
@@ -118,6 +122,8 @@ pub struct AttrDecl {
     pub name: String,
     pub ty: TypeName,
     pub default: Option<Literal>,
+    /// `= order's total`: computed once at creation (appendix E.2.5).
+    pub formula: Option<Num>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -200,6 +206,8 @@ pub struct Action {
     pub target: NounPhrase,
     pub attr: String,
     pub value: bool,
+    /// `… becomes ⟨num⟩` (appendix E.2.7); otherwise the action sets a Bool.
+    pub becomes: Option<Num>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

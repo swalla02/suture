@@ -3,7 +3,7 @@
 
 use crate::ast::*;
 use crate::lex::{statements, Cursor, Error, Stmt, Tok};
-use crate::sentence::{condition, literal, noun_phrase, rule_body, starts_noun_phrase, state_word, subject};
+use crate::sentence::{calc_expr, calc_formula, condition, literal, noun_phrase, rule_body, starts_noun_phrase, state_word, subject};
 
 /// Parses one source file into `out`.
 pub fn parse_file(file: &str, src: &str, out: &mut Source) -> Result<(), Error> {
@@ -86,6 +86,10 @@ fn type_name(c: &mut Cursor) -> Result<TypeName, Error> {
         "Bool" => TypeName::Bool,
         "Money" => TypeName::Money,
         "Count" => TypeName::Count,
+        "list" => {
+            c.expect_word("of")?;
+            TypeName::List(c.kind_name()?)
+        }
         _ if w.starts_with(char::is_uppercase) => TypeName::Kind(w),
         _ => return Err(c.error(format!("unknown type `{w}`: use Text, Bool, Money, Count or a kind"))),
     })
@@ -137,15 +141,19 @@ fn kind(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
             let attr = c.word()?;
             c.expect_sym(':')?;
             let ty = type_name(&mut c)?;
-            let default = if c.eat_sym('=') {
+            let (mut default, mut formula) = (None, None);
+            if c.eat_sym('=') {
+                // A lone literal is a default; anything else is a formula.
+                let saved = c.clone();
                 match literal(&mut c)? {
-                    Some(l) => Some(l),
-                    None => return Err(c.error(format!("expected a value after `=`, found {}", c.found()))),
+                    Some(l) if matches!(c.peek(), Some(Tok::Sym(',' | '}'))) => default = Some(l),
+                    _ => {
+                        c = saved;
+                        formula = Some(calc_formula(&mut c)?);
+                    }
                 }
-            } else {
-                None
-            };
-            attrs.push(AttrDecl { name: attr, ty, default });
+            }
+            attrs.push(AttrDecl { name: attr, ty, default, formula });
             if c.eat_sym('}') {
                 break;
             }
@@ -369,10 +377,17 @@ fn reaction(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
 /// `its Order is cancelled`, `the Order is not cancelled`
 fn action(c: &mut Cursor) -> Result<Action, Error> {
     let target = noun_phrase(c)?;
+    if c.eat_word("becomes") {
+        let Some((attr, rest)) = target.steps.split_last() else {
+            return Err(c.error("`… becomes …` changes an attribute: name it, as in `its order's credit becomes …`"));
+        };
+        let target = NounPhrase { head: target.head.clone(), steps: rest.to_vec() };
+        return Ok(Action { target, attr: attr.clone(), value: true, becomes: Some(calc_expr(c)?) });
+    }
     c.expect_word("is")?;
     let value = !c.eat_word("not");
     let attr = c.word()?;
-    Ok(Action { target, attr, value })
+    Ok(Action { target, attr, value, becomes: None })
 }
 
 #[cfg(test)]

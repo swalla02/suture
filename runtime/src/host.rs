@@ -65,10 +65,15 @@ impl Host {
 
     /// Creates a root entity as a new unit labeled `label`, and settles it.
     pub fn create(&mut self, kind: &str, label: &str, given: &[(String, Val)]) -> Result<(), String> {
+        self.create_with(kind, label, given, &[])
+    }
+
+    /// Creates a root entity with the elements of its lists (appendix E.2.6).
+    pub fn create_with(&mut self, kind: &str, label: &str, given: &[(String, Val)], items: &[(String, Vec<(String, Val)>)]) -> Result<(), String> {
         if self.machine.hole(label).is_some() {
             return Err(format!("{label} already exists"));
         }
-        let unit = interp::new_unit(&self.prog, label, kind, given)?;
+        let unit = interp::new_unit_with(&self.prog, label, kind, given, items)?;
         let sig = self.machine.program().sig.clone();
         let mut b = NetBuilder::new(&sig);
         let (meet, rest) = (b.var(), b.var());

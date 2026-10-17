@@ -16,10 +16,32 @@ pub struct Program {
     pub goals: Vec<Goal>,
     pub reactions: Vec<Reaction>,
     pub slots: Vec<Slot>,
+    pub lists: Vec<List>,
     /// Attempts of a part, and sends of a request (appendix E.2.8).
     pub attempts: u32,
     /// What `suture build` warns about; the program still runs.
     pub warnings: Vec<String>,
+}
+
+/// `lines: list of Line` on an Order (appendix E.2.6).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct List {
+    pub owner: String,
+    pub name: String,
+    pub element: String,
+}
+
+impl List {
+    /// `lines` gives `line`, `boxes` gives `box`: how a scenario and `the line` name one element.
+    pub fn singular(&self) -> String {
+        let n = &self.name;
+        let es = ["ses", "xes", "ches", "shes"].iter().any(|e| n.ends_with(e));
+        if es {
+            n[..n.len() - 2].to_string()
+        } else {
+            n.strip_suffix('s').unwrap_or(n).to_string()
+        }
+    }
 }
 
 /// A slot an owner fills with one of its alternatives (appendix D).
@@ -55,6 +77,8 @@ pub struct Attr {
     pub name: String,
     pub ty: Ty,
     pub default: Option<Lit>,
+    /// Computed once at creation, after defaults (appendix E.2.5).
+    pub formula: Option<Num>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,6 +165,8 @@ pub struct Action {
     pub target: Path,
     pub attr: String,
     pub value: bool,
+    /// `… becomes ⟨num⟩`, evaluated at the reacting node; otherwise a Bool is set.
+    pub becomes: Option<Num>,
 }
 
 /// A walk from a node: down to a part, up to the owner, and last to an attribute.
@@ -217,7 +243,7 @@ impl Program {
     /// Whether `owner` has parts of kind `part`: needed directly, or as an
     /// alternative of a slot it needs.
     pub fn has_part(&self, owner: &str, part: &str) -> bool {
-        self.needs.iter().any(|n| {
+        self.lists.iter().any(|l| l.owner == owner && l.element == part) || self.needs.iter().any(|n| {
             n.owner == owner && (n.part == part || self.slot(&n.part).is_some_and(|s| s.alternatives.iter().any(|a| a == part)))
         })
     }

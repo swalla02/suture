@@ -28,7 +28,18 @@ pub fn run(prog: &Program, sc: &Scenario) -> Report {
     let mut failures = vec![];
     for (i, step) in sc.steps.iter().enumerate() {
         let result = match step {
-            ScenarioStep::Create { kind, name, attrs } => values(prog, attrs).and_then(|v| host.create(kind, name, &v)),
+            ScenarioStep::Create { kind, name, attrs, items, refused } => {
+                let created = create(prog, &mut host, kind, name, attrs, items);
+                match (refused, created) {
+                    (None, r) => r,
+                    (Some(rule), Err(e)) if e.contains(&format!("refused by rule {rule}")) => {
+                        host.trace.push(format!("✓ {name} is refused by rule {rule}"));
+                        Ok(())
+                    }
+                    (Some(rule), Err(e)) => Err(format!("expected {name} to be refused by rule {rule}, but: {e}")),
+                    (Some(rule), Ok(())) => Err(format!("expected {name} to be refused by rule {rule}, but it was created")),
+                }
+            }
             ScenarioStep::Answer { adapter, outcome, data, target } => {
                 values(prog, data).and_then(|v| host.answer(adapter, outcome, &v, target.as_deref()))
             }
@@ -58,6 +69,28 @@ pub fn run(prog: &Program, sc: &Scenario) -> Report {
         }
     }
     Report { title: sc.title.clone(), host, failures }
+}
+
+/// A creation with its list elements, named in the singular (`a line`).
+fn create(
+    prog: &Program,
+    host: &mut Host,
+    kind: &str,
+    name: &str,
+    attrs: &[(String, Literal)],
+    items: &[(String, Vec<(String, Literal)>)],
+) -> Result<(), String> {
+    let given = values(prog, attrs)?;
+    let mut elements = vec![];
+    for (one, pairs) in items {
+        let list = prog
+            .lists
+            .iter()
+            .find(|l| l.owner == kind && l.singular() == *one)
+            .ok_or_else(|| format!("{kind} has no list whose element is called {one}"))?;
+        elements.push((list.name.clone(), values(prog, pairs)?));
+    }
+    host.create_with(kind, name, &given, &elements)
 }
 
 fn values(prog: &Program, pairs: &[(String, Literal)]) -> Result<Vec<(String, Val)>, String> {

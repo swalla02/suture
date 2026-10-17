@@ -56,6 +56,8 @@ scenario "three lost parcels":
   and    payments answers refunded
   expect P1's Refund is refunded
   expect P1 is settled
+  expect the number of P1's Shipments is 3
+  expect P1's Refund's amount is 90 EUR
 
 scenario "a customs form that never comes":
   when   a new Order F2 with country France and total 30 EUR

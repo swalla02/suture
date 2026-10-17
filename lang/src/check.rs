@@ -47,12 +47,14 @@ fn show_num(n: &ast::Num) -> String {
         ast::Num::Bin(x, op, y) => format!("{} {op} {}", show_num(x), show_num(y)),
         ast::Num::Total { attr, of, .. } => format!("the total {attr} of {}", show(of)),
         ast::Num::Number { of, .. } => format!("the number of {}", show(of)),
+        ast::Num::Over { calc, list } => format!("the total of {} over {}", show_num(calc), show(list)),
     }
 }
 
 /// The kind of the parts of `owner` whose plural is `word`, if any.
 fn plural_kind(p: &Program, owner: &str, word: &str) -> Option<String> {
-    p.kinds.iter().find(|k| k.plural == word && p.has_part(owner, &k.name)).map(|k| k.name.clone())
+    let list = p.lists.iter().find(|l| l.owner == owner && l.name == word).map(|l| l.element.clone());
+    list.or_else(|| p.kinds.iter().find(|k| k.plural == word && p.has_part(owner, &k.name)).map(|k| k.name.clone()))
 }
 
 /// Whether a rule adds up or counts a relation: then its cost is per-group.
@@ -93,7 +95,7 @@ fn value_type(t: &TypeName) -> Option<Ty> {
         TypeName::Bool => Some(Ty::Bool),
         TypeName::Money => Some(Ty::Money),
         TypeName::Count => Some(Ty::Count),
-        TypeName::Kind(_) => None,
+        TypeName::Kind(_) | TypeName::List(_) => None,
     }
 }
 
@@ -137,15 +139,19 @@ impl Checker {
             goals: vec![],
             reactions: vec![],
             slots: vec![],
+            lists: vec![],
             attempts: src.module.as_ref().and_then(|m| m.attempts).unwrap_or(3),
             warnings: vec![],
         };
         self.kinds(src, &mut p);
         self.slots(src, &mut p);
+        self.lists(src, &mut p);
         let conds = self.owners(src, &mut p);
         self.prefers(src, &mut p);
         self.effects(src, &mut p);
+        self.list_elements(src, &p);
         self.state_names(src, &p);
+        self.formulas(src, &mut p);
         self.defines(src, &mut p);
         for (i, owner, at, cond) in conds {
             let c = self.cond(&p, at, &owner, cond);
@@ -187,7 +193,7 @@ impl Checker {
                         None => None,
                     },
                 };
-                attrs.push(Attr { name: a.name.clone(), ty, default });
+                attrs.push(Attr { name: a.name.clone(), ty, default, formula: None });
             }
             let plural = k.plural.clone().unwrap_or_else(|| plural_of(&k.name));
             p.kinds.push(Kind { name: k.name.clone(), plural, attrs, owner: None });
@@ -293,6 +299,47 @@ impl Checker {
         true
     }
 
+    /// `lines: list of Line`: the element kind names its owner like a part,
+    /// and has no needs or effects of its own in slice 4 (appendix E.2.6).
+    fn lists(&mut self, src: &Source, p: &mut Program) {
+        for k in &src.kinds {
+            for a in &k.attrs {
+                let TypeName::List(element) = &a.ty else { continue };
+                if self.link(src, p, &k.at, &k.name, element) {
+                    p.lists.push(crate::ir::List { owner: k.name.clone(), name: a.name.clone(), element: element.clone() });
+                }
+            }
+        }
+    }
+
+    fn list_elements(&mut self, src: &Source, p: &Program) {
+        for l in &p.lists {
+            let at = src.kinds.iter().find(|k| k.name == l.element).map_or(Loc { file: String::new(), line: 0 }, |k| k.at.clone());
+            if p.needs.iter().any(|n| n.owner == l.element) || src.effects.iter().any(|e| e.kind == l.element) {
+                self.errors.push(err(&at, format!("{} is an element of a list; in slice 4 it has no needs or effects of its own", l.element)));
+            }
+        }
+    }
+
+    /// Formula attributes, once owners, lists and effects are known (appendix E.2.5).
+    fn formulas(&mut self, src: &Source, p: &mut Program) {
+        for k in &src.kinds {
+            for a in &k.attrs {
+                let Some(f) = &a.formula else { continue };
+                let Some(want) = p.kind(&k.name).and_then(|x| x.attr(&a.name)).map(|x| x.ty) else { continue };
+                let Some((num, ty)) = self.num(p, &k.at, &k.name, f) else { continue };
+                if ty != want {
+                    self.errors.push(err(&k.at, format!("{}.{} is {want:?}, but its formula gives a {ty:?}", k.name, a.name)));
+                    continue;
+                }
+                let kind = p.kinds.iter_mut().find(|x| x.name == k.name).expect("declared kinds are compiled");
+                if let Some(x) = kind.attrs.iter_mut().find(|x| x.name == a.name) {
+                    x.formula = Some(num);
+                }
+            }
+        }
+    }
+
     /// Slots, before needs give them owners (appendix D.2).
     fn slots(&mut self, src: &Source, p: &mut Program) {
         for s in &src.slots {
@@ -367,7 +414,7 @@ impl Checker {
                         continue;
                     }
                     Some(_) => {}
-                    None => kind.attrs.push(Attr { name: name.clone(), ty, default: None }),
+                    None => kind.attrs.push(Attr { name: name.clone(), ty, default: None, formula: None }),
                 }
                 data.push((name.clone(), ty));
             }
@@ -520,10 +567,22 @@ impl Checker {
             let mut actions = vec![];
             for a in &r.actions {
                 match self.np(p, &r.at, &r.kind, &a.target) {
+                    Some((target, End::Node(k))) if a.becomes.is_some() => {
+                        let Some(want) = p.kind(&k).and_then(|x| x.attr(&a.attr)).map(|x| x.ty) else {
+                            self.errors.push(err(&r.at, format!("{} has no attribute `{}` to change", self::a(&k), a.attr)));
+                            continue;
+                        };
+                        let Some((num, ty)) = self.num(p, &r.at, &r.kind, a.becomes.as_ref().expect("checked above")) else { continue };
+                        if ty != want {
+                            self.errors.push(err(&r.at, format!("{k}.{} is {want:?}, but it would become a {ty:?}", a.attr)));
+                            continue;
+                        }
+                        actions.push(Action { target, attr: a.attr.clone(), value: true, becomes: Some(num) });
+                    }
                     Some((target, End::Node(k))) => {
                         let is_bool = p.kind(&k).and_then(|x| x.attr(&a.attr)).is_some_and(|x| x.ty == Ty::Bool);
                         if is_bool {
-                            actions.push(Action { target, attr: a.attr.clone(), value: a.value });
+                            actions.push(Action { target, attr: a.attr.clone(), value: a.value, becomes: None });
                         } else {
                             self.errors.push(err(&r.at, format!("a {k} has no Bool attribute `{}` to set", a.attr)));
                         }
@@ -606,6 +665,65 @@ impl Checker {
                     None => None,
                 };
                 Some((Num::Count { of: path, kind, filter }, Ty::Count))
+            }
+            ast::Num::Over { calc, list } => {
+                if list.steps.len() != 1 || !matches!(list.head, Head::It) {
+                    self.errors.push(err(at, format!("`{}`: a total over a list reads the entity's own list, as in `over its lines`", show_num(n))));
+                    return None;
+                }
+                let (path, element) = self.rel(p, at, from, list)?;
+                let Some(l) = p.lists.iter().find(|l| l.owner == from && l.name == list.steps[0]) else {
+                    self.errors.push(err(at, format!("`{}` is not a list of {}", show(list), a(from))));
+                    return None;
+                };
+                let one = l.singular();
+                let (calc, ty) = self.over(p, at, from, &element, &one, calc)?;
+                if !matches!(ty, Ty::Money | Ty::Count) {
+                    self.errors.push(err(at, format!("`{}` is {ty:?}; only amounts and counts add up", show_num(n))));
+                    return None;
+                }
+                Some((Num::Sum { of: path, kind: element, calc: Box::new(calc), filter: None, ty }, ty))
+            }
+        }
+    }
+
+    /// The calculation inside `the total of … over its lines`, evaluated at
+    /// each element: `the line's price` reads the element, anything else
+    /// reads the owner through the element's owner step.
+    fn over(&mut self, p: &Program, at: &Loc, owner: &str, element: &str, one: &str, n: &ast::Num) -> Option<(Num, Ty)> {
+        match n {
+            ast::Num::Np(np) if matches!(np.head, Head::It) && np.steps.first().is_some_and(|w| w == one) => {
+                let inner = NounPhrase { head: Head::It, steps: np.steps[1..].to_vec() };
+                self.num(p, at, element, &ast::Num::Np(inner))
+            }
+            ast::Num::Np(_) => {
+                let (num, ty) = self.num(p, at, owner, n)?;
+                let Num::Path(path) = num else { unreachable!("a noun phrase resolves to a path") };
+                let mut steps = vec![Step::Owner];
+                steps.extend(path.steps);
+                Some((Num::Path(Path { steps }), ty))
+            }
+            ast::Num::Lit(_) => self.num(p, at, owner, n),
+            ast::Num::Bin(x, op, y) => {
+                let (l, lt) = self.over(p, at, owner, element, one, x)?;
+                let (r, rt) = self.over(p, at, owner, element, one, y)?;
+                let lit = |t: Ty| ast::Num::Lit(match t {
+                    Ty::Money => Literal::Money { cents: 0, currency: p.currency.clone() },
+                    _ => Literal::Count(0),
+                });
+                // Type the operation as the checker does for any calculation.
+                let (_, ty) = self.num(p, at, owner, &ast::Num::Bin(Box::new(lit(lt)), *op, Box::new(lit(rt))))?;
+                let arith = match op {
+                    '+' => Arith::Add,
+                    '-' => Arith::Sub,
+                    '*' => Arith::Mul,
+                    _ => Arith::Div,
+                };
+                Some((Num::Bin(Box::new(l), arith, Box::new(r)), ty))
+            }
+            _ => {
+                self.errors.push(err(at, format!("`{}`: a total over a list cannot hold another total", show_num(n))));
+                None
             }
         }
     }

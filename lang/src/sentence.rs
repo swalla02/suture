@@ -107,7 +107,17 @@ fn term(c: &mut Cursor) -> Result<Term, Error> {
 
 /// A calculation: sums of products, `×` and `/` binding tighter (appendix E.2.3).
 pub fn calc_expr(c: &mut Cursor) -> Result<Num, Error> {
-    let mut left = product(c)?;
+    sum_of(c, false)
+}
+
+/// A formula after `=` in a kind (appendix E.2.5): a calculation in which a
+/// bare attribute stands for the entity's own (`seats * 12 EUR`, `order's total`).
+pub fn calc_formula(c: &mut Cursor) -> Result<Num, Error> {
+    sum_of(c, true)
+}
+
+fn sum_of(c: &mut Cursor, bare: bool) -> Result<Num, Error> {
+    let mut left = product(c, bare)?;
     loop {
         let op = if c.eat_sym('+') {
             '+'
@@ -116,12 +126,12 @@ pub fn calc_expr(c: &mut Cursor) -> Result<Num, Error> {
         } else {
             return Ok(left);
         };
-        left = Num::Bin(Box::new(left), op, Box::new(product(c)?));
+        left = Num::Bin(Box::new(left), op, Box::new(product(c, bare)?));
     }
 }
 
-fn product(c: &mut Cursor) -> Result<Num, Error> {
-    let mut left = atom(c)?;
+fn product(c: &mut Cursor, bare: bool) -> Result<Num, Error> {
+    let mut left = atom(c, bare)?;
     loop {
         let op = if c.eat_sym('*') || c.eat_sym('×') {
             '*'
@@ -130,7 +140,7 @@ fn product(c: &mut Cursor) -> Result<Num, Error> {
         } else {
             return Ok(left);
         };
-        left = Num::Bin(Box::new(left), op, Box::new(atom(c)?));
+        left = Num::Bin(Box::new(left), op, Box::new(atom(c, bare)?));
     }
 }
 
@@ -139,11 +149,19 @@ fn word_at(c: &Cursor, k: usize, w: &str) -> bool {
 }
 
 /// `( … )`, a literal, `the number of …`, `the total ⟨attr⟩ of …`, or a noun phrase.
-fn atom(c: &mut Cursor) -> Result<Num, Error> {
+fn atom(c: &mut Cursor, bare: bool) -> Result<Num, Error> {
     if c.eat_sym('(') {
-        let n = calc_expr(c)?;
+        let n = sum_of(c, bare)?;
         c.expect_sym(')')?;
         return Ok(n);
+    }
+    if word_at(c, 0, "the") && word_at(c, 1, "total") && word_at(c, 2, "of") {
+        c.expect_word("the")?;
+        c.expect_word("total")?;
+        c.expect_word("of")?;
+        let calc = Box::new(sum_of(c, bare)?);
+        c.expect_word("over")?;
+        return Ok(Num::Over { calc, list: noun_phrase(c)? });
     }
     if word_at(c, 0, "the") && word_at(c, 1, "number") && word_at(c, 2, "of") {
         c.expect_word("the")?;
@@ -162,6 +180,14 @@ fn atom(c: &mut Cursor) -> Result<Num, Error> {
     }
     if let Some(l) = literal(c)? {
         return Ok(Num::Lit(l));
+    }
+    let bare_word = matches!(c.peek(), Some(Tok::Word(w)) if w.starts_with(char::is_lowercase) && !starts_noun_phrase(c));
+    if bare && bare_word {
+        let mut np = NounPhrase { head: Head::It, steps: vec![c.word()?] };
+        while c.eat_poss() {
+            np.steps.push(c.word()?);
+        }
+        return Ok(Num::Np(np));
     }
     Ok(Num::Np(noun_phrase(c)?))
 }
@@ -337,6 +363,7 @@ fn each_in_cond(c: &Cond) -> Option<String> {
         match n {
             Num::Np(x) | Num::Total { of: x, .. } | Num::Number { of: x, .. } => np(x),
             Num::Bin(a, _, b) => num(a).or_else(|| num(b)),
+            Num::Over { list, .. } => np(list),
             Num::Lit(_) => None,
         }
     }

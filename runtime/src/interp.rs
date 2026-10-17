@@ -19,23 +19,73 @@ pub struct Outcome {
 
 /// A new unit for a root entity: its defaults, then the given attributes.
 pub fn new_unit(prog: &Program, label: &str, kind: &str, given: &[(String, Val)]) -> Result<Unit, String> {
+    new_unit_with(prog, label, kind, given, &[])
+}
+
+/// A new unit with the elements of its lists (appendix E.2.6), each given as
+/// the list's name and the element's attributes. Formulas are computed
+/// after defaults and given values: the elements' first, then the root's.
+pub fn new_unit_with(
+    prog: &Program,
+    label: &str,
+    kind: &str,
+    given: &[(String, Val)],
+    items: &[(String, Vec<(String, Val)>)],
+) -> Result<Unit, String> {
     let k = prog.kind(kind).ok_or_else(|| format!("there is no kind {kind}"))?;
     if let Some(o) = &k.owner {
         return Err(format!("{kind} is a part of {}; its owner's needs create it", o.kind));
     }
     let mut root = blank(prog, kind, 1);
-    for (name, v) in given {
-        let a = k.attr(name).ok_or_else(|| format!("{kind} has no attribute {name}"))?;
-        if v.ty() != a.ty {
-            return Err(format!("{kind}.{name} is {:?}, not {:?}", a.ty, v.ty()));
-        }
-        root.attrs.insert(name.clone(), v.clone());
+    give(prog, kind, &mut root, given)?;
+    for (list, attrs) in items {
+        let l = prog.lists.iter().find(|l| l.owner == kind && l.name == *list).ok_or_else(|| format!("{kind} has no list {list}"))?;
+        let mut element = blank(prog, &l.element, 1);
+        give(prog, &l.element, &mut element, attrs)?;
+        element.status = Status::Done;
+        root.parts.push(element);
     }
+    for i in 0..root.parts.len() {
+        formulas(prog, &mut root, &[i]);
+    }
+    formulas(prog, &mut root, &[]);
     let unit = Unit { label: label.to_string(), root, notes: vec![], met: vec![], matched: vec![], alerts: vec![], timers: vec![] };
     if let Some(r) = violated(prog, &step(prog, &unit, &Msg::Create).unit.root) {
         return Err(format!("refused by rule {}: {}", r.name, r.paraphrase));
     }
     Ok(unit)
+}
+
+/// Sets given attributes, which must exist, have the right type and not be formulas.
+fn give(prog: &Program, kind: &str, n: &mut Node, given: &[(String, Val)]) -> Result<(), String> {
+    let k = prog.kind(kind).ok_or_else(|| format!("there is no kind {kind}"))?;
+    for (name, v) in given {
+        let a = k.attr(name).ok_or_else(|| format!("{kind} has no attribute {name}"))?;
+        if a.formula.is_some() {
+            return Err(format!("{kind}.{name} is computed by its formula; it is not given"));
+        }
+        if v.ty() != a.ty {
+            return Err(format!("{kind}.{name} is {:?}, not {:?}", a.ty, v.ty()));
+        }
+        n.attrs.insert(name.clone(), v.clone());
+    }
+    Ok(())
+}
+
+/// Computes the formula attributes of the node at `at`, once, in the order
+/// declared. A formula whose value is unknown leaves its attribute unknown.
+fn formulas(prog: &Program, root: &mut Node, at: &[usize]) {
+    let kind = node_at(root, at).kind.clone();
+    let Some(k) = prog.kind(&kind) else { return };
+    for a in &k.attrs {
+        let Some(f) = &a.formula else { continue };
+        if node_at(root, at).attrs.contains_key(&a.name) {
+            continue;
+        }
+        if let Some(v) = num(prog, root, at, f) {
+            node_at_mut(root, at).attrs.insert(a.name.clone(), v);
+        }
+    }
 }
 
 fn blank(prog: &Program, kind: &str, attempt: u32) -> Node {
@@ -259,9 +309,26 @@ fn react(prog: &Program, root: &mut Node, at: &[usize], kind: &str, outcome: &st
     for r in prog.reactions.iter().filter(|r| r.kind == kind && r.outcome == outcome) {
         for a in &r.actions {
             let Some(target) = locate(root, at, &a.target.steps) else { continue };
+            let Some(calc) = &a.becomes else {
+                let n = node_at_mut(root, &target);
+                n.attrs.insert(a.attr.clone(), Val::Bool(a.value));
+                notes.push(format!("{} is {}{}", n.kind, if a.value { "" } else { "not " }, a.attr));
+                continue;
+            };
+            let value = match num(prog, root, at, calc) {
+                None => {
+                    notes.push(format!("{} not set: its new value is not known yet", a.attr));
+                    continue;
+                }
+                Some(Val::Count(c)) if c < 0 => {
+                    notes.push(format!("{} not set: a count cannot be negative", a.attr));
+                    continue;
+                }
+                Some(v) => v,
+            };
             let n = node_at_mut(root, &target);
-            n.attrs.insert(a.attr.clone(), Val::Bool(a.value));
-            notes.push(format!("{} is {}{}", n.kind, if a.value { "" } else { "not " }, a.attr));
+            notes.push(format!("{}'s {} becomes {}", n.kind, a.attr, value.show(&prog.currency)));
+            n.attrs.insert(a.attr.clone(), value);
         }
     }
 }
@@ -340,8 +407,13 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
                 _ => None,
             };
             if let Some((part, note)) = add {
+                // The part's formulas are computed in place before the rules
+                // are checked, so a rule sees the values it will have.
                 let mut t = u.root.clone();
-                node_at_mut(&mut t, at).parts.push(part.clone());
+                node_at_mut(&mut t, at).parts.push(part);
+                let pos = child(at, node_at(&t, at).parts.len() - 1);
+                formulas(prog, &mut t, &pos);
+                let part = node_at(&t, &pos).clone();
                 change = match newly_broken(prog, &u.root, &t) {
                     Some(r) if n.held.get(&want) == Some(&r.name) => None,
                     Some(r) => Some(Change::Hold(want.clone(), r.name.clone())),

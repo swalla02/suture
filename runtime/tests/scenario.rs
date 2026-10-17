@@ -74,3 +74,16 @@ fn expectations_take_any_condition() {
     assert_eq!(r.failures.len(), 1, "{:?}\n{}", r.failures, r.host.trace.join("\n"));
     assert!(r.failures[0].contains("expected P1's total is more than 90 EUR"), "{:?}", r.failures);
 }
+
+#[test]
+fn the_workspace_scenarios_pass() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/workspaces");
+    let p = suture_lang::compile_dir(std::path::Path::new(dir)).unwrap_or_else(|e| panic!("{e:?}"));
+    let src = std::fs::read_to_string(format!("{dir}/workspaces.scenario")).unwrap();
+    let all = parse_scenarios("workspaces.scenario", &src).unwrap();
+    assert_eq!(all.len(), 3);
+    for sc in all {
+        let r = run(&p, &sc);
+        assert!(r.passed(), "{}: {:?}\n{}", r.title, r.failures, r.host.trace.join("\n"));
+    }
+}

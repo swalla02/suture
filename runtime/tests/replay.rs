@@ -39,3 +39,18 @@ fn a_journal_does_not_replay_under_a_different_program() {
     let err = Machine::recover(kernel_program, report.host.machine.into_journal()).err().expect("must refuse");
     assert!(matches!(err, suture::RecoveryError::Version { .. }), "{err}");
 }
+
+#[test]
+fn every_workspace_scenario_replays_to_the_same_state() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/workspaces");
+    let p = suture_lang::compile_dir(std::path::Path::new(dir)).unwrap_or_else(|e| panic!("{e:?}"));
+    let src = std::fs::read_to_string(format!("{dir}/workspaces.scenario")).unwrap();
+    for sc in parse_scenarios("workspaces.scenario", &src).unwrap() {
+        let report = run(&p, &sc);
+        assert!(report.passed(), "{}: {:?}", report.title, report.failures);
+        let digest = report.host.machine.digest();
+        let (kernel_program, _) = kernel::program(Arc::new(p.clone()));
+        let replayed = Machine::recover(kernel_program, report.host.machine.into_journal()).unwrap_or_else(|e| panic!("{}: {e}", sc.title));
+        assert_eq!(replayed.digest(), digest, "{}", sc.title);
+    }
+}

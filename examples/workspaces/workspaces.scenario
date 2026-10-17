@@ -1,0 +1,28 @@
+-- Three workspace requests against simulated identity, git, billing and storage services.
+scenario "a workspace that gets ready":
+  when   a new Workspace W1 with team core and seats 3
+         and a member with email "ana@core" and admin yes
+         and a member with email "bo@core"
+  and    identity answers opened
+  and    git answers created
+  and    billing answers paid
+  and    storage answers made
+  expect W1 is ready
+  expect the number of W1's members is 2
+  expect W1's price is 36 EUR
+  expect W1's Charge's amount is 36 EUR
+
+scenario "too many members for the seats":
+  when   a new Workspace W2 with team ops and seats 1
+         and a member with email "cy@ops" and admin yes
+         and a member with email "di@ops"
+         is refused by rule seats
+
+scenario "an identity service that never answers":
+  when   a new Workspace W3 with team web and seats 2
+         and a member with email "ed@web" and admin yes
+  and    3 minutes pass
+  expect W3's Account is timed out
+  expect W3 has no Repo
+  when   1 hour passes
+  expect an alert for W3

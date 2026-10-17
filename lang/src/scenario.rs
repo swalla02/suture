@@ -15,8 +15,10 @@ pub struct Scenario {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ScenarioStep {
-    /// `when a new Order O1 with country France and total 120 EUR`
-    Create { kind: String, name: String, attrs: Vec<(String, Literal)> },
+    /// `when a new Order O1 with country France and total 120 EUR`, then
+    /// `and a line with …` for each list element, and optionally
+    /// `is refused by rule …` when the creation must be refused.
+    Create { kind: String, name: String, attrs: Vec<(String, Literal)>, items: Vec<(String, Vec<(String, Literal)>)>, refused: Option<String> },
     /// `and forms answers filled with licence "L-77" [for O1]`
     Answer { adapter: String, outcome: String, data: Vec<(String, Literal)>, target: Option<String> },
     /// `expect O1 is [not] settled`
@@ -44,8 +46,23 @@ pub fn parse_scenarios(file: &str, src: &str) -> Result<Vec<Scenario>, Error> {
         c.next();
         c.expect_sym(':')?;
         c.expect_end()?;
-        let mut steps = vec![];
+        // A line that adds a list element (`and a member with …`) or says the
+        // creation is refused continues the step above it.
+        let mut lines: Vec<Vec<Tok>> = vec![];
         for line in &st.lines[1..] {
+            let word = |i: usize| match line.get(i) {
+                Some(Tok::Word(w)) => w.as_str(),
+                _ => "",
+            };
+            let continues = (word(0) == "and" && (word(1) == "a" || word(1) == "an") && word(2) != "new")
+                || (word(0) == "is" && word(1) == "refused");
+            match lines.last_mut() {
+                Some(prev) if continues => prev.extend(line.iter().cloned()),
+                _ => lines.push(line.clone()),
+            }
+        }
+        let mut steps = vec![];
+        for line in &lines {
             let mut c = Cursor::new(line, &st.file, st.line);
             steps.push(step(&mut c)?);
             c.expect_end()?;
@@ -93,7 +110,25 @@ fn step(c: &mut Cursor) -> Result<ScenarioStep, Error> {
         let kind = c.kind_name()?;
         let name = c.word()?;
         let attrs = if c.eat_word("with") { pairs(c)? } else { vec![] };
-        return Ok(ScenarioStep::Create { kind, name, attrs });
+        let mut items = vec![];
+        while c.is_word("and") {
+            c.expect_word("and")?;
+            if !c.eat_word("a") {
+                c.expect_word("an")?;
+            }
+            let element = c.word()?;
+            c.expect_word("with")?;
+            items.push((element, pairs(c)?));
+        }
+        let refused = if c.eat_word("is") {
+            c.expect_word("refused")?;
+            c.expect_word("by")?;
+            c.expect_word("rule")?;
+            Some(c.word()?)
+        } else {
+            None
+        };
+        return Ok(ScenarioStep::Create { kind, name, attrs, items, refused });
     }
     let adapter = c.word()?;
     c.expect_word("answers")?;
@@ -159,7 +194,8 @@ fn pairs(c: &mut Cursor) -> Result<Vec<(String, Literal)>, Error> {
             None => Literal::Text(c.word()?),
         };
         out.push((name, value));
-        if !(c.eat_sym(',') || c.eat_word("and")) {
+        let next_element = c.is_word("and") && matches!(c.peek_at(1), Some(Tok::Word(w)) if w == "a" || w == "an");
+        if next_element || !(c.eat_sym(',') || c.eat_word("and")) {
             return Ok(out);
         }
     }
@@ -182,7 +218,13 @@ mod tests {
         let country = ("country".to_string(), Literal::Text("France".into()));
         assert_eq!(
             s[0].steps[0],
-            ScenarioStep::Create { kind: "Order".into(), name: "O1".into(), attrs: vec![country, ("total".into(), eur(12000))] }
+            ScenarioStep::Create {
+                kind: "Order".into(),
+                name: "O1".into(),
+                attrs: vec![country, ("total".into(), eur(12000))],
+                items: vec![],
+                refused: None
+            }
         );
         assert_eq!(
             s[0].steps[1],
