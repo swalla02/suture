@@ -980,3 +980,50 @@ Slices 1–3 were chosen by what the shop needed next. The user asked why the wo
 - **The shop:** a `cap` rule bounds refunds by the order's total; the number of an order's Shipments after three lost parcels is 3; formula attributes carry the order's total into a Refund.
 - **Workspace provisioning** (`examples/workspaces/`): a workspace is requested with a list of members; it needs an account, a repository and a charge whose amount is a formula; a bound limits members to the plan's seats; a slot chooses storage; scenarios cover a workspace that is ready, one with too many members, and one whose account service never answers.
 - Every scenario of both apps replays to the same state.
+
+## Appendix F. Prototype slice 5: shared entities (2026-10-17)
+
+Slice 5 makes units meet. Until now every unit was a root and its parts, and nothing read across units. Slice 5 adds entities that many units share (a Stock, a Carrier, a Customer), references to them, choices among them (`uses`, pools, `prefer lowest …`), amounts taken from them, rules about totals that span units (per-group and global tiers), sets, and time in sentences.
+
+### F.1 What slice 5 adds
+
+| Added in slice 5 | Still waits |
+|---|---|
+| references: an attribute whose type is a root kind (`customer: Customer`), and `set of K` | changing a shared entity's attributes (`admit change …`, slice 6) and the watches that changeable facts need |
+| reading through references: `its customer's country`, `the Customer` for the subject's unique attribute of that kind | parts of a shared entity read from another unit |
+| `⟨np⟩ contains ⟨np⟩`, `does not contain`, and equality of references | sets of values (`set of Text`) |
+| `S uses a C [per ⟨element⟩] where ⟨cond⟩[, taking ⟨num⟩]`, and `its C` for the bound entity | `uses` with no equality or membership (a compile error, §4.4) |
+| `the total ⟨attr⟩ taken from ⟨np⟩` | the free list and waking only as many waiters as the freed amount serves (§5.2) |
+| `prefer C [for a ⟨element⟩]: lowest ⟨num⟩, highest ⟨num⟩, those ⟨cond⟩` (also `those whose …`), and the module setting `candidates` | `decide … with model` |
+| relations across units: `their Refunds` from a Customer, when each Refund has one attribute of kind Customer | a filter on a relation across units (`their Refunds that are refunded`) |
+| `for each ⟨Kind⟩ and ⟨period⟩, ⟨bound⟩`, and `all ⟨Kinds⟩` with `, checked globally` | |
+| `Time`, `Duration`, the built-in `created`, durations in calculations | `now` in sentences (a rule must not change truth while nothing happens) |
+| a slot moves on at once when a rule refuses its alternative on facts that never change | |
+| scenarios: `given a ⟨Kind⟩ ⟨Name⟩ with …`, a set written `{DE, FR}` (or one name), references by name | callers and roles in `when` (slice 6) |
+
+### F.2 Semantics that slice 5 settles
+
+1. **Shared entities.** A root kind that no unit creates through `needs` can be shared: a scenario writes `given a Stock S1 with …`. A shared entity is a unit like any other (B.3.1), so its own rules are checked by every step that changes it.
+2. **References.** An attribute whose type is a root kind holds a reference to that unit; `set of K` holds references to several. A reference names an existing unit of that kind, or the creation is refused. An attribute whose type is the owner's kind is still the owner (§3.2), and a reference to a part kind is a compile error.
+3. **Carried facts.** A unit reads another unit only through facts carried into it (§4.3). When a unit is created, the host copies into it every unit it references, with that unit's own carried facts, so `its customer's country's restricted` is read inside the unit. A binding's chosen entity is carried in the same way when it is granted. In slice 5 no caller can change a shared entity's attributes, so every carried fact is fixed. Through a reference, only attributes can be read; a Bool attribute is the only state.
+4. **`the K`.** In a sentence, `the K` is the subject if it has kind K, else its owner of that kind, else the subject's (or an owner's) unique attribute of kind K. In a `uses` condition and its `prefer`, `the C` is the candidate.
+5. **Bindings.** `Shipment uses a Carrier where …` gives each Shipment one binding; `per line` gives it one for each element of the list called `lines` of the Shipment or of an owner of it (`the line` is that element). A binding is asked for when its entity is created, and the entity is ready (§3.2) only when all its bindings are granted.
+6. **Pools.** The `uses` condition must contain, as one of its `and` parts, an equality `the C's a is ⟨x⟩` or a membership `the C's a contain(s) ⟨x⟩`, where `⟨x⟩` does not read the candidate: that part is the pool key. The host indexes the units of kind C by the key attribute, in creation order. The other parts of the condition filter the candidates of one key.
+7. **The choice.** A binding is a decision site (§5.4). The host gathers up to `candidates` (default 8) entities of the key that pass the filter and have not refused this binding, and the choice point ranks them by the `prefer` criteria in order: `lowest x` and `highest x` by value (an unknown value last), `those …` meeting the condition first, then creation order. The pick is journaled. Without `prefer`, creation order is used and the compiler warns.
+8. **Taking.** The pick is asked to take the binding's amount (`taking the line's quantity`, named after its last attribute: `quantity`). The picked unit adds the amount to its running total of that name and checks its own rules; if a rule would break, it refuses and the next candidate is asked. `the total quantity taken from each Stock` reads that running total, and a rule about it is per-group: one running total per Stock. A binding with no `taking` is granted by the pick unless a rule of the pick refuses it.
+9. **Waiting.** When no candidate is left, the binding waits on its pool key, and its entity waits with it (an alert names it). A release to a unit of that key, or a new unit with that key, wakes the waiting bindings in arrival order; each one gathers again from scratch.
+10. **Releases.** A part that is withdrawn, or moved on from by its slot, before any of its effects was requested gives back every binding it holds: the amount is subtracted from the pick's running total. After a request, bindings and amounts stay (D9), so a lost parcel's units stay taken and a replacement takes its own.
+11. **Relations across units.** From a kind K, `their Refunds` (or `its Refunds`) means every Refund whose unique attribute of kind K points to the subject. Each such entity contributes to the subject's running total when it is created, exactly as an implicit `uses a K where the K is its k, taking ⟨its amount, or 1 for a count⟩`, so a rule over the relation is per-group and is enforced by refusing the contribution: the contributing entity waits, as in item 9. In slice 5 such a relation has no filter.
+12. **Periods.** `for each Customer and month, ⟨bound⟩` keeps one running total per Customer and calendar month of each contributing entity's `created`; the periods are `day`, `week` (from Monday), `month` and `year`, in UTC. A scenario's clock starts at 2026-01-01 00:00 UTC.
+13. **Global rules.** `all Refunds` is every Refund in the system. A rule over it has no group key, so it is a compile error unless it ends with `, checked globally`; it then runs as one running total in a single unit, and `suture build` reports it as a bottleneck.
+14. **Time.** Every entity has `created: Time`, the clock when it was created. `Time − Time` is a Duration, `Time ± Duration` is a Time, durations add, subtract, multiply and divide by counts, and all of them compare. Duration literals are written as in effects: `2 days`.
+15. **Fixed refusals.** A rule whose filter and `unless` read only fixed facts (given or formula attributes that no reaction changes, and carried facts) refuses on facts that never change. When such a rule holds back a slot's alternative, the slot moves on at once (§3.2).
+16. **Cost.** Every gather, take, release and wake reads or writes a bounded number of units, set by `candidates` and the pool key. Nothing scans all units of a kind, except a rule `checked globally`, which is one running total.
+
+### F.3 Acceptance
+
+- Each row of F.1 has small programs that use it, and programs that misuse it get errors with file and line.
+- **The shop** moves to §3.6's kinds: countries, customers, products, warehouses, carriers, stock and lines. Scenarios: an order is shipped from stock in its country with the cheapest carrier; a lost parcel is re-shipped from another warehouse with the lost units still taken; no stock anywhere refunds after 2 days; a restricted country refunds at once; a cancelled order releases its stock; a monthly refund cap makes a refund wait.
+- **Workspace provisioning:** workspaces are placed on a cluster in their region with enough free seats, and a full region makes a workspace wait.
+- `suture build` lists the open choices with their pool keys, and every rule's tier.
+- Every scenario of both apps replays to the same state.
