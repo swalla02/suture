@@ -1,0 +1,49 @@
+scenario "a fan books two seats":
+  given  a Fan Ada with name Ada
+  and    a Show Hamlet with name Hamlet and price 40 EUR
+  and    a Session Fri with show Hamlet, day Friday and seats 100
+  when   fan Ada books a new Booking B1 with fan Ada, show Hamlet and quantity 2
+  and    payments answers charged
+  and    mailer answers issued
+  expect B1 is paid
+  expect B1 is issued
+  expect B1's total is 80 EUR
+  expect the total quantity taken from Fri is 2
+
+scenario "a declined card cancels the booking and frees the seats":
+  given  a Fan Ada with name Ada
+  and    a Show Hamlet with name Hamlet and price 40 EUR
+  and    a Session Fri with show Hamlet, day Friday and seats 100
+  when   fan Ada books a new Booking B1 with fan Ada, show Hamlet and quantity 2
+  and    payments answers declined
+  expect B1 is cancelled
+  expect B1 has no Ticket
+  expect the total quantity taken from Fri is 0
+
+scenario "a sold-out show waits for seats":
+  given  a Fan Ada with name Ada
+  and    a Show Hamlet with name Hamlet and price 40 EUR
+  and    a Session Fri with show Hamlet, day Friday and seats 1
+  when   fan Ada books a new Booking B1 with fan Ada, show Hamlet and quantity 2
+  and    payments answers charged
+  expect B1 is not issued
+  when   box Bo changes Fri's seats to 10
+  and    mailer answers issued
+  expect B1 is issued
+
+scenario "a fan cannot book for someone else":
+  given  a Fan Ada with name Ada
+  and    a Fan Eve with name Eve
+  and    a Show Hamlet with name Hamlet and price 40 EUR
+  when   fan Eve books a new Booking B1 with fan Ada, show Hamlet and quantity 1
+         is refused at the gate
+
+scenario "a mailer that never answers raises an alert":
+  given  a Fan Ada with name Ada
+  and    a Show Hamlet with name Hamlet and price 40 EUR
+  and    a Session Fri with show Hamlet, day Friday and seats 100
+  when   fan Ada books a new Booking B1 with fan Ada, show Hamlet and quantity 1
+  and    payments answers charged
+  and    1 day pass
+  expect B1's Ticket is timed out
+  expect an alert for B1
