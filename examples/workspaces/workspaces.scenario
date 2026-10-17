@@ -5,7 +5,7 @@ scenario "a workspace that gets ready":
   and    a Cluster EU1 with region EU and seats 5
   and    a Cluster EU2 with region EU and seats 3
   and    a Cluster US1 with region US and seats 2
-  when   a new Workspace W1 with team core, region EU and seats 3
+  when   team Core requests a new Workspace W1 with team core, region EU and seats 3
          and a member with email "ana@core" and admin yes
          and a member with email "bo@core"
   and    identity answers opened
@@ -26,7 +26,7 @@ scenario "too many members for the seats":
   and    a Cluster EU1 with region EU and seats 5
   and    a Cluster EU2 with region EU and seats 3
   and    a Cluster US1 with region US and seats 2
-  when   a new Workspace W2 with team ops, region EU and seats 1
+  when   team Ops requests a new Workspace W2 with team ops, region EU and seats 1
          and a member with email "cy@ops" and admin yes
          and a member with email "di@ops"
          is refused by rule seats
@@ -37,7 +37,7 @@ scenario "an identity service that never answers":
   and    a Cluster EU1 with region EU and seats 5
   and    a Cluster EU2 with region EU and seats 3
   and    a Cluster US1 with region US and seats 2
-  when   a new Workspace W3 with team web, region EU and seats 2
+  when   team Web requests a new Workspace W3 with team web, region EU and seats 2
          and a member with email "ed@web" and admin yes
   and    3 minutes pass
   expect W3's Account is timed out
@@ -51,14 +51,41 @@ scenario "a full region makes a workspace wait":
   and    a Cluster EU1 with region EU and seats 5
   and    a Cluster EU2 with region EU and seats 3
   and    a Cluster US1 with region US and seats 2
-  when   a new Workspace W4 with team api, region US and seats 2
+  when   team Api requests a new Workspace W4 with team api, region US and seats 2
          and a member with email "fi@api" and admin yes
-  and    a new Workspace W5 with team ml, region US and seats 1
+  and    team Ml requests a new Workspace W5 with team ml, region US and seats 1
          and a member with email "gu@ml" and admin yes
   expect the total seats taken from US1 is 2
   when   1 hour passes
   expect an alert for W5
-  when   a Cluster US2 with region US and seats 4
+  when   admin Ann adds a new Cluster US2 with region US and seats 4
   and    clusters answers placed for W5
   expect W5's Tenant is placed
   expect the total seats taken from US2 is 1
+
+scenario "an admin cannot shrink a cluster below its taken seats":
+  given  a Region EU with name Europe
+  and    a Region US with name America
+  and    a Cluster EU1 with region EU and seats 5
+  and    a Cluster EU2 with region EU and seats 3
+  and    a Cluster US1 with region US and seats 2
+  when   team Core requests a new Workspace W6 with team core, region EU and seats 3
+         and a member with email "ana@core" and admin yes
+  expect the total seats taken from EU1 is 3
+  when   admin Ann changes EU1's seats to 2
+         is refused by rule capacity
+  and    admin Ann changes EU1's seats to 4
+  expect EU1's seats is 4
+  when   team Core changes EU1's seats to 9
+         is refused at the gate
+
+scenario "only admins add clusters":
+  given  a Region EU with name Europe
+  and    a Region US with name America
+  and    a Cluster EU1 with region EU and seats 5
+  and    a Cluster EU2 with region EU and seats 3
+  and    a Cluster US1 with region US and seats 2
+  when   team Core adds a new Cluster EU3 with region EU and seats 9
+         is refused at the gate
+  and    admin Ann adds a new Cluster EU3 with region EU and seats 9
+  expect EU3's seats is 9

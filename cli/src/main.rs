@@ -64,6 +64,24 @@ fn build(dir: &Path) -> Result<bool, String> {
             println!("  {}", suture_lang::readback::choice(&prog, b));
         }
     }
+    if !prog.roles.is_empty() || !prog.admits.is_empty() {
+        println!("\nroles: {}", suture_lang::readback::roles(&prog));
+        println!("admitted:");
+        let mut seen = vec![];
+        for a in &prog.admits {
+            if !seen.contains(&&a.source) {
+                println!("  {}", a.source);
+                seen.push(&a.source);
+            }
+        }
+        let watches = suture_lang::readback::watches(&prog);
+        if !watches.is_empty() {
+            println!("watches:");
+            for w in watches {
+                println!("  {w}");
+            }
+        }
+    }
     Ok(true)
 }
 

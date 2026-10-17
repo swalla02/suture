@@ -2,6 +2,10 @@
 -- a warehouse with a carrier that serves their country, or else are refunded.
 module shop version 1, currency EUR
 
+role customer is a Customer
+role support
+role staff
+
 kind Country   { code: Text, restricted: Bool = no }
 kind Customer  { name: Text, country: Country }
 kind Product   { name: Text, price: Money }
@@ -47,8 +51,15 @@ rule monthly: for each Customer and month, the total amount of their Refunds is 
 
 desired within 3 days: every Order that is not cancelled is paid and settled
 
-when a Payment is declined: its Order is cancelled
+when a Payment is declined:                  its Order is cancelled
+when a customer or support cancels an Order: the Order is cancelled
 
 prefer Delivery:         Shipment, then Refund after 2 days
 prefer Carrier:          lowest fee
 prefer Stock for a line: those whose warehouse's country is the Order's country
+
+admit place a new Order by customer where the Order's customer is the caller
+admit cancel Order by customer where the Order's customer is the caller
+admit cancel Order by support
+admit add a new Country, Customer, Product, Warehouse, Carrier or Stock by staff
+admit change Stock's units by staff

@@ -14,7 +14,7 @@ scenario "shipped from stock in its country with the cheapest carrier":
   and    a Carrier Hermes with name Hermes, countries DE and fee 5 EUR
   and    a Stock LY1 with warehouse LYS, product Kettle and units 5
   and    a Stock BE1 with warehouse BER, product Kettle and units 5
-  when   a new Order O1 with customer Ada
+  when   customer Ada places a new Order O1 with customer Ada
          and a line with product Kettle and quantity 2
   and    payments answers captured
   and    carriers answers delivered
@@ -38,7 +38,7 @@ scenario "a lost parcel is re-shipped from another warehouse":
   and    a Carrier Hermes with name Hermes, countries DE and fee 5 EUR
   and    a Stock BE1 with warehouse BER, product Kettle and units 1
   and    a Stock LY1 with warehouse LYS, product Kettle and units 5
-  when   a new Order P1 with customer Ada
+  when   customer Ada places a new Order P1 with customer Ada
          and a line with product Kettle and quantity 1
   and    payments answers captured
   and    carriers answers lost
@@ -61,7 +61,7 @@ scenario "no stock anywhere refunds after 2 days":
   and    a Warehouse LYS with code LYS and country FR
   and    a Carrier DHL with name DHL, countries {DE, FR} and fee 9 EUR
   and    a Carrier Hermes with name Hermes, countries DE and fee 5 EUR
-  when   a new Order N1 with customer Ada
+  when   customer Ada places a new Order N1 with customer Ada
          and a line with product Wine and quantity 1
   and    payments answers captured
   expect N1 is not settled
@@ -85,7 +85,7 @@ scenario "a restricted country refunds at once":
   and    a Carrier DHL with name DHL, countries {DE, FR} and fee 9 EUR
   and    a Carrier Hermes with name Hermes, countries DE and fee 5 EUR
   and    a Stock BE1 with warehouse BER, product Kettle and units 5
-  when   a new Order R1 with customer Ira
+  when   customer Ira places a new Order R1 with customer Ira
          and a line with product Kettle and quantity 1
   and    payments answers captured
   and    payments answers refunded
@@ -107,7 +107,7 @@ scenario "a cancelled order releases its stock":
   and    a Carrier DHL with name DHL, countries {DE, FR} and fee 9 EUR
   and    a Carrier Hermes with name Hermes, countries DE and fee 5 EUR
   and    a Stock BE1 with warehouse BER, product Kettle and units 5
-  when   a new Order D1 with customer Ada
+  when   customer Ada places a new Order D1 with customer Ada
          and a line with product Kettle and quantity 3
   expect the total quantity taken from BE1 is 3
   when   payments answers declined
@@ -128,11 +128,11 @@ scenario "a monthly refund cap makes a refund wait":
   and    a Warehouse LYS with code LYS and country FR
   and    a Carrier DHL with name DHL, countries {DE, FR} and fee 9 EUR
   and    a Carrier Hermes with name Hermes, countries DE and fee 5 EUR
-  when   a new Order M1 with customer Ira
+  when   customer Ira places a new Order M1 with customer Ira
          and a line with product Kettle and quantity 20
   and    payments answers captured for M1
   and    payments answers refunded for M1
-  and    a new Order M2 with customer Ira
+  and    customer Ira places a new Order M2 with customer Ira
          and a line with product Kettle and quantity 15
   and    payments answers captured for M2
   expect M1 is settled
@@ -153,7 +153,7 @@ scenario "a French order with alcohol":
   and    a Carrier DHL with name DHL, countries {DE, FR} and fee 9 EUR
   and    a Carrier Hermes with name Hermes, countries DE and fee 5 EUR
   and    a Stock LY1 with warehouse LYS, product Wine and units 10
-  when   a new Order F1 with customer Eve
+  when   customer Eve places a new Order F1 with customer Eve
          and a line with product Wine and quantity 6
   and    payments answers captured
   and    forms answers filled with value 150 EUR and contents alcohol
@@ -178,7 +178,7 @@ scenario "a payment service that never answers":
   and    a Carrier DHL with name DHL, countries {DE, FR} and fee 9 EUR
   and    a Carrier Hermes with name Hermes, countries DE and fee 5 EUR
   and    a Stock BE1 with warehouse BER, product Kettle and units 5
-  when   a new Order S1 with customer Ada
+  when   customer Ada places a new Order S1 with customer Ada
          and a line with product Kettle and quantity 1
   and    90 seconds pass
   expect S1's Payment is timed out
@@ -201,9 +201,123 @@ scenario "an answer after the time-out":
   and    a Carrier DHL with name DHL, countries {DE, FR} and fee 9 EUR
   and    a Carrier Hermes with name Hermes, countries DE and fee 5 EUR
   and    a Stock BE1 with warehouse BER, product Kettle and units 5
-  when   a new Order L1 with customer Ada
+  when   customer Ada places a new Order L1 with customer Ada
          and a line with product Kettle and quantity 1
   and    90 seconds pass
   and    payments answers captured
   expect L1's Payment is timed out
   expect L1 is not paid
+
+scenario "a customer cannot cancel someone else's order":
+  given  a Country DE with code "DE"
+  and    a Country FR with code "FR"
+  and    a Country IR with code "IR" and restricted yes
+  and    a Customer Ada with name Ada and country DE
+  and    a Customer Eve with name Eve and country FR
+  and    a Customer Ira with name Ira and country IR
+  and    a Product Kettle with name Kettle and price 30 EUR
+  and    a Product Wine with name Wine and price 20 EUR
+  and    a Warehouse BER with code BER and country DE
+  and    a Warehouse LYS with code LYS and country FR
+  and    a Carrier DHL with name DHL, countries {DE, FR} and fee 9 EUR
+  and    a Carrier Hermes with name Hermes, countries DE and fee 5 EUR
+  and    a Stock BE1 with warehouse BER, product Kettle and units 5
+  when   customer Ada places a new Order C1 with customer Ada
+         and a line with product Kettle and quantity 1
+  and    customer Eve cancels C1
+         is refused at the gate
+  expect C1 is not cancelled
+  when   customer Ada cancels C1
+  expect C1 is cancelled
+
+scenario "support cancels an order before it ships":
+  given  a Country DE with code "DE"
+  and    a Country FR with code "FR"
+  and    a Country IR with code "IR" and restricted yes
+  and    a Customer Ada with name Ada and country DE
+  and    a Customer Eve with name Eve and country FR
+  and    a Customer Ira with name Ira and country IR
+  and    a Product Kettle with name Kettle and price 30 EUR
+  and    a Product Wine with name Wine and price 20 EUR
+  and    a Warehouse BER with code BER and country DE
+  and    a Warehouse LYS with code LYS and country FR
+  and    a Carrier DHL with name DHL, countries {DE, FR} and fee 9 EUR
+  and    a Carrier Hermes with name Hermes, countries DE and fee 5 EUR
+  and    a Stock BE1 with warehouse BER, product Kettle and units 5
+  when   customer Ada places a new Order C2 with customer Ada
+         and a line with product Kettle and quantity 3
+  expect the total quantity taken from BE1 is 3
+  when   support Sam cancels C2
+  expect C2 is cancelled
+  expect C2 has no Shipment
+  expect the total quantity taken from BE1 is 0
+
+scenario "a cancellation after sending is refused":
+  given  a Country DE with code "DE"
+  and    a Country FR with code "FR"
+  and    a Country IR with code "IR" and restricted yes
+  and    a Customer Ada with name Ada and country DE
+  and    a Customer Eve with name Eve and country FR
+  and    a Customer Ira with name Ira and country IR
+  and    a Product Kettle with name Kettle and price 30 EUR
+  and    a Product Wine with name Wine and price 20 EUR
+  and    a Warehouse BER with code BER and country DE
+  and    a Warehouse LYS with code LYS and country FR
+  and    a Carrier DHL with name DHL, countries {DE, FR} and fee 9 EUR
+  and    a Carrier Hermes with name Hermes, countries DE and fee 5 EUR
+  and    a Stock BE1 with warehouse BER, product Kettle and units 5
+  when   customer Ada places a new Order C3 with customer Ada
+         and a line with product Kettle and quantity 1
+  and    payments answers captured
+  and    support Sam cancels C3
+         is refused by rule late
+  expect C3 is not cancelled
+  when   carriers answers delivered
+  expect C3 is settled
+
+scenario "staff cannot lower stock below what is taken":
+  given  a Country DE with code "DE"
+  and    a Country FR with code "FR"
+  and    a Country IR with code "IR" and restricted yes
+  and    a Customer Ada with name Ada and country DE
+  and    a Customer Eve with name Eve and country FR
+  and    a Customer Ira with name Ira and country IR
+  and    a Product Kettle with name Kettle and price 30 EUR
+  and    a Product Wine with name Wine and price 20 EUR
+  and    a Warehouse BER with code BER and country DE
+  and    a Warehouse LYS with code LYS and country FR
+  and    a Carrier DHL with name DHL, countries {DE, FR} and fee 9 EUR
+  and    a Carrier Hermes with name Hermes, countries DE and fee 5 EUR
+  and    a Stock BE1 with warehouse BER, product Kettle and units 5
+  when   customer Ada places a new Order T1 with customer Ada
+         and a line with product Kettle and quantity 2
+  and    staff Tom changes BE1's units to 1
+         is refused by rule stock
+  expect BE1's units is 5
+  when   staff Tom changes BE1's units to 2
+  expect BE1's units is 2
+  when   customer Ada changes BE1's units to 9
+         is refused at the gate
+
+scenario "new stock wakes an order that waited for it":
+  given  a Country DE with code "DE"
+  and    a Country FR with code "FR"
+  and    a Country IR with code "IR" and restricted yes
+  and    a Customer Ada with name Ada and country DE
+  and    a Customer Eve with name Eve and country FR
+  and    a Customer Ira with name Ira and country IR
+  and    a Product Kettle with name Kettle and price 30 EUR
+  and    a Product Wine with name Wine and price 20 EUR
+  and    a Warehouse BER with code BER and country DE
+  and    a Warehouse LYS with code LYS and country FR
+  and    a Carrier DHL with name DHL, countries {DE, FR} and fee 9 EUR
+  and    a Carrier Hermes with name Hermes, countries DE and fee 5 EUR
+  and    a Stock BE1 with warehouse BER, product Kettle and units 1
+  when   customer Ada places a new Order T2 with customer Ada
+         and a line with product Kettle and quantity 3
+  and    payments answers captured
+  expect T2 is not settled
+  when   staff Tom changes BE1's units to 4
+  and    carriers answers delivered
+  expect T2 is settled
+  expect the total quantity taken from BE1 is 3

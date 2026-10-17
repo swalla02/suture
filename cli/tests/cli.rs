@@ -17,6 +17,8 @@ fn build_prints_read_backs() {
     assert!(out.contains("rule monthly: for each Customer and month"), "{out}");
     assert!(out.contains("choices:\n  Shipment uses a Carrier: pool key Carrier's countries contain its order's country"), "{out}");
     assert!(out.contains("each Refund adds to its customer's total amount of Refunds per month"), "{out}");
+    assert!(out.contains("roles: customer (a Customer), support, staff\nadmitted:\n  place a new Order by customer where the Order's customer is the caller"), "{out}");
+    assert!(out.contains("watches:\n  Stock's units, changed by staff: carried by Shipments bound to a Stock; each change is checked there first, then refreshed"), "{out}");
 }
 
 #[test]
@@ -28,7 +30,8 @@ fn run_passes_the_shop_scenarios() {
     assert!(out.contains("alert: not met within 3 days"), "{out}");
     assert!(out.contains("ignored a late answer for L1/Payment#1"), "{out}");
     assert!(out.contains("choice: Hermes for O1/Shipment#1@Carrier"), "{out}");
-    assert_eq!(out.matches("  passed").count(), 9, "{out}");
+    assert_eq!(out.matches("  passed").count(), 14, "{out}");
+    assert!(out.contains("✓ C1 is refused at the gate"), "{out}");
 }
 
 #[test]

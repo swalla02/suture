@@ -265,6 +265,58 @@ pub fn choice(p: &Program, b: &crate::ir::Binding) -> String {
     format!("{} uses a {}{per}: pool key {}'s {} {how} {key}, up to {} candidates, ranked {rank}", b.subject, b.target, b.target, b.key_attr, p.candidates)
 }
 
+fn a_kind(k: &str) -> String {
+    if k.starts_with(['A', 'E', 'I', 'O', 'U']) { format!("an {k}") } else { format!("a {k}") }
+}
+
+/// `customer (a Customer), support, staff` (appendix G.2.1).
+pub fn roles(p: &Program) -> String {
+    let shown: Vec<String> = p.roles.iter().map(|r| match &r.kind {
+        Some(k) => format!("{} (a {k})", r.name),
+        None => r.name.clone(),
+    }).collect();
+    shown.join(", ")
+}
+
+/// For each attribute callers may change, the kinds whose units carry it
+/// and are refreshed and checked when it changes (appendix G.2.7): those
+/// that refer to its kind, directly or through other references, and
+/// those bound to it.
+pub fn watches(p: &Program) -> Vec<String> {
+    let mut out = vec![];
+    for a in &p.admits {
+        let crate::ir::Admitted::Change { kind, attr } = &a.what else { continue };
+        let mut carry = vec![kind.clone()];
+        let mut i = 0;
+        while i < carry.len() {
+            let k = carry[i].clone();
+            for x in &p.kinds {
+                let refers = x.attrs.iter().any(|y| y.of.as_deref() == Some(k.as_str()) && x.owner.as_ref().is_none_or(|o| o.attr != y.name));
+                if refers && !carry.contains(&x.name) {
+                    carry.push(x.name.clone());
+                }
+            }
+            i += 1;
+        }
+        let plural = |k: &str| p.kind(k).map_or(k.to_string(), |x| x.plural.clone());
+        let mut readers: Vec<String> = carry[1..].iter().map(|k| format!("{} that refer to {}", plural(k), a_kind(kind))).collect();
+        for b in p.bindings.iter().filter(|b| b.target == *kind && !b.key_attr.is_empty()) {
+            readers.push(format!("{} bound to {}", plural(&b.subject), a_kind(kind)));
+        }
+        readers.dedup();
+        let who = a.roles.join(", ");
+        let line = if readers.is_empty() {
+            format!("{kind}'s {attr}, changed by {who}: no other unit carries it")
+        } else {
+            format!("{kind}'s {attr}, changed by {who}: carried by {}; each change is checked there first, then refreshed", readers.join(" and "))
+        };
+        if !out.contains(&line) {
+            out.push(line);
+        }
+    }
+    out
+}
+
 pub fn lit_text(p: &Program, l: &Lit) -> String {
     match l {
         Lit::Text(s) => format!("\"{s}\""),

@@ -2,6 +2,9 @@
 -- and the system sets it up. Nothing here says in which order.
 module workspaces version 1, currency EUR
 
+role team
+role admin
+
 kind Region    { name: Text }
 kind Cluster   { region: Region, seats: Count }
 kind Workspace { team: Text, region: Region, seats: Count, members: list of Member, rejected: Bool = no,
@@ -52,3 +55,7 @@ desired within 1 hour: every Workspace that is not rejected is ready
 
 prefer Storage: Bucket, then Volume after 15 minutes
 prefer Cluster: highest seats
+
+admit request a new Workspace by team
+admit add a new Region or Cluster by admin
+admit change Cluster's seats by admin
