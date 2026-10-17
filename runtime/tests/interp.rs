@@ -545,3 +545,15 @@ fn becomes_sets_a_value_and_never_makes_a_count_negative() {
     assert_eq!(declined.root.attrs.get("n"), Some(&Val::Count(0)));
     assert!(has_note(&declined, "n not set: a count cannot be negative"), "{:?}", declined.notes);
 }
+
+#[test]
+fn review_formulas_compute_in_any_order_and_never_store_a_negative_count() {
+    let p = program("kind Order { seats: Count, lines: list of Line, double: Money = price * 2, price: Money = seats * 10 EUR, left: Count = seats - 5 }
+kind Line { order: Order, share: Money = order's price }
+");
+    let items = vec![("lines".to_string(), vec![])];
+    let u = suture_runtime::interp::new_unit_with(&p, "O1", "Order", &[("seats".to_string(), Val::Count(3))], &items).unwrap();
+    assert_eq!(u.root.attrs.get("double"), Some(&Val::Money(6_000)));
+    assert_eq!(u.root.parts[0].attrs.get("share"), Some(&Val::Money(3_000)));
+    assert_eq!(u.root.attrs.get("left"), None, "a count is never negative");
+}

@@ -258,3 +258,38 @@ fn formula_list_and_becomes_mistakes_are_errors() {
     let e = errors(&format!("{base}kind Payment {{ order: Order }}\nOrder needs Payment\neffect capture Payment via payments within 30 seconds\n  sends    the order's n\n  reports  captured\nwhen a Payment is captured: its order's n becomes 3 EUR\n"));
     assert!(e.iter().any(|m| m.contains("Order.n is Count, but it would become a Money")), "{e:?}");
 }
+
+#[test]
+fn review_two_lists_of_one_kind_are_an_error() {
+    let e = errors("kind Team { admins: list of Member, guests: list of Member }\nkind Member { team: Team }\n");
+    assert!(e.iter().any(|m| m.contains("Team has two lists of Member")), "{e:?}");
+}
+
+#[test]
+fn review_formulas_that_cannot_be_known_at_creation_are_errors() {
+    let e = errors("kind O { a: Count = b + 1, b: Count = a + 1 }\n");
+    assert!(e.iter().any(|m| m.contains("the formulas of O depend on each other: a, b")), "{e:?}");
+    let e = errors("kind O { }\nkind P { o: O, code: Text = receipt }\nO needs P\neffect take P via bank within 1 day\n  sends    its code\n  reports  taken with receipt: Text\n");
+    assert!(e.iter().any(|m| m.contains("P.code reads receipt, which an answer sets later")), "{e:?}");
+    let e = errors("kind O { n: Count = the number of its Ps }\nkind P { o: O }\nO needs P\n");
+    assert!(e.iter().any(|m| m.contains("O.n reads its Ps, which do not exist yet when an O is created")), "{e:?}");
+}
+
+#[test]
+fn review_totals_over_a_list_are_typed_and_read_back_plainly() {
+    let base = "kind O { lines: list of Line, discount: Money = 0 EUR, n: Count = 3, k: Count = 2 }\nkind Line { o: O, name: Text, price: Money, quantity: Count }\n";
+    let e = errors(&format!("{base}rule r: every O's n is at most the total of the line's name * 2 over its lines\n"));
+    assert!(e.iter().any(|m| m.contains("cannot multiply a Text by a Count")), "{e:?}");
+    let p = prog(&format!("{base}rule r: every O's discount is at most the total of (the line's price - its discount) * the line's quantity over its lines\nrule s: every O's discount is at most 10 EUR * (its n / its k)\nrule t: no O has a Line that is done unless its n is at least the number of its lines that are done and its k is 2\n"));
+    assert_eq!(rule(&p, "r").paraphrase, "each o on its own: its discount is at most the total of (the line's price − its discount) × the line's quantity over its lines");
+    assert_eq!(rule(&p, "s").formula, "for each O o: o.discount ≤ 10 EUR × (o.n / o.k)");
+    assert_eq!(rule(&p, "t").formula, "for each O o: exists(s in o.Line where s is done) implies o.n ≥ count(l in o.lines where l is done) and o.k = 2");
+}
+
+#[test]
+fn review_list_elements_have_ordinary_singulars() {
+    let p = prog("kind Ledger { entries: list of Entry, total: Money = the total of the entry's amount over its entries }\nkind Entry { ledger: Ledger, amount: Money }\nkind Box { boxes: list of Case }\nkind Case { box: Box, n: Count }\n");
+    let names = |l: &str| p.lists.iter().find(|x| x.name == l).unwrap().singulars();
+    assert!(names("entries").contains(&"entry".to_string()));
+    assert!(names("boxes").contains(&"box".to_string()) && names("boxes").contains(&"case".to_string()));
+}

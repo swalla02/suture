@@ -192,9 +192,11 @@ fn atom(c: &mut Cursor, bare: bool) -> Result<Num, Error> {
     Ok(Num::Np(noun_phrase(c)?))
 }
 
-/// `that ⟨cond⟩` after a relation: a condition about each of its entities.
+/// `that ⟨cond⟩` after a relation: one condition about each of its
+/// entities. It never takes an `and` or `or`, which belong to the sentence
+/// around it; name a combined condition with `define`.
 fn that(c: &mut Cursor) -> Result<Option<Box<Cond>>, Error> {
-    Ok(if c.eat_word("that") { Some(Box::new(condition(c)?)) } else { None })
+    Ok(if c.eat_word("that") { Some(Box::new(simple(c)?)) } else { None })
 }
 
 /// A state's name: one word, or `timed out` (appendix C.2).

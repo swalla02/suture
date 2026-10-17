@@ -51,6 +51,108 @@ fn show_num(n: &ast::Num) -> String {
     }
 }
 
+/// Why a formula of `kind` cannot be known at creation, if it cannot: it
+/// reads a value that an answer sets later, or parts that a need creates
+/// only after the entity exists. List elements are given with it, so they can.
+fn not_known_at_creation(p: &Program, kind: &str, n: &Num) -> Option<String> {
+    match n {
+        Num::Lit(_) => None,
+        Num::Bin(x, _, y) => not_known_at_creation(p, kind, x).or_else(|| not_known_at_creation(p, kind, y)),
+        Num::Path(path) => {
+            let (last, rest) = path.steps.split_last()?;
+            let Step::Attr(attr) = last else { return None };
+            let at = end_kind(p, kind, rest)?;
+            let answered = p.effect_of(&at).is_some_and(|e| e.data.iter().any(|(d, _)| d == attr));
+            answered.then(|| format!("{attr}, which an answer sets later"))
+        }
+        Num::Sum { of, kind: k, .. } | Num::Count { of, kind: k, .. } if p.lists.iter().all(|l| l.element != *k) => {
+            let owner = end_kind(p, kind, &of.steps).unwrap_or_else(|| kind.to_string());
+            let plural = p.kind(k).map_or_else(|| k.clone(), |x| x.plural.clone());
+            Some(format!("its {plural}, which do not exist yet when {} is created", a(&owner)))
+        }
+        Num::Sum { .. } | Num::Count { .. } => None,
+    }
+}
+
+/// The kind a walk of parts, slots and owner steps ends at, from `kind`.
+fn end_kind(p: &Program, kind: &str, steps: &[Step]) -> Option<String> {
+    let mut cur = kind.to_string();
+    for s in steps {
+        cur = match s {
+            Step::Part(k) => k.clone(),
+            Step::Owner => p.kind(&cur)?.owner.as_ref()?.kind.clone(),
+            Step::Slot(_) | Step::Attr(_) => return None,
+        };
+    }
+    Some(cur)
+}
+
+/// The formula attributes of `kind` that read each other in a circle, if any.
+fn formula_cycle(p: &Program, kind: &str) -> Option<Vec<String>> {
+    let k = p.kind(kind)?;
+    let reads = |n: &Num| {
+        let mut out = vec![];
+        fn walk(n: &Num, out: &mut Vec<String>) {
+            match n {
+                Num::Path(Path { steps }) if steps.len() == 1 => {
+                    if let Step::Attr(a) = &steps[0] {
+                        out.push(a.clone());
+                    }
+                }
+                Num::Bin(x, _, y) => {
+                    walk(x, out);
+                    walk(y, out);
+                }
+                _ => {}
+            }
+        }
+        walk(n, &mut out);
+        out
+    };
+    let deps: Vec<(String, Vec<String>)> = k
+        .attrs
+        .iter()
+        .filter_map(|a| a.formula.as_ref().map(|f| (a.name.clone(), reads(f))))
+        .collect();
+    // Repeatedly drop the formulas that read no other undropped formula.
+    let mut left: Vec<&(String, Vec<String>)> = deps.iter().collect();
+    loop {
+        let before = left.len();
+        let names: Vec<String> = left.iter().map(|(n, _)| n.clone()).collect();
+        left.retain(|(_, r)| r.iter().any(|x| names.contains(x)));
+        if left.is_empty() {
+            return None;
+        }
+        if left.len() == before {
+            let mut cycle: Vec<String> = left.iter().map(|(n, _)| n.clone()).collect();
+            cycle.sort();
+            return Some(cycle);
+        }
+    }
+}
+
+/// The type of `x op y`, by the table of appendix E.2.3.
+fn arith_type(op: char, lt: Ty, rt: Ty) -> Result<(Arith, Ty), String> {
+    Ok(match (op, lt, rt) {
+        ('+', Ty::Money, Ty::Money) => (Arith::Add, Ty::Money),
+        ('-', Ty::Money, Ty::Money) => (Arith::Sub, Ty::Money),
+        ('+', Ty::Count, Ty::Count) => (Arith::Add, Ty::Count),
+        ('-', Ty::Count, Ty::Count) => (Arith::Sub, Ty::Count),
+        ('*', Ty::Money, Ty::Count) | ('*', Ty::Count, Ty::Money) => (Arith::Mul, Ty::Money),
+        ('*', Ty::Count, Ty::Count) => (Arith::Mul, Ty::Count),
+        ('/', Ty::Money, Ty::Count) => (Arith::Div, Ty::Money),
+        ('/', Ty::Count, Ty::Count) => (Arith::Div, Ty::Count),
+        _ => {
+            return Err(match op {
+                '+' => format!("cannot add a {lt:?} and a {rt:?}"),
+                '-' => format!("cannot subtract a {rt:?} from a {lt:?}"),
+                '*' => format!("cannot multiply a {lt:?} by a {rt:?}"),
+                _ => format!("cannot divide a {lt:?} by a {rt:?}"),
+            })
+        }
+    })
+}
+
 /// The kind of the parts of `owner` whose plural is `word`, if any.
 fn plural_kind(p: &Program, owner: &str, word: &str) -> Option<String> {
     let list = p.lists.iter().find(|l| l.owner == owner && l.name == word).map(|l| l.element.clone());
@@ -305,6 +407,10 @@ impl Checker {
         for k in &src.kinds {
             for a in &k.attrs {
                 let TypeName::List(element) = &a.ty else { continue };
+                if p.lists.iter().any(|l| l.owner == k.name && l.element == *element) {
+                    self.errors.push(err(&k.at, format!("{} has two lists of {element}; a kind is the element of one list", k.name)));
+                    continue;
+                }
                 if self.link(src, p, &k.at, &k.name, element) {
                     p.lists.push(crate::ir::List { owner: k.name.clone(), name: a.name.clone(), element: element.clone() });
                 }
@@ -332,10 +438,17 @@ impl Checker {
                     self.errors.push(err(&k.at, format!("{}.{} is {want:?}, but its formula gives a {ty:?}", k.name, a.name)));
                     continue;
                 }
+                if let Some(why) = not_known_at_creation(p, &k.name, &num) {
+                    self.errors.push(err(&k.at, format!("{}.{} reads {why}; a formula is computed when the entity is created", k.name, a.name)));
+                    continue;
+                }
                 let kind = p.kinds.iter_mut().find(|x| x.name == k.name).expect("declared kinds are compiled");
                 if let Some(x) = kind.attrs.iter_mut().find(|x| x.name == a.name) {
                     x.formula = Some(num);
                 }
+            }
+            if let Some(cycle) = formula_cycle(p, &k.name) {
+                self.errors.push(err(&k.at, format!("the formulas of {} depend on each other: {}", k.name, cycle.join(", "))));
             }
         }
     }
@@ -618,25 +731,13 @@ impl Checker {
             ast::Num::Bin(x, op, y) => {
                 let (l, lt) = self.num(p, at, from, x)?;
                 let (r, rt) = self.num(p, at, from, y)?;
-                let (arith, ty) = match (op, lt, rt) {
-                    ('+', Ty::Money, Ty::Money) | ('-', Ty::Money, Ty::Money) => (if *op == '+' { Arith::Add } else { Arith::Sub }, Ty::Money),
-                    ('+', Ty::Count, Ty::Count) | ('-', Ty::Count, Ty::Count) => (if *op == '+' { Arith::Add } else { Arith::Sub }, Ty::Count),
-                    ('*', Ty::Money, Ty::Count) | ('*', Ty::Count, Ty::Money) => (Arith::Mul, Ty::Money),
-                    ('*', Ty::Count, Ty::Count) => (Arith::Mul, Ty::Count),
-                    ('/', Ty::Money, Ty::Count) => (Arith::Div, Ty::Money),
-                    ('/', Ty::Count, Ty::Count) => (Arith::Div, Ty::Count),
-                    _ => {
-                        let what = match op {
-                            '+' => format!("cannot add a {lt:?} and a {rt:?}"),
-                            '-' => format!("cannot subtract a {rt:?} from a {lt:?}"),
-                            '*' => format!("cannot multiply a {lt:?} by a {rt:?}"),
-                            _ => format!("cannot divide a {lt:?} by a {rt:?}"),
-                        };
+                match arith_type(*op, lt, rt) {
+                    Ok((arith, ty)) => Some((Num::Bin(Box::new(l), arith, Box::new(r)), ty)),
+                    Err(what) => {
                         self.errors.push(err(at, format!("`{}`: {what}", show_num(n))));
-                        return None;
+                        None
                     }
-                };
-                Some((Num::Bin(Box::new(l), arith, Box::new(r)), ty))
+                }
             }
             ast::Num::Total { attr, of, filter } => {
                 let (path, kind) = self.rel(p, at, from, of)?;
@@ -676,8 +777,8 @@ impl Checker {
                     self.errors.push(err(at, format!("`{}` is not a list of {}", show(list), a(from))));
                     return None;
                 };
-                let one = l.singular();
-                let (calc, ty) = self.over(p, at, from, &element, &one, calc)?;
+                let names = l.singulars();
+                let (calc, ty) = self.over(p, at, from, &element, &names, calc)?;
                 if !matches!(ty, Ty::Money | Ty::Count) {
                     self.errors.push(err(at, format!("`{}` is {ty:?}; only amounts and counts add up", show_num(n))));
                     return None;
@@ -690,9 +791,9 @@ impl Checker {
     /// The calculation inside `the total of … over its lines`, evaluated at
     /// each element: `the line's price` reads the element, anything else
     /// reads the owner through the element's owner step.
-    fn over(&mut self, p: &Program, at: &Loc, owner: &str, element: &str, one: &str, n: &ast::Num) -> Option<(Num, Ty)> {
+    fn over(&mut self, p: &Program, at: &Loc, owner: &str, element: &str, names: &[String], n: &ast::Num) -> Option<(Num, Ty)> {
         match n {
-            ast::Num::Np(np) if matches!(np.head, Head::It) && np.steps.first().is_some_and(|w| w == one) => {
+            ast::Num::Np(np) if matches!(np.head, Head::It) && np.steps.first().is_some_and(|w| names.contains(w)) => {
                 let inner = NounPhrase { head: Head::It, steps: np.steps[1..].to_vec() };
                 self.num(p, at, element, &ast::Num::Np(inner))
             }
@@ -705,21 +806,15 @@ impl Checker {
             }
             ast::Num::Lit(_) => self.num(p, at, owner, n),
             ast::Num::Bin(x, op, y) => {
-                let (l, lt) = self.over(p, at, owner, element, one, x)?;
-                let (r, rt) = self.over(p, at, owner, element, one, y)?;
-                let lit = |t: Ty| ast::Num::Lit(match t {
-                    Ty::Money => Literal::Money { cents: 0, currency: p.currency.clone() },
-                    _ => Literal::Count(0),
-                });
-                // Type the operation as the checker does for any calculation.
-                let (_, ty) = self.num(p, at, owner, &ast::Num::Bin(Box::new(lit(lt)), *op, Box::new(lit(rt))))?;
-                let arith = match op {
-                    '+' => Arith::Add,
-                    '-' => Arith::Sub,
-                    '*' => Arith::Mul,
-                    _ => Arith::Div,
-                };
-                Some((Num::Bin(Box::new(l), arith, Box::new(r)), ty))
+                let (l, lt) = self.over(p, at, owner, element, names, x)?;
+                let (r, rt) = self.over(p, at, owner, element, names, y)?;
+                match arith_type(*op, lt, rt) {
+                    Ok((arith, ty)) => Some((Num::Bin(Box::new(l), arith, Box::new(r)), ty)),
+                    Err(what) => {
+                        self.errors.push(err(at, format!("`{}`: {what}", show_num(n))));
+                        None
+                    }
+                }
             }
             _ => {
                 self.errors.push(err(at, format!("`{}`: a total over a list cannot hold another total", show_num(n))));

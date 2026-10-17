@@ -45,10 +45,9 @@ pub fn new_unit_with(
         element.status = Status::Done;
         root.parts.push(element);
     }
-    for i in 0..root.parts.len() {
-        formulas(prog, &mut root, &[i]);
-    }
-    formulas(prog, &mut root, &[]);
+    // Formulas may read each other and the owner in any order: compute
+    // until nothing changes. Each attribute is set at most once.
+    while (0..root.parts.len()).fold(formulas(prog, &mut root, &[]), |changed, i| formulas(prog, &mut root, &[i]) || changed) {}
     let unit = Unit { label: label.to_string(), root, notes: vec![], met: vec![], matched: vec![], alerts: vec![], timers: vec![] };
     if let Some(r) = violated(prog, &step(prog, &unit, &Msg::Create).unit.root) {
         return Err(format!("refused by rule {}: {}", r.name, r.paraphrase));
@@ -72,20 +71,28 @@ fn give(prog: &Program, kind: &str, n: &mut Node, given: &[(String, Val)]) -> Re
     Ok(())
 }
 
-/// Computes the formula attributes of the node at `at`, once, in the order
-/// declared. A formula whose value is unknown leaves its attribute unknown.
-fn formulas(prog: &Program, root: &mut Node, at: &[usize]) {
+/// Computes the formula attributes of the node at `at` that are not set
+/// yet and can be known now; returns whether it set any. A formula whose
+/// value is unknown, or a negative count, leaves its attribute unknown.
+fn formulas(prog: &Program, root: &mut Node, at: &[usize]) -> bool {
     let kind = node_at(root, at).kind.clone();
-    let Some(k) = prog.kind(&kind) else { return };
+    let Some(k) = prog.kind(&kind) else { return false };
+    let mut changed = false;
     for a in &k.attrs {
         let Some(f) = &a.formula else { continue };
         if node_at(root, at).attrs.contains_key(&a.name) {
             continue;
         }
-        if let Some(v) = num(prog, root, at, f) {
-            node_at_mut(root, at).attrs.insert(a.name.clone(), v);
+        match num(prog, root, at, f) {
+            Some(Val::Count(c)) if c < 0 => {}
+            Some(v) => {
+                node_at_mut(root, at).attrs.insert(a.name.clone(), v);
+                changed = true;
+            }
+            None => {}
         }
     }
+    changed
 }
 
 fn blank(prog: &Program, kind: &str, attempt: u32) -> Node {
@@ -412,7 +419,7 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
                 let mut t = u.root.clone();
                 node_at_mut(&mut t, at).parts.push(part);
                 let pos = child(at, node_at(&t, at).parts.len() - 1);
-                formulas(prog, &mut t, &pos);
+                while formulas(prog, &mut t, &pos) {}
                 let part = node_at(&t, &pos).clone();
                 change = match newly_broken(prog, &u.root, &t) {
                     Some(r) if n.held.get(&want) == Some(&r.name) => None,

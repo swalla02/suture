@@ -86,7 +86,7 @@ fn create(
         let list = prog
             .lists
             .iter()
-            .find(|l| l.owner == kind && l.singular() == *one)
+            .find(|l| l.owner == kind && l.singulars().contains(one))
             .ok_or_else(|| format!("{kind} has no list whose element is called {one}"))?;
         elements.push((list.name.clone(), values(prog, pairs)?));
     }

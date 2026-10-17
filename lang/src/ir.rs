@@ -32,15 +32,32 @@ pub struct List {
 }
 
 impl List {
-    /// `lines` gives `line`, `boxes` gives `box`: how a scenario and `the line` name one element.
-    pub fn singular(&self) -> String {
+    /// How `the …` and a scenario's `a … with` may name one element: the
+    /// list's name without `s`, without `es`, with `ies` made `y`, or the
+    /// element kind's own name (`lines` → `line`; `entries` → `entry`;
+    /// `boxes` of Case → `box`, `case`).
+    pub fn singulars(&self) -> Vec<String> {
         let n = &self.name;
-        let es = ["ses", "xes", "ches", "shes"].iter().any(|e| n.ends_with(e));
-        if es {
-            n[..n.len() - 2].to_string()
-        } else {
-            n.strip_suffix('s').unwrap_or(n).to_string()
+        let mut out = vec![];
+        if let Some(stem) = n.strip_suffix("ies") {
+            out.push(format!("{stem}y"));
         }
+        if let Some(stem) = n.strip_suffix("es") {
+            out.push(stem.to_string());
+        }
+        if let Some(stem) = n.strip_suffix('s') {
+            out.push(stem.to_string());
+        }
+        out.push(self.element.to_lowercase());
+        out.dedup();
+        out
+    }
+
+    /// The name the read-backs use for one element.
+    pub fn singular(&self) -> String {
+        let s = self.singulars();
+        let kind = self.element.to_lowercase();
+        if s.contains(&kind) { kind } else { s[0].clone() }
     }
 }
 

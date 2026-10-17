@@ -99,19 +99,33 @@ fn num_words(p: &Program, kind: &str, n: &Num) -> String {
         Num::Path(x) => path_words(p, kind, x),
         Num::Lit(l) => lit_text(p, l),
         Num::Bin(x, op, y) => bin(*op, x, y, |m| num_words(p, kind, m)),
-        Num::Sum { of, kind: k, calc, filter, .. } => {
-            let what = match calc.as_ref() {
-                Num::Path(Path { steps }) if steps.len() == 1 => match &steps[0] {
-                    Step::Attr(a) => a.clone(),
-                    _ => num_words(p, k, calc),
-                },
-                other => num_words(p, k, other),
-            };
-            format!("the total {what} of {}{}", relation_words(p, kind, of, k), that_words(p, k, filter.as_deref()))
-        }
+        Num::Sum { of, kind: k, calc, filter, .. } => match calc.as_ref() {
+            Num::Path(Path { steps }) if steps.len() == 1 && matches!(steps[0], Step::Attr(_)) => {
+                let Step::Attr(a) = &steps[0] else { unreachable!("matched above") };
+                format!("the total {a} of {}{}", relation_words(p, kind, of, k), that_words(p, k, filter.as_deref()))
+            }
+            other => {
+                let one = p.lists.iter().find(|l| l.element == *k).map_or_else(|| words_of_kind(k), |l| l.singular());
+                format!("the total of {} over {}", element_words(p, kind, k, &one, other), relation_words(p, kind, of, k))
+            }
+        },
         Num::Count { of, kind: k, filter } => {
             format!("the number of {}{}", relation_words(p, kind, of, k), that_words(p, k, filter.as_deref()))
         }
+    }
+}
+
+/// A calculation evaluated at each element, in words: `the line's price`
+/// for the element, `its discount` for the owner it reads through its owner step.
+fn element_words(p: &Program, owner: &str, element: &str, one: &str, n: &Num) -> String {
+    match n {
+        Num::Path(Path { steps }) if steps.first() == Some(&Step::Owner) => path_words(p, owner, &Path { steps: steps[1..].to_vec() }),
+        Num::Path(path) => {
+            let names: Vec<String> = step_names(p, element, path).into_iter().map(|(n, part)| if part { words_of_kind(&n) } else { n }).collect();
+            if names.is_empty() { format!("the {one}") } else { format!("the {one}'s {}", names.join("'s ")) }
+        }
+        Num::Bin(x, op, y) => bin(*op, x, y, |m| element_words(p, owner, element, one, m)),
+        other => num_words(p, element, other),
     }
 }
 
@@ -119,7 +133,9 @@ fn num_words(p: &Program, kind: &str, n: &Num) -> String {
 fn bin(op: Arith, x: &Num, y: &Num, show: impl Fn(&Num) -> String) -> String {
     let prec = |a: Arith| if matches!(a, Arith::Add | Arith::Sub) { 1 } else { 2 };
     let side = |m: &Num, right: bool| match m {
-        Num::Bin(_, inner, _) if prec(*inner) < prec(op) || (right && prec(*inner) == prec(op) && matches!(op, Arith::Sub | Arith::Div)) => {
+        // A right operand of the same precedence is bracketed too: with whole
+        // numbers, `10 × (n / k)` is not `10 × n / k`.
+        Num::Bin(_, inner, _) if prec(*inner) < prec(op) || (right && prec(*inner) == prec(op)) => {
             format!("({})", show(m))
         }
         _ => show(m),
@@ -140,7 +156,11 @@ fn element_var(kind: &str, subject: &str) -> String {
     if e == subject { format!("{e}2") } else { e }
 }
 
+/// A relation's name: its list's, when the kind is a list element, else the kind's plural.
 fn plural_words(p: &Program, k: &str) -> String {
+    if let Some(l) = p.lists.iter().find(|l| l.element == k) {
+        return l.name.clone();
+    }
     words_of_kind(&p.kind(k).map_or_else(|| format!("{k}s"), |x| x.plural.clone()))
 }
 
@@ -158,16 +178,23 @@ fn relation_words(p: &Program, kind: &str, of: &Path, k: &str) -> String {
 /// ` that are lost`, from the condition about each entity.
 fn that_words(p: &Program, k: &str, f: Option<&Cond>) -> String {
     let Some(f) = f else { return String::new() };
-    let w = cond_words(p, k, f);
-    let w = w.strip_prefix("it ").unwrap_or(&w);
-    let w = if let Some(rest) = w.strip_prefix("is ") {
-        format!("are {rest}")
-    } else if let Some(rest) = w.strip_prefix("has ") {
-        format!("have {rest}")
-    } else {
-        w.to_string()
+    let one = |c: &Cond| {
+        let w = cond_words(p, k, c);
+        let w = w.strip_prefix("it ").unwrap_or(&w).to_string();
+        if let Some(rest) = w.strip_prefix("is ") {
+            format!("are {rest}")
+        } else if let Some(rest) = w.strip_prefix("has ") {
+            format!("have {rest}")
+        } else {
+            w
+        }
     };
-    format!(" that {w}")
+    let words = match f {
+        Cond::And(cs) => cs.iter().map(one).collect::<Vec<_>>().join(" and "),
+        Cond::Or(cs) => cs.iter().map(one).collect::<Vec<_>>().join(" or "),
+        c => one(c),
+    };
+    format!(" that {words}")
 }
 
 /// A literal as it is written: `"France"`, `120 EUR`, `12.50 EUR`, `3`, `yes`.
