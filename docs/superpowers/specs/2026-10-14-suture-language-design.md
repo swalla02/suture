@@ -1027,3 +1027,38 @@ Slice 5 makes units meet. Until now every unit was a root and its parts, and not
 - **Workspace provisioning:** workspaces are placed on a cluster in their region with enough free seats, and a full region makes a workspace wait.
 - `suture build` lists the open choices with their pool keys, and every rule's tier.
 - Every scenario of both apps replays to the same state.
+
+## Appendix G. Prototype slice 6: permissions (2026-10-17)
+
+Slice 6 lets callers in. Until now a scenario created units and answered for adapters with no one asking. Slice 6 adds roles, the `admit` gate, admitted events with their reactions, admitted changes to attributes, and the watches that changeable carried facts need.
+
+### G.1 What slice 6 adds
+
+| Added in slice 6 | Still waits |
+|---|---|
+| `role r`, `role r is a K` | real authentication (sub-project 4) |
+| `admit ⟨verb⟩ a new K[, K… or K] by r[, r] [where ⟨cond⟩]` | `suture run` reading JSON inputs (§5.4) |
+| `admit ⟨verb⟩ K by r[, r] [where ⟨cond⟩]`, and reactions `when a r [or r] ⟨verb⟩s a K: …` | events with data (`cancels an Order with reason …`) |
+| `admit change K's a by r[, r] [where ⟨cond⟩]` | changing a reference, a set, a calculated attribute or a pool key |
+| `the caller` and `the caller's a` in an `admit` condition | `the caller` in rules and reactions |
+| changeable carried facts: readers are refreshed and checked | |
+| scenarios: `when r N ⟨verb⟩s [a new] K M …`, `when r N changes M's a to ⟨value⟩`, `is refused at the gate` | |
+| `suture build` lists roles, what is admitted, and the watches | |
+
+### G.2 Semantics that slice 6 settles
+
+1. **Roles.** A caller has a role and a name. For `role customer is a Customer`, the name is a Customer unit, and the input is refused at the gate if there is none. For a role with no kind, the name is only an identity (`support Sam`).
+2. **The gate.** Every input passes the gate: a creation, an event or a change. It is admitted if some `admit` has its verb, its kind (and attribute), the caller's role, and a condition that holds. Otherwise it is refused at the gate and changes no unit. The decision is journaled either way. A program with no `admit` keeps the slice 1–5 behaviour: every input is admitted. `given` is the scenario's world, not an input, and never passes the gate.
+3. **The condition.** It reads the target: the new unit as it would be created (with its calculated attributes and carried facts), or the existing unit. `the caller` is the caller's unit, and `the caller's a` reads one of its attributes; both are compile errors if one of the admit's roles has no kind. The check reads at most two units, so it is bounded.
+4. **Admitted events.** `admit cancel Order by customer …` admits the event `cancels` on an Order; the verb takes `-s` (`-es` after s, sh, ch, x or z). A reaction `when a customer or support cancels an Order: …` handles it, and `the Order` is its target. An admitted event with no reaction, a reaction to an event that is not admitted, or a reaction naming a role that the admit does not, is a compile error. The reaction is a step like any other (§3.3): if it would break a rule, it is refused and the caller is told the rule. Events target root kinds.
+5. **Admitted changes.** `admit change Stock's units by staff` lets a caller set that attribute to a value of its type. The change is a step on the unit, checked by its rules, so lowering units below what is taken is refused by rule `stock`. A change on a unit wakes the bindings waiting on its pool keys, as a release does (F.2.9). A reference, a set, a calculated attribute, a part's attribute, or an attribute that keys a pool (F.2.6) cannot be changed in slice 6 (a compile error).
+6. **Changeable facts.** An attribute is changeable if an admitted change, a reaction or an effect outcome can set it; every other attribute is fixed (F.2.15). A rule that reads a changeable fact of another unit is per-group (§4.3), and never fixed.
+7. **Watches.** The host remembers, for each unit, the units that carry its facts: those that reference it, and those whose bindings it granted. When an admitted change sets a carried attribute, every such reader is checked with the new value first. If a rule of any reader would newly break, the change is refused by that rule, naming the reader. Otherwise the change applies, every reader is refreshed, and each reader runs its pass again, so a step that was held back on the old value is tried again. The cost is the number of readers, which `suture build` reports for each watched attribute.
+8. **Explanations** show the caller of every admitted input, and the gate's reason for every refusal: no admit for the role, or the condition that failed.
+
+### G.3 Acceptance
+
+- Each row of G.1 has small programs that use it, and programs that misuse it get errors with file and line.
+- **The shop** gets §3.6's roles and admits. Scenarios: a customer places an order; a customer cancels someone else's order and is refused at the gate; support cancels an order before shipping, which releases its stock; a cancellation after sending is refused by rule `late`; staff lowering units below what is taken is refused by rule `stock`; staff raising units wakes an order that waited for stock.
+- **Workspace provisioning:** admins add clusters and tenants place workspaces; resizing a cluster below its taken seats is refused, and adding a cluster wakes a waiting workspace.
+- Every scenario of both apps replays to the same state.
