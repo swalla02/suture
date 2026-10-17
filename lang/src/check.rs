@@ -5,7 +5,7 @@
 use crate::ast::{self, CmpOp, Head, Literal, Loc, NounPhrase, Source, Term, TypeName};
 use crate::ir::{
     Action, Admit, Admitted, Arith, Attr, Binding, Body, Cond, Criterion, Define, Effect, Goal, Kind, Lit, Need, Num, Op, OwnerRef, Path,
-    Program, Reaction, Role, Rule, Slot, Step, Taking, Ty, CREATED, TIMED_OUT,
+    third_person, Program, Reaction, Role, Rule, Slot, Step, Taking, Ty, CREATED, TIMED_OUT,
 };
 use crate::lex::Error;
 use crate::readback;
@@ -458,9 +458,9 @@ impl Checker {
         }
         self.rules(src, &mut p);
         self.goals(src, &mut p);
-        self.reactions(src, &mut p);
         self.roles(src, &mut p);
         self.admits(src, &mut p);
+        self.reactions(src, &mut p);
         for i in 0..p.rules.len() {
             p.rules[i].fixed = fixed_rule(&p, &p.rules[i]);
         }
@@ -1133,6 +1133,13 @@ impl Checker {
 
     fn reactions(&mut self, src: &Source, p: &mut Program) {
         for r in &src.reactions {
+            if !r.by.is_empty() {
+                if self.event(p, r) {
+                    let actions = self.actions(p, r);
+                    p.reactions.push(Reaction { kind: r.kind.clone(), outcome: r.outcome.clone(), by: r.by.clone(), actions });
+                }
+                continue;
+            }
             let Some(e) = p.effect_of(&r.kind) else {
                 self.errors.push(err(&r.at, format!("a {} has no effect, so nothing reports `{}` for it", r.kind, r.outcome)));
                 continue;
@@ -1144,6 +1151,33 @@ impl Checker {
                 ));
                 continue;
             }
+            let actions = self.actions(p, r);
+            p.reactions.push(Reaction { kind: r.kind.clone(), outcome: r.outcome.clone(), by: vec![], actions });
+        }
+    }
+
+    /// An admitted event's reaction names an admitted event, and only roles
+    /// its admits name (appendix G.2.4).
+    fn event(&mut self, p: &Program, r: &ast::ReactionDecl) -> bool {
+        let admits: Vec<&Admit> =
+            p.admits.iter().filter(|a| matches!(&a.what, Admitted::Event { verb, kind } if third_person(verb) == r.outcome && *kind == r.kind)).collect();
+        if admits.is_empty() {
+            let verb = r.outcome.strip_suffix("es").filter(|v| third_person(v) == r.outcome).or(r.outcome.strip_suffix('s')).unwrap_or(&r.outcome);
+            self.errors.push(err(&r.at, format!("no `admit` lets anyone {verb} {}; add `admit {verb} {} by {}`", a(&r.kind), r.kind, r.by.join(", "))));
+            return false;
+        }
+        let mut ok = true;
+        for role in &r.by {
+            if !admits.iter().any(|a| a.roles.contains(role)) {
+                let names: Vec<&str> = admits.iter().flat_map(|a| a.roles.iter().map(String::as_str)).collect();
+                self.errors.push(err(&r.at, format!("`{}`: only {} may do this, not {role}", r.outcome, names.join(", "))));
+                ok = false;
+            }
+        }
+        ok
+    }
+
+    fn actions(&mut self, p: &Program, r: &ast::ReactionDecl) -> Vec<Action> {
             let mut actions = vec![];
             for a in &r.actions {
                 match self.np(p, &r.at, &r.kind, &a.target) {
@@ -1176,8 +1210,7 @@ impl Checker {
                     None => {}
                 }
             }
-            p.reactions.push(Reaction { kind: r.kind.clone(), outcome: r.outcome.clone(), actions });
-        }
+            actions
     }
 
     fn roles(&mut self, src: &Source, p: &mut Program) {
@@ -1253,6 +1286,12 @@ impl Checker {
                     None => None,
                 };
                 self.caller = None;
+                if let Admitted::Event { verb, kind } = &what {
+                    if !src.reactions.iter().any(|r| !r.by.is_empty() && r.kind == *kind && r.outcome == third_person(verb)) {
+                        let who = a.roles.join(" or ");
+                        self.errors.push(err(&a.at, format!("`admit {}`: no reaction handles it; add `when a {who} {} {}: …`", a.source, third_person(verb), self::a(kind))));
+                    }
+                }
                 p.admits.push(Admit { what, roles: a.roles.clone(), cond, source: a.source.clone() });
             }
         }

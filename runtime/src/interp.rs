@@ -308,6 +308,13 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
             return Outcome::new(u, out);
         }
         Msg::Granted { key, by, taken, facts } => granted(prog, &mut u, key, by, taken, facts, &mut out),
+        Msg::Event { verb, by } => {
+            u.notes.push(format!("{by} {verb} it"));
+            let kind = u.root.kind.clone();
+            let mut notes = vec![];
+            react(prog, &mut u.root, &unit.facts, &[], &kind, verb, true, &mut notes);
+            u.notes.extend(notes);
+        }
         Msg::Refused { key, by, rule } => {
             let Some((at, id)) = find_bind(&u, key) else { return Outcome::kept(unit, format!("ignored a refusal for {key}: it is gone"), out) };
             let n = node_at_mut(&mut u.root, &at);
@@ -347,6 +354,11 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
             .and_then(|at| prog.effect_of(&node_at(&unit.root, &at).kind).map(|e| ask_for(&unit.label, View::of(unit), &at, e)));
         let out = Out { asks: again.into_iter().collect(), ..Out::default() };
         return Outcome::kept(unit, format!("refused by rule {}: {}", r.name, r.paraphrase), out);
+    }
+    if let (Some(r), Msg::Event { by, verb }) = (newly_violated(prog, unit, &u), msg) {
+        // The event's step would break a rule: it is refused, and its caller
+        // is told which rule (appendix G.2.4).
+        return Outcome::kept(unit, format!("refused {by} {verb} it: refused by rule {}: {}", r.name, r.paraphrase), Out::default());
     }
     if let (Some(r), Msg::Patience { .. }) = (violated(prog, &u), msg) {
         // Moving on would break a rule: the slot stays where it is.
@@ -615,7 +627,7 @@ fn answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[(Strin
     let shown: Vec<String> = data.iter().map(|(k, v)| format!("{k} {}", v.show(&prog.currency))).collect();
     let mut notes =
         vec![if shown.is_empty() { format!("{kind} {outcome}") } else { format!("{kind} {outcome}: {}", shown.join(", ")) }];
-    react(prog, &mut t, &u.facts, &at, &kind, outcome, &mut notes);
+    react(prog, &mut t, &u.facts, &at, &kind, outcome, false, &mut notes);
     if let Some(r) = broken_rule(prog, View::of(u).with(&t)) {
         return Err(Refusal { note: format!("refused by rule {}: {}", r.name, r.paraphrase), again });
     }
@@ -652,7 +664,7 @@ fn deadline(prog: &Program, u: &mut Unit, key: &str, out: &mut Out) -> Result<()
     // break a rule are held back instead.
     let mut t = u.root.clone();
     let mut notes = vec![];
-    react(prog, &mut t, &u.facts, &at, &kind, TIMED_OUT, &mut notes);
+    react(prog, &mut t, &u.facts, &at, &kind, TIMED_OUT, false, &mut notes);
     match newly_broken(prog, View::of(u), &t) {
         Some(r) => u.notes.push(format!("reaction held: rule {}: {}", r.name, r.paraphrase)),
         None => {
@@ -711,8 +723,10 @@ pub fn duration(secs: u64) -> String {
 }
 
 /// Applies the `when` reactions to an outcome (spec §3.3).
-fn react(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize], kind: &str, outcome: &str, notes: &mut Vec<String>) {
-    for r in prog.reactions.iter().filter(|r| r.kind == kind && r.outcome == outcome) {
+/// Applies the reactions to an outcome, or with `event` to an admitted event.
+#[allow(clippy::too_many_arguments)]
+fn react(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize], kind: &str, outcome: &str, event: bool, notes: &mut Vec<String>) {
+    for r in prog.reactions.iter().filter(|r| r.kind == kind && r.outcome == outcome && r.by.is_empty() != event) {
         for a in &r.actions {
             let Some(target) = here(View::bare(root, facts), at, &a.target.steps) else { continue };
             let Some(calc) = &a.becomes else {
@@ -1064,6 +1078,16 @@ pub fn holds(prog: &Program, u: &Unit, at: &[usize], c: &Cond) -> bool {
 /// only when its filter is known to hold.
 pub fn violated<'p>(prog: &'p Program, u: &Unit) -> Option<&'p Rule> {
     broken_rule(prog, View::of(u))
+}
+
+/// `a Payment`, `an Order`.
+pub fn a_kind(kind: &str) -> String {
+    if kind.starts_with(['A', 'E', 'I', 'O', 'U']) { format!("an {kind}") } else { format!("a {kind}") }
+}
+
+/// A rule `after` breaks that `before` did not.
+fn newly_violated<'p>(prog: &'p Program, before: &Unit, after: &Unit) -> Option<&'p Rule> {
+    prog.rules.iter().find(|r| broken(prog, View::of(after), r) && !broken(prog, View::of(before), r))
 }
 
 fn broken_rule<'p>(prog: &'p Program, v: View) -> Option<&'p Rule> {

@@ -31,6 +31,8 @@ pub enum ScenarioStep {
         given: bool,
         refused: Option<Refused>,
     },
+    /// `when support Sam cancels O1 [is refused …]`: an admitted event (appendix G.2.4).
+    Event { by: Caller, target: String, refused: Option<Refused> },
     /// `and forms answers filled with licence "L-77" [for O1]`
     Answer { adapter: String, outcome: String, data: Vec<(String, Literal)>, target: Option<String> },
     /// `expect O1 is [not] settled`
@@ -148,6 +150,11 @@ fn step(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {
         }
         Some(Caller { role, name, verb })
     };
+    if let Some(by) = by.clone().filter(|_| !(c.is_word("a") || c.is_word("an"))) {
+        let target = c.word()?;
+        let refused = refusal(c)?;
+        return Ok(ScenarioStep::Event { by, target, refused });
+    }
     if by.is_some() || c.is_word("a") || c.is_word("an") {
         if !(c.eat_word("a") || c.eat_word("an")) {
             return Err(c.error(format!("expected `a new ⟨Kind⟩`, found {}", c.found())));
@@ -330,6 +337,10 @@ mod tests {
         assert_eq!(by, &Some(Caller { role: "customer".into(), name: "Ada".into(), verb: "places".into() }));
         let ScenarioStep::Create { refused, .. } = &s.steps[3] else { panic!() };
         assert_eq!(refused, &Some(Refused::Gate));
+        let src = "scenario \"x\":\n  when   support Sam cancels O1\n         is refused by rule late\n";
+        let s = &parse_scenarios("o.scenario", src).unwrap()[0];
+        let by = Caller { role: "support".into(), name: "Sam".into(), verb: "cancels".into() };
+        assert_eq!(s.steps[0], ScenarioStep::Event { by, target: "O1".into(), refused: Some(Refused::Rule("late".into())) });
         let e = parse_scenarios("o.scenario", "scenario \"x\":\n  given  customer Ada places a new Order O1\n").unwrap_err();
         assert!(e.msg.contains("a `given` is the world"), "{e}");
     }

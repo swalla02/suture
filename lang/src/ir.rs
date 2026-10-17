@@ -299,7 +299,10 @@ pub struct Goal {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Reaction {
     pub kind: String,
+    /// An effect's outcome, or for an admitted event its verb (`cancels`).
     pub outcome: String,
+    /// For an admitted event: the roles it is from (appendix G.2.4).
+    pub by: Vec<String>,
     pub actions: Vec<Action>,
 }
 

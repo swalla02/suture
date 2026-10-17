@@ -119,6 +119,26 @@ impl Host {
         self.make(Some(by), kind, label, given, items)
     }
 
+    /// A caller's admitted event on an existing unit (appendix G.2.4). It
+    /// passes the gate, then its reactions run as one step, which a rule may
+    /// refuse.
+    pub fn input_event(&mut self, by: Option<&Caller>, target: &str) -> Result<(), String> {
+        let unit = self.unit(target).ok_or_else(|| format!("there is no unit {target}"))?;
+        let kind = unit.root.kind.clone();
+        let fits = |a: &Admitted| matches!(a, Admitted::Event { verb, kind: k } if by.is_some_and(|c| third_person(verb) == c.verb) && *k == kind);
+        self.gate(by, fits, target, &unit)?;
+        let Some(by) = by else { return Ok(()) };
+        if !self.prog.reactions.iter().any(|r| r.kind == kind && r.outcome == by.verb && !r.by.is_empty()) {
+            return Err(format!("nothing reacts when a {} {} {}", by.role, by.verb, interp::a_kind(&kind)));
+        }
+        self.tell(target, &Msg::Event { verb: by.verb.clone(), by: format!("{} {}", by.role, by.name) })?;
+        let refused = self.unit(target).and_then(|u| u.notes.iter().find_map(|n| n.split_once(": refused by rule ").map(|(_, r)| r.to_string())));
+        match refused {
+            Some(r) => Err(format!("refused by rule {r}")),
+            None => Ok(()),
+        }
+    }
+
     fn make(
         &mut self,
         gated: Option<Option<&Caller>>,

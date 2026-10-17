@@ -32,6 +32,10 @@ pub fn run(prog: &Program, sc: &Scenario) -> Report {
                 let created = create(prog, &mut host, kind, name, attrs, items, (!*given).then_some(by.as_ref()));
                 refusal(&mut host, name, refused.as_ref(), created, "it was created")
             }
+            ScenarioStep::Event { by, target, refused } => {
+                let r = host.input_event(Some(by), target);
+                refusal(&mut host, target, refused.as_ref(), r, "it was admitted")
+            }
             ScenarioStep::Answer { adapter, outcome, data, target } => {
                 values(prog, data).and_then(|v| host.answer(adapter, outcome, &v, target.as_deref()))
             }

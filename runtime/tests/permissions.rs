@@ -70,3 +70,49 @@ fn expecting_a_refusal_that_does_not_happen_fails() {
     assert_eq!(r.failures.len(), 1);
     assert!(r.failures[0].contains("expected O1 to be refused at the gate, but it was created"), "{:?}", r.failures);
 }
+
+const EVENTS: &str = "module t version 1, currency EUR
+role customer is a Customer
+role support
+kind Customer { name: Text }
+kind Order    { customer: Customer, total: Money, cancelled: Bool = no }
+kind Payment  { order: Order }
+Order needs Payment while it is not cancelled
+effect capture Payment via payments within 30 seconds
+  sends the order's total
+  reports captured
+admit cancel Order by customer where the Order's customer is the caller
+admit cancel Order by support
+when a customer or support cancels an Order: the Order is cancelled
+rule kept: no cancelled Order has a Payment that is captured
+";
+
+fn events(steps: &str) -> suture_runtime::scenario::Report {
+    let p = suture_lang::compile(&[("t.st".to_string(), EVENTS.to_string())]).unwrap_or_else(|e| panic!("{e:?}"));
+    let src = format!("scenario \"t\":\n  given  a Customer Ada with name Ada\n  and    a Customer Bob with name Bob\n  and    a new Order O1 with customer Ada and total 50 EUR\n{steps}");
+    let sc = &parse_scenarios("t.scenario", &src).unwrap_or_else(|e| panic!("{e}"))[0];
+    run(&p, sc)
+}
+
+#[test]
+fn an_admitted_event_runs_its_reaction() {
+    let r = events("  when   customer Ada cancels O1\n  expect O1 is cancelled\n  and    payments answers captured\n  expect O1 is cancelled\n");
+    assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
+    assert!(r.host.trace.iter().any(|l| l.contains("customer Ada cancels it")), "{}", r.host.trace.join("\n"));
+}
+
+#[test]
+fn an_event_from_the_wrong_caller_is_refused_at_the_gate() {
+    let r = events("  when   customer Bob cancels O1\n         is refused at the gate\n  expect O1 is not cancelled\n  when   support Sam cancels O1\n  expect O1 is cancelled\n");
+    assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
+}
+
+#[test]
+fn an_event_that_would_break_a_rule_is_refused_by_it() {
+    let r = events("  when   payments answers captured\n  and    support Sam cancels O1\n         is refused by rule kept\n  expect O1 is not cancelled\n  expect O1's Payment is captured\n");
+    assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
+    let r = events("  when   support Sam pays O1\n");
+    assert!(r.failures[0].contains("no `admit` lets a support do that"), "{:?}", r.failures);
+    let r = events("  when   support Sam cancels O9\n");
+    assert!(r.failures[0].contains("there is no unit O9"), "{:?}", r.failures);
+}

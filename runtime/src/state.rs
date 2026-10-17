@@ -426,6 +426,9 @@ pub enum Msg {
     Waiting { key: String },
     /// The binding `key` of `from` gives back what it took (appendix F.2.10).
     Release { from: String, key: String, taken: Option<(String, Val)> },
+    /// An admitted event from a caller (`customer Ada`), by its verb as
+    /// written (`cancels`), for the reactions to it (appendix G.2.4).
+    Event { verb: String, by: String },
 }
 
 impl Msg {
@@ -444,6 +447,7 @@ impl Msg {
             Msg::Refused { key, by, rule } => Value::tuple([Value::from(6i64), text(key), text(by), text(rule)]),
             Msg::Waiting { key } => Value::tuple([Value::from(7i64), text(key)]),
             Msg::Release { from, key, taken } => Value::tuple([Value::from(8i64), text(from), text(key), taken_value(taken)]),
+            Msg::Event { verb, by } => Value::tuple([Value::from(9i64), text(verb), text(by)]),
         }
     }
 
@@ -481,6 +485,10 @@ impl Msg {
             Some(Ok(8)) => {
                 let [_, from, key, taken] = fields::<4>(v, "release message")?;
                 Ok(Msg::Release { from: string(from)?, key: string(key)?, taken: taken_from(taken)? })
+            }
+            Some(Ok(9)) => {
+                let [_, verb, by] = fields::<3>(v, "event message")?;
+                Ok(Msg::Event { verb: string(verb)?, by: string(by)? })
             }
             _ => Err(format!("not a message: {v}")),
         }
@@ -729,6 +737,7 @@ mod tests {
             Msg::Refused { key: "k".into(), by: "S1".into(), rule: "stock".into() },
             Msg::Waiting { key: "k".into() },
             Msg::Release { from: "O1".into(), key: "k".into(), taken: taken.clone() },
+            Msg::Event { verb: "cancels".into(), by: "customer Ada".into() },
         ] {
             assert_eq!(Msg::from_value(&m.to_value()).unwrap(), m);
         }

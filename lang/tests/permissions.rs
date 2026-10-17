@@ -72,3 +72,29 @@ fn permission_mistakes_are_errors() {
     let e = errors(&format!("{SHOP}admit place a new Order by customer where the caller is \"Ada\"\n"));
     assert!(!e.is_empty(), "the caller is a reference, not text");
 }
+
+const EVENTS: &str = "admit cancel Order by customer where the Order's customer is the caller
+admit cancel Order by support
+when a customer or support cancels an Order: the Order is cancelled
+";
+
+#[test]
+fn admitted_events_have_reactions() {
+    let p = prog(&format!("{SHOP}{EVENTS}"));
+    let r = p.reactions.iter().find(|r| r.outcome == "cancels").unwrap();
+    assert_eq!((r.kind.as_str(), r.by.clone()), ("Order", vec!["customer".to_string(), "support".to_string()]));
+    assert_eq!(r.actions[0].attr, "cancelled");
+    assert_eq!(p.admits.iter().filter(|a| matches!(&a.what, Admitted::Event { verb, .. } if verb == "cancel")).count(), 2);
+}
+
+#[test]
+fn event_mistakes_are_errors() {
+    let e = errors(&format!("{SHOP}when a customer cancels an Order: the Order is cancelled\n"));
+    assert!(e[0].contains("no `admit` lets anyone cancel an Order; add `admit cancel Order by customer`"), "{e:?}");
+    let e = errors(&format!("{SHOP}admit cancel Order by support\nwhen a customer or support cancels an Order: the Order is cancelled\n"));
+    assert!(e[0].contains("`cancels`: only support may do this, not customer"), "{e:?}");
+    let e = errors(&format!("{SHOP}admit cancel Order by support\n"));
+    assert!(e[0].contains("`admit cancel Order by support`: no reaction handles it; add `when a support cancels an Order: …`"), "{e:?}");
+    let e = errors(&format!("{SHOP}admit fix Order by support\nwhen a support fixes an Order: the Order is fixed\n"));
+    assert!(e[0].contains("no Bool attribute `fixed`"), "{e:?}");
+}

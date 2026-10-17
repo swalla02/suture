@@ -258,7 +258,10 @@ pub struct Action {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReactionDecl {
     pub kind: String,
+    /// An effect's outcome, or for an admitted event its verb as written (`cancels`).
     pub outcome: String,
+    /// For an admitted event: the roles it is from (appendix G.2.4).
+    pub by: Vec<String>,
     pub actions: Vec<Action>,
     pub at: Loc,
 }

@@ -449,7 +449,8 @@ fn goal(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     Ok(())
 }
 
-/// `when a Payment is declined: its Order is cancelled [and …]`
+/// `when a Payment is declined: its Order is cancelled [and …]`, or for an
+/// admitted event `when a customer or support cancels an Order: …`.
 fn reaction(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     let toks = st.tokens();
     let mut c = Cursor::new(&toks, &st.file, st.line);
@@ -457,16 +458,29 @@ fn reaction(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     if !(c.eat_word("a") || c.eat_word("an")) {
         return Err(c.error(format!("expected `a` or `an`, found {}", c.found())));
     }
-    let kind = c.kind_name()?;
-    c.expect_word("is")?;
-    let outcome = state_word(&mut c)?;
+    let mut by = vec![];
+    let (kind, outcome) = if matches!(c.peek(), Some(Tok::Word(w)) if w.starts_with(char::is_lowercase)) {
+        by.push(c.word()?);
+        while c.eat_sym(',') || c.eat_word("or") {
+            by.push(c.word()?);
+        }
+        let verb = c.word()?;
+        if !(c.eat_word("a") || c.eat_word("an")) {
+            return Err(c.error(format!("expected `a` or `an` after `{verb}`, found {}", c.found())));
+        }
+        (c.kind_name()?, verb)
+    } else {
+        let kind = c.kind_name()?;
+        c.expect_word("is")?;
+        (kind, state_word(&mut c)?)
+    };
     c.expect_sym(':')?;
     let mut actions = vec![action(&mut c)?];
     while c.eat_word("and") {
         actions.push(action(&mut c)?);
     }
     c.expect_end()?;
-    out.reactions.push(ReactionDecl { kind, outcome, actions, at });
+    out.reactions.push(ReactionDecl { kind, outcome, by, actions, at });
     Ok(())
 }
 
