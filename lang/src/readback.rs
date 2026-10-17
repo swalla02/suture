@@ -243,6 +243,28 @@ fn that_words(p: &Program, k: &str, f: Option<&Cond>) -> String {
 }
 
 /// A literal as it is written: `"France"`, `120 EUR`, `12.50 EUR`, `3`, `yes`.
+/// An open choice for `suture build` (appendix F.3): who chooses what, by
+/// which pool key, and how candidates are ranked.
+pub fn choice(p: &Program, b: &crate::ir::Binding) -> String {
+    let key = num_words(p, &b.subject, &b.key);
+    if b.key_attr.is_empty() {
+        let to = if b.target.starts_with("all ") { "the".to_string() } else { format!("its {}'s", b.key_words()) };
+        let t = b.taking.as_ref().map_or_else(String::new, |t| t.name.clone());
+        return format!("each {} adds to {to} total {t} (no choice: the key names the {})", b.subject, b.target);
+    }
+    let key = match b.per.as_ref().and_then(|l| p.lists.iter().find(|x| x.name == *l)) {
+        Some(l) => key.replace("its element", &format!("the {}", l.singular())),
+        None => key,
+    };
+    let per = b.per.as_ref().map_or_else(String::new, |l| format!(" for each of its {l}"));
+    let how = if b.key_member { "contain" } else { "is" };
+    let rank = match b.prefer.len() {
+        0 => "in the order they were created".to_string(),
+        n => format!("by `prefer {}` ({n} criteri{})", b.target, if n == 1 { "on" } else { "a" }),
+    };
+    format!("{} uses a {}{per}: pool key {}'s {} {how} {key}, up to {} candidates, ranked {rank}", b.subject, b.target, b.target, b.key_attr, p.candidates)
+}
+
 pub fn lit_text(p: &Program, l: &Lit) -> String {
     match l {
         Lit::Text(s) => format!("\"{s}\""),

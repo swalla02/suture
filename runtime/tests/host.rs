@@ -6,7 +6,7 @@ use suture_runtime::interp::in_state;
 use suture_runtime::state::Val;
 
 fn shop() -> Program {
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/shop");
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/shop-slice4");
     suture_lang::compile_dir(std::path::Path::new(dir)).unwrap_or_else(|e| panic!("{e:?}"))
 }
 

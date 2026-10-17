@@ -308,7 +308,7 @@ impl Host {
                 return Err(format!("{adapter} has no pending request{}", target.map(|t| format!(" for {t}")).unwrap_or_default()));
             };
             self.trace.push(format!("      {adapter}: {outcome}   ({})", ask.key));
-            self.trace.push(format!("{:<4}ignored a late answer for {}: it timed out", ask.label, ask.key));
+            self.trace.push(format!("{:<3} ignored a late answer for {}: it timed out", ask.label, ask.key));
             return Ok(());
         };
         let hole = self.pending[i].1;
@@ -490,7 +490,7 @@ impl Host {
             return Err(format!("{label}: a step faulted: {}", faults.join("; ")));
         };
         for n in &unit.notes {
-            self.trace.push(format!("{label:<4}{n}"));
+            self.trace.push(format!("{label:<3} {n}"));
         }
         for (id, secs) in &unit.timers {
             if self.patience_timers.insert(id.clone()) {

@@ -3,12 +3,12 @@ use suture_lang::scenario::{parse_scenarios, Scenario};
 use suture_runtime::scenario::run;
 
 fn shop() -> Program {
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/shop");
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/shop-slice4");
     suture_lang::compile_dir(std::path::Path::new(dir)).unwrap_or_else(|e| panic!("{e:?}"))
 }
 
 fn scenarios() -> Vec<Scenario> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/shop/orders.scenario");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/shop-slice4/orders.scenario");
     parse_scenarios("orders.scenario", &std::fs::read_to_string(path).unwrap()).unwrap()
 }
 
@@ -81,7 +81,7 @@ fn the_workspace_scenarios_pass() {
     let p = suture_lang::compile_dir(std::path::Path::new(dir)).unwrap_or_else(|e| panic!("{e:?}"));
     let src = std::fs::read_to_string(format!("{dir}/workspaces.scenario")).unwrap();
     let all = parse_scenarios("workspaces.scenario", &src).unwrap();
-    assert_eq!(all.len(), 3);
+    assert_eq!(all.len(), 4);
     for sc in all {
         let r = run(&p, &sc);
         assert!(r.passed(), "{}: {:?}\n{}", r.title, r.failures, r.host.trace.join("\n"));

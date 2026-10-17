@@ -1,28 +1,64 @@
 -- Three workspace requests against simulated identity, git, billing and storage services.
 scenario "a workspace that gets ready":
-  when   a new Workspace W1 with team core and seats 3
+  given  a Region EU with name Europe
+  and    a Region US with name America
+  and    a Cluster EU1 with region EU and seats 5
+  and    a Cluster EU2 with region EU and seats 3
+  and    a Cluster US1 with region US and seats 2
+  when   a new Workspace W1 with team core, region EU and seats 3
          and a member with email "ana@core" and admin yes
          and a member with email "bo@core"
   and    identity answers opened
   and    git answers created
   and    billing answers paid
   and    storage answers made
+  and    clusters answers placed
   expect W1 is ready
+  expect W1's Tenant's Cluster's seats is 5
+  expect the total seats taken from EU1 is 3
   expect the number of W1's members is 2
   expect W1's price is 36 EUR
   expect W1's Charge's amount is 36 EUR
 
 scenario "too many members for the seats":
-  when   a new Workspace W2 with team ops and seats 1
+  given  a Region EU with name Europe
+  and    a Region US with name America
+  and    a Cluster EU1 with region EU and seats 5
+  and    a Cluster EU2 with region EU and seats 3
+  and    a Cluster US1 with region US and seats 2
+  when   a new Workspace W2 with team ops, region EU and seats 1
          and a member with email "cy@ops" and admin yes
          and a member with email "di@ops"
          is refused by rule seats
 
 scenario "an identity service that never answers":
-  when   a new Workspace W3 with team web and seats 2
+  given  a Region EU with name Europe
+  and    a Region US with name America
+  and    a Cluster EU1 with region EU and seats 5
+  and    a Cluster EU2 with region EU and seats 3
+  and    a Cluster US1 with region US and seats 2
+  when   a new Workspace W3 with team web, region EU and seats 2
          and a member with email "ed@web" and admin yes
   and    3 minutes pass
   expect W3's Account is timed out
   expect W3 has no Repo
   when   1 hour passes
   expect an alert for W3
+
+scenario "a full region makes a workspace wait":
+  given  a Region EU with name Europe
+  and    a Region US with name America
+  and    a Cluster EU1 with region EU and seats 5
+  and    a Cluster EU2 with region EU and seats 3
+  and    a Cluster US1 with region US and seats 2
+  when   a new Workspace W4 with team api, region US and seats 2
+         and a member with email "fi@api" and admin yes
+  and    a new Workspace W5 with team ml, region US and seats 1
+         and a member with email "gu@ml" and admin yes
+  expect the total seats taken from US1 is 2
+  when   1 hour passes
+  expect an alert for W5
+  when   a Cluster US2 with region US and seats 4
+  and    clusters answers placed for W5
+  expect W5's Tenant is placed
+  expect the total seats taken from US2 is 1

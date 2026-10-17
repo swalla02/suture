@@ -2,7 +2,7 @@ use suture_lang::ir::{Cond, Lit, Num, Op, Path, Program, Step};
 use suture_lang::{compile, compile_dir};
 
 fn shop() -> Program {
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/shop");
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/shop-slice4");
     compile_dir(std::path::Path::new(dir)).unwrap_or_else(|e| panic!("{e:?}"))
 }
 

@@ -1,0 +1,68 @@
+-- Three orders against simulated payment, form and carrier services.
+scenario "a French order with alcohol":
+  when   a new Order O1 with country France and total 120 EUR
+  and    payments answers captured
+  and    forms answers filled with value 150 EUR and contents alcohol
+  and    forms answers filled with value 100 EUR and contents alcohol
+  and    forms answers filled with licence ""
+  and    forms answers filled with licence "L-77"
+  and    carriers answers delivered
+  expect O1 is paid
+  expect O1 is settled
+
+scenario "a Japanese order":
+  when   a new Order J1 with country Japan and total 80 EUR
+  and    payments answers captured
+  and    carriers answers delivered
+  expect J1 is settled
+
+scenario "a declined payment":
+  when   a new Order D1 with country Japan and total 50 EUR
+  and    payments answers declined
+  expect D1 is cancelled
+  expect D1 is not paid
+
+scenario "a payment service that never answers":
+  when   a new Order S1 with country Japan and total 60 EUR
+  and    90 seconds pass
+  expect S1's Payment is timed out
+  expect S1 is not settled
+  when   3 days pass
+  expect an alert for S1
+  expect S1 is not paid
+
+scenario "a slow payment service":
+  when   a new Order C1 with country Japan and total 70 EUR
+  and    45 seconds pass
+  and    payments answers captured
+  and    carriers answers delivered
+  expect C1 is settled
+  when   3 days pass
+  expect no alert for C1
+
+scenario "an answer after the time-out":
+  when   a new Order L1 with country Japan and total 40 EUR
+  and    90 seconds pass
+  and    payments answers captured
+  expect L1's Payment is timed out
+  expect L1 is not paid
+
+scenario "three lost parcels":
+  when   a new Order P1 with country Japan and total 90 EUR
+  and    payments answers captured
+  and    carriers answers lost
+  and    carriers answers lost
+  and    carriers answers lost
+  and    payments answers refunded
+  expect P1's Refund is refunded
+  expect P1 is settled
+  expect the number of P1's Shipments is 3
+  expect P1's Refund's amount is 90 EUR
+
+scenario "a customs form that never comes":
+  when   a new Order F2 with country France and total 30 EUR
+  and    payments answers captured
+  and    2 days pass
+  and    payments answers refunded
+  expect F2's Refund is refunded
+  expect F2 is settled

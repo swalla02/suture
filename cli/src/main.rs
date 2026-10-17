@@ -58,6 +58,12 @@ fn build(dir: &Path) -> Result<bool, String> {
         println!("  in other words:  {}", r.paraphrase);
         println!("  cost:            {}", r.tier);
     }
+    if !prog.bindings.is_empty() {
+        println!("\nchoices:");
+        for b in &prog.bindings {
+            println!("  {}", suture_lang::readback::choice(&prog, b));
+        }
+    }
     Ok(true)
 }
 

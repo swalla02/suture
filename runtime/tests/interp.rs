@@ -3,7 +3,7 @@ use suture_runtime::interp::{in_state, new_unit, step, violated};
 use suture_runtime::state::{Ask, Msg, Unit, Val};
 
 fn shop() -> Program {
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/shop");
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/shop-slice4");
     suture_lang::compile_dir(std::path::Path::new(dir)).unwrap_or_else(|e| panic!("{e:?}"))
 }
 
@@ -413,7 +413,7 @@ fn patience_does_not_abandon_an_alternative_that_went_out() {
 }
 
 fn shop_plus(extra: &str) -> Program {
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/shop");
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/shop-slice4");
     let mut files: Vec<(String, String)> = ["shop.st", "france.st"]
         .iter()
         .map(|f| (f.to_string(), std::fs::read_to_string(format!("{dir}/{f}")).unwrap()))

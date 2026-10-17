@@ -1597,7 +1597,8 @@ impl Checker {
                         match right {
                             Term::Word(s) if bools.contains(s) => Some(Cond::State { node: path, state: s.clone(), negated: *negated }),
                             _ => {
-                                self.errors.push(err(at, format!("`{}` is a shared {k}; compare its attributes, or a state: {}", show(left), bools.join(", "))));
+                                let states = if bools.is_empty() { String::new() } else { format!(", or a state: {}", bools.join(", ")) };
+                                self.errors.push(err(at, format!("`{}` is a shared {k}; compare its attributes{states}", show(left))));
                                 None
                             }
                         }

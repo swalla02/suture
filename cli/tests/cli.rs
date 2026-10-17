@@ -14,6 +14,9 @@ fn build_prints_read_backs() {
     assert!(out.contains("shop v1 → examples/shop/shop-v1.sut"), "{out}");
     assert!(out.contains("rule declared: every Declaration's value is at most its form's order's total"), "{out}");
     assert!(out.contains("in other words:  each declaration on its own"), "{out}");
+    assert!(out.contains("rule monthly: for each Customer and month"), "{out}");
+    assert!(out.contains("choices:\n  Shipment uses a Carrier: pool key Carrier's countries contain its order's country"), "{out}");
+    assert!(out.contains("each Refund adds to its customer's total amount of Refunds per month"), "{out}");
 }
 
 #[test]
@@ -24,12 +27,13 @@ fn run_passes_the_shop_scenarios() {
     assert!(out.contains("payments: no answer within 30 seconds"), "{out}");
     assert!(out.contains("alert: not met within 3 days"), "{out}");
     assert!(out.contains("ignored a late answer for L1/Payment#1"), "{out}");
-    assert_eq!(out.matches("  passed").count(), 8, "{out}");
+    assert!(out.contains("choice: Hermes for O1/Shipment#1@Carrier"), "{out}");
+    assert_eq!(out.matches("  passed").count(), 9, "{out}");
 }
 
 #[test]
 fn explain_shows_a_unit() {
-    let (ok, out) = suture(&["explain", "examples/shop", "--scenario", "examples/shop/orders.scenario", "O1"]);
+    let (ok, out) = suture(&["explain", "examples/shop", "--scenario", "examples/shop/orders.scenario", "F1"]);
     assert!(ok, "{out}");
     assert!(out.contains("goal met: every Order that is not cancelled is paid and settled"), "{out}");
 }

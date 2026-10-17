@@ -93,6 +93,19 @@ pub struct Binding {
     pub source: String,
 }
 
+impl Binding {
+    /// For a relation across units: the subject's attribute that names the target.
+    pub fn key_words(&self) -> String {
+        match &self.key {
+            Num::Path(Path { steps }) => match steps.as_slice() {
+                [Step::Attr(a)] => a.clone(),
+                _ => self.target.to_lowercase(),
+            },
+            _ => self.target.to_lowercase(),
+        }
+    }
+}
+
 /// `taking the line's quantity`: the amount, and the name of the running
 /// total it adds to (`quantity`, after its last attribute).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
