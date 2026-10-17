@@ -51,6 +51,9 @@ fn cond_formula(p: &Program, kind: &str, v: &str, c: &Cond) -> String {
             let inner = format!("exists(s in {}.{part}{filter})", path_formula(p, kind, v, node));
             if *negated { format!("not {inner}") } else { inner }
         }
+        Cond::Contains { set, item, negated } => {
+            format!("{} {} {}", num_formula(p, kind, v, item), if *negated { "∉" } else { "∈" }, num_formula(p, kind, v, set))
+        }
         Cond::And(cs) => cs.iter().map(|c| cond_formula(p, kind, v, c)).collect::<Vec<_>>().join(" and "),
         Cond::Or(cs) => format!("({})", cs.iter().map(|c| cond_formula(p, kind, v, c)).collect::<Vec<_>>().join(" or ")),
     }
@@ -64,6 +67,9 @@ fn cond_words(p: &Program, kind: &str, c: &Cond) -> String {
             let that = state.as_ref().map_or_else(String::new, |s| format!(" that is {s}"));
             let a = if *negated { "no" } else { "a" };
             format!("{} has {a} {}{that}", path_words(p, kind, node), words_of_kind(part))
+        }
+        Cond::Contains { set, item, negated } => {
+            format!("{} {} {}", num_words(p, kind, set), if *negated { "does not contain" } else { "contains" }, num_words(p, kind, item))
         }
         Cond::And(cs) => cs.iter().map(|c| cond_words(p, kind, c)).collect::<Vec<_>>().join(" and "),
         Cond::Or(cs) => cs.iter().map(|c| cond_words(p, kind, c)).collect::<Vec<_>>().join(" or "),
@@ -204,9 +210,19 @@ pub fn lit_text(p: &Program, l: &Lit) -> String {
         Lit::Bool(true) => "yes".into(),
         Lit::Bool(false) => "no".into(),
         Lit::Count(n) => n.to_string(),
+        Lit::Duration(secs) => duration_text(*secs),
         Lit::Money(c) if c % 100 == 0 => format!("{} {}", c / 100, p.currency),
         Lit::Money(c) => format!("{}.{:02} {}", c / 100, (c % 100).abs(), p.currency),
     }
+}
+
+/// `30 seconds`, `2 days`: the largest unit up to weeks that divides evenly.
+pub fn duration_text(secs: i64) -> String {
+    let (n, unit) = [(604_800, "week"), (86_400, "day"), (3_600, "hour"), (60, "minute")]
+        .into_iter()
+        .find(|(n, _)| secs != 0 && secs % n == 0)
+        .map_or((secs, "second"), |(n, unit)| (secs / n, unit));
+    format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
 }
 
 fn op_symbol(op: Op) -> &'static str {
@@ -239,6 +255,10 @@ fn step_names(p: &Program, kind: &str, path: &Path) -> Vec<(String, bool)> {
     for s in &path.steps {
         match s {
             Step::Attr(a) => out.push((a.clone(), false)),
+            Step::Ref(a) => {
+                out.push((a.clone(), false));
+                cur = p.kind(&cur).and_then(|k| k.attr(a)).and_then(|x| x.of.clone()).unwrap_or_default();
+            }
             Step::Part(k) | Step::Slot(k) => {
                 out.push((k.clone(), true));
                 cur = k.clone();

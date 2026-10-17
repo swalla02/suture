@@ -31,7 +31,7 @@ fn a_french_order_runs_end_to_end_on_the_kernel() {
     h.answer("forms", "filled", &data(&[("licence", Val::Text("L-77".into()))]), None).unwrap();
     h.answer("carriers", "delivered", &[], None).unwrap();
     let u = h.unit("O1").unwrap();
-    assert!(in_state(&h.prog, &u.root, &[], "settled"));
+    assert!(in_state(&h.prog, &u, &[], "settled"));
     let trace = h.trace.join("\n");
     assert!(trace.contains("refused by rule declared"), "{trace}");
     assert!(trace.contains("goal met"), "{trace}");

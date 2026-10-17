@@ -17,6 +17,10 @@ pub enum TypeName {
     Kind(String),
     /// `list of Line`: elements given with their owner (appendix E.2.6).
     List(String),
+    /// `set of Country`: references to several shared entities (appendix F.2.2).
+    Set(String),
+    Time,
+    Duration,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -25,6 +29,10 @@ pub enum Literal {
     Bool(bool),
     Money { cents: i64, currency: String },
     Count(i64),
+    /// `2 days`, in seconds (appendix F.2.14).
+    Duration(i64),
+    /// `{DE, FR}`: the names of shared entities, in scenarios only.
+    Set(Vec<String>),
 }
 
 /// `it`, `its x`, `the Order`, `the order's total`, `its form's order's total`.
@@ -88,6 +96,8 @@ pub enum Cond {
     Cmp { left: Num, op: CmpOp, right: Term },
     /// `x has a K [that is s]`, `x has no K [that is s]`
     Has { owner: NounPhrase, negated: bool, kind: String, state: Option<String> },
+    /// `x contains y`, `x does not contain y` (appendix F.2.2)
+    Contains { set: NounPhrase, item: NounPhrase, negated: bool },
     And(Vec<Cond>),
     Or(Vec<Cond>),
 }

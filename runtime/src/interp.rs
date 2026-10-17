@@ -2,10 +2,35 @@
 //! It is a pure function of the program, the unit and the message, so
 //! replaying the journal reproduces every step.
 
-use suture_lang::ir::{Arith, Body, Cond, Effect, Num, Op, Path, Program, Rule, Step, Ty, TIMED_OUT};
+use suture_lang::ir::{Arith, Body, Cond, Effect, Num, Op, Path, Program, Rule, Step, Ty, CREATED, TIMED_OUT};
 
 use crate::choice::choose;
-use crate::state::{Ask, Msg, Node, Status, Unit, Val};
+use crate::state::{Ask, Facts, Msg, Node, Status, Unit, Val};
+
+/// What a sentence reads: a unit's tree, and the facts carried into it
+/// (appendix F.2.3).
+#[derive(Clone, Copy)]
+pub struct View<'a> {
+    pub root: &'a Node,
+    pub facts: &'a Facts,
+}
+
+impl<'a> View<'a> {
+    pub fn of(u: &'a Unit) -> View<'a> {
+        View { root: &u.root, facts: &u.facts }
+    }
+
+    fn with(self, root: &'a Node) -> View<'a> {
+        View { root, facts: self.facts }
+    }
+}
+
+/// Where a walk ends: a node of this unit, or a shared entity's carried facts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Place {
+    Here(Vec<usize>),
+    There(String),
+}
 
 /// A bound on settling. A unit's parts are bounded, so a valid program
 /// settles long before this.
@@ -22,9 +47,8 @@ pub fn new_unit(prog: &Program, label: &str, kind: &str, given: &[(String, Val)]
     new_unit_with(prog, label, kind, given, &[])
 }
 
-/// A new unit with the elements of its lists (appendix E.2.6), each given as
-/// the list's name and the element's attributes. Formulas are computed
-/// after defaults and given values: the elements' first, then the root's.
+/// A new unit with the elements of its lists, at time 0 and reading no
+/// shared entity.
 pub fn new_unit_with(
     prog: &Program,
     label: &str,
@@ -32,24 +56,40 @@ pub fn new_unit_with(
     given: &[(String, Val)],
     items: &[(String, Vec<(String, Val)>)],
 ) -> Result<Unit, String> {
+    new_unit_full(prog, label, kind, given, items, Facts::new(), 0)
+}
+
+/// A new unit with the elements of its lists (appendix E.2.6), each given as
+/// the list's name and the element's attributes, the facts of the shared
+/// entities it refers to, and the clock. Formulas are computed after
+/// defaults and given values, in whatever order they read each other.
+pub fn new_unit_full(
+    prog: &Program,
+    label: &str,
+    kind: &str,
+    given: &[(String, Val)],
+    items: &[(String, Vec<(String, Val)>)],
+    facts: Facts,
+    now: i64,
+) -> Result<Unit, String> {
     let k = prog.kind(kind).ok_or_else(|| format!("there is no kind {kind}"))?;
     if let Some(o) = &k.owner {
         return Err(format!("{kind} is a part of {}; its owner's needs create it", o.kind));
     }
-    let mut root = blank(prog, kind, 1);
+    let mut root = blank(prog, kind, 1, now);
     give(prog, kind, &mut root, given)?;
     for (list, attrs) in items {
         let l = prog.lists.iter().find(|l| l.owner == kind && l.name == *list).ok_or_else(|| format!("{kind} has no list {list}"))?;
-        let mut element = blank(prog, &l.element, 1);
+        let mut element = blank(prog, &l.element, 1, now);
         give(prog, &l.element, &mut element, attrs)?;
         element.status = Status::Done;
         root.parts.push(element);
     }
     // Formulas may read each other and the owner in any order: compute
     // until nothing changes. Each attribute is set at most once.
-    while (0..root.parts.len()).fold(formulas(prog, &mut root, &[]), |changed, i| formulas(prog, &mut root, &[i]) || changed) {}
-    let unit = Unit { label: label.to_string(), root, notes: vec![], met: vec![], matched: vec![], alerts: vec![], timers: vec![] };
-    if let Some(r) = violated(prog, &step(prog, &unit, &Msg::Create).unit.root) {
+    while (0..root.parts.len()).fold(formulas(prog, &mut root, &facts, &[]), |changed, i| formulas(prog, &mut root, &facts, &[i]) || changed) {}
+    let unit = Unit { label: label.to_string(), root, notes: vec![], met: vec![], matched: vec![], alerts: vec![], timers: vec![], facts };
+    if let Some(r) = violated(prog, &step_at(prog, &unit, &Msg::Create, now).unit) {
         return Err(format!("refused by rule {}: {}", r.name, r.paraphrase));
     }
     Ok(unit)
@@ -64,7 +104,8 @@ fn give(prog: &Program, kind: &str, n: &mut Node, given: &[(String, Val)]) -> Re
             return Err(format!("{kind}.{name} is computed by its formula; it is not given"));
         }
         if v.ty() != a.ty {
-            return Err(format!("{kind}.{name} is {:?}, not {:?}", a.ty, v.ty()));
+            let want = a.of.as_ref().map_or_else(|| format!("{:?}", a.ty), |k| format!("{:?} of {k}", a.ty));
+            return Err(format!("{kind}.{name} is {want}, not {}", v.show(&prog.currency)));
         }
         n.attrs.insert(name.clone(), v.clone());
     }
@@ -74,7 +115,7 @@ fn give(prog: &Program, kind: &str, n: &mut Node, given: &[(String, Val)]) -> Re
 /// Computes the formula attributes of the node at `at` that are not set
 /// yet and can be known now; returns whether it set any. A formula whose
 /// value is unknown, or a negative count, leaves its attribute unknown.
-fn formulas(prog: &Program, root: &mut Node, at: &[usize]) -> bool {
+fn formulas(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize]) -> bool {
     let kind = node_at(root, at).kind.clone();
     let Some(k) = prog.kind(&kind) else { return false };
     let mut changed = false;
@@ -83,7 +124,7 @@ fn formulas(prog: &Program, root: &mut Node, at: &[usize]) -> bool {
         if node_at(root, at).attrs.contains_key(&a.name) {
             continue;
         }
-        match num(prog, root, at, f) {
+        match num(prog, View { root, facts }, at, f) {
             Some(Val::Count(c)) if c < 0 => {}
             Some(v) => {
                 node_at_mut(root, at).attrs.insert(a.name.clone(), v);
@@ -95,7 +136,7 @@ fn formulas(prog: &Program, root: &mut Node, at: &[usize]) -> bool {
     changed
 }
 
-fn blank(prog: &Program, kind: &str, attempt: u32) -> Node {
+fn blank(prog: &Program, kind: &str, attempt: u32, now: i64) -> Node {
     let attrs = prog
         .kind(kind)
         .map(|k| k.attrs.iter().filter_map(|a| a.default.as_ref().map(|d| (a.name.clone(), Val::from_lit(d)))).collect())
@@ -103,6 +144,7 @@ fn blank(prog: &Program, kind: &str, attempt: u32) -> Node {
     Node {
         kind: kind.to_string(),
         attrs,
+        created: now,
         status: Status::Idle,
         outcome: None,
         attempt,
@@ -114,10 +156,16 @@ fn blank(prog: &Program, kind: &str, attempt: u32) -> Node {
     }
 }
 
+/// One step at time 0.
+pub fn step(prog: &Program, unit: &Unit, msg: &Msg) -> Outcome {
+    step_at(prog, unit, msg, 0)
+}
+
 /// One step: apply the message, then settle the unit (create, replace and
 /// withdraw parts, finish parts, send the requests every rule allows), then
-/// note the goals that became met.
-pub fn step(prog: &Program, unit: &Unit, msg: &Msg) -> Outcome {
+/// note the goals that became met. `now` is the clock when the message was
+/// delivered; parts created by the step are created then.
+pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
     let mut u = unit.clone();
     u.notes.clear();
     let mut asks = vec![];
@@ -151,9 +199,9 @@ pub fn step(prog: &Program, unit: &Unit, msg: &Msg) -> Outcome {
             }
         }
     }
-    settle(prog, &mut u, &mut asks);
+    settle(prog, &mut u, &mut asks, now);
     goals(prog, &mut u);
-    if let (Some(r), Msg::Answer { key, outcome, .. }) = (violated(prog, &u.root), msg) {
+    if let (Some(r), Msg::Answer { key, outcome, .. }) = (violated(prog, &u), msg) {
         // A consequence no pass guards, such as a withdrawn part, would
         // break a rule: refuse the answer and ask again (appendix B.3.4).
         // A deadline is not an answer, so nothing is asked again for it.
@@ -161,10 +209,10 @@ pub fn step(prog: &Program, unit: &Unit, msg: &Msg) -> Outcome {
         kept.notes = vec![format!("refused by rule {}: {}", r.name, r.paraphrase)];
         let again = open_request(&unit.root, &unit.label, key)
             .filter(|_| outcome != TIMED_OUT)
-            .and_then(|at| prog.effect_of(&node_at(&unit.root, &at).kind).map(|e| ask_for(&unit.label, &unit.root, &at, e)));
+            .and_then(|at| prog.effect_of(&node_at(&unit.root, &at).kind).map(|e| ask_for(&unit.label, View::of(unit), &at, e)));
         return Outcome { unit: kept, asks: again.into_iter().collect() };
     }
-    if let (Some(r), Msg::Patience { .. }) = (violated(prog, &u.root), msg) {
+    if let (Some(r), Msg::Patience { .. }) = (violated(prog, &u), msg) {
         // Moving on would break a rule: the slot stays where it is.
         let mut kept = unit.clone();
         kept.notes = vec![format!("patience held: rule {}: {}", r.name, r.paraphrase)];
@@ -190,7 +238,7 @@ fn answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[(Strin
     };
     let kind = node_at(&u.root, &at).kind.clone();
     let effect = prog.effect_of(&kind).expect("a requested part has an effect");
-    let again = Some(Box::new(ask_for(&u.label, &u.root, &at, effect)));
+    let again = Some(Box::new(ask_for(&u.label, View::of(u), &at, effect)));
     let refuse = |why: String| Refusal { note: format!("refused an answer for {key}: {why}"), again: again.clone() };
     let success = outcome == effect.success;
     if !success && !effect.failures.iter().any(|f| f == outcome) {
@@ -221,8 +269,8 @@ fn answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[(Strin
     let shown: Vec<String> = data.iter().map(|(k, v)| format!("{k} {}", v.show(&prog.currency))).collect();
     let mut notes =
         vec![if shown.is_empty() { format!("{kind} {outcome}") } else { format!("{kind} {outcome}: {}", shown.join(", ")) }];
-    react(prog, &mut t, &at, &kind, outcome, &mut notes);
-    if let Some(r) = violated(prog, &t) {
+    react(prog, &mut t, &u.facts, &at, &kind, outcome, &mut notes);
+    if let Some(r) = broken_rule(prog, View { root: &t, facts: &u.facts }) {
         return Err(Refusal { note: format!("refused by rule {}: {}", r.name, r.paraphrase), again });
     }
     u.root = t;
@@ -248,7 +296,7 @@ fn deadline(prog: &Program, u: &mut Unit, key: &str, asks: &mut Vec<Ask>) -> Res
             "{kind}: no answer within {}: asking again (send {sends} of {attempts})",
             duration(effect.within_secs)
         ));
-        asks.push(ask_for(&u.label, &u.root, &at, effect));
+        asks.push(ask_for(&u.label, View::of(u), &at, effect));
         return Ok(());
     }
     n.status = Status::Failed;
@@ -258,8 +306,8 @@ fn deadline(prog: &Program, u: &mut Unit, key: &str, asks: &mut Vec<Ask>) -> Res
     // break a rule are held back instead.
     let mut t = u.root.clone();
     let mut notes = vec![];
-    react(prog, &mut t, &at, &kind, TIMED_OUT, &mut notes);
-    match newly_broken(prog, &u.root, &t) {
+    react(prog, &mut t, &u.facts, &at, &kind, TIMED_OUT, &mut notes);
+    match newly_broken(prog, View::of(u), &t) {
         Some(r) => u.notes.push(format!("reaction held: rule {}: {}", r.name, r.paraphrase)),
         None => {
             u.root = t;
@@ -277,7 +325,7 @@ fn goal_due(prog: &Program, u: &mut Unit, goal: u32) {
     if g.kind != u.root.kind || u.met.contains(&goal) || u.alerts.contains(&goal) {
         return;
     }
-    if !g.filter.iter().all(|f| eval(prog, &u.root, &[], f) == T::Yes) {
+    if !g.filter.iter().all(|f| eval(prog, View::of(u), &[], f) == T::Yes) {
         return;
     }
     u.alerts.push(goal);
@@ -312,17 +360,17 @@ pub fn duration(secs: u64) -> String {
 }
 
 /// Applies the `when` reactions to an outcome (spec §3.3).
-fn react(prog: &Program, root: &mut Node, at: &[usize], kind: &str, outcome: &str, notes: &mut Vec<String>) {
+fn react(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize], kind: &str, outcome: &str, notes: &mut Vec<String>) {
     for r in prog.reactions.iter().filter(|r| r.kind == kind && r.outcome == outcome) {
         for a in &r.actions {
-            let Some(target) = locate(root, at, &a.target.steps) else { continue };
+            let Some(target) = here(View { root, facts }, at, &a.target.steps) else { continue };
             let Some(calc) = &a.becomes else {
                 let n = node_at_mut(root, &target);
                 n.attrs.insert(a.attr.clone(), Val::Bool(a.value));
                 notes.push(format!("{} is {}{}", n.kind, if a.value { "" } else { "not " }, a.attr));
                 continue;
             };
-            let value = match num(prog, root, at, calc) {
+            let value = match num(prog, View { root, facts }, at, calc) {
                 None => {
                     notes.push(format!("{} not set: its new value is not known yet", a.attr));
                     continue;
@@ -340,11 +388,11 @@ fn react(prog: &Program, root: &mut Node, at: &[usize], kind: &str, outcome: &st
     }
 }
 
-fn settle(prog: &Program, u: &mut Unit, asks: &mut Vec<Ask>) {
+fn settle(prog: &Program, u: &mut Unit, asks: &mut Vec<Ask>, now: i64) {
     for _ in 0..SETTLE_ROUNDS {
         let changed = positions(&u.root)
             .iter()
-            .any(|at| needs_pass(prog, u, at) || done_pass(prog, u, at) || request_pass(prog, u, at, asks));
+            .any(|at| needs_pass(prog, u, at, now) || done_pass(prog, u, at) || request_pass(prog, u, at, asks));
         if !changed {
             return;
         }
@@ -359,7 +407,7 @@ fn settle(prog: &Program, u: &mut Unit, asks: &mut Vec<Ask>) {
 /// works on its current alternative: an empty slot is filled, and one whose
 /// alternative failed for good moves on (appendix D.3). Makes at most one
 /// change.
-fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
+fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64) -> bool {
     enum Change {
         Add(Node, String),
         Remove(usize, String),
@@ -376,7 +424,7 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
         }
         let mut change = None;
         for need in prog.needs.iter().filter(|need| need.owner == n.kind) {
-            let active = need.cond.as_ref().is_none_or(|c| eval(prog, &u.root, at, c) == T::Yes);
+            let active = need.cond.as_ref().is_none_or(|c| eval(prog, View::of(u), at, c) == T::Yes);
             let slot = prog.slot(&need.part);
             let want = match slot {
                 None => need.part.clone(),
@@ -393,12 +441,12 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
                 },
             };
             let add = match current(n, &want).map(|i| (i, &n.parts[i])) {
-                None if active => Some((blank(prog, &want, 1), format!("needs {want}"))),
+                None if active => Some((blank(prog, &want, 1, now), format!("needs {want}"))),
                 Some((_, p))
                     if active && p.status == Status::Failed && p.attempt < prog.attempts && p.outcome.as_deref() != Some(TIMED_OUT) =>
                 {
                     let note = format!("{want} {}: attempt {}", p.outcome.as_deref().unwrap_or("failed"), p.attempt + 1);
-                    Some((blank(prog, &want, p.attempt + 1), note))
+                    Some((blank(prog, &want, p.attempt + 1, now), note))
                 }
                 Some((_, p)) if active && p.status == Status::Failed => {
                     // Failed for good: a slot moves on to its next alternative.
@@ -419,9 +467,9 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
                 let mut t = u.root.clone();
                 node_at_mut(&mut t, at).parts.push(part);
                 let pos = child(at, node_at(&t, at).parts.len() - 1);
-                while formulas(prog, &mut t, &pos) {}
+                while formulas(prog, &mut t, &u.facts, &pos) {}
                 let part = node_at(&t, &pos).clone();
-                change = match newly_broken(prog, &u.root, &t) {
+                change = match newly_broken(prog, View::of(u), &t) {
                     Some(r) if n.held.get(&want) == Some(&r.name) => None,
                     Some(r) => Some(Change::Hold(want.clone(), r.name.clone())),
                     None => Some(Change::Add(part, note)),
@@ -533,13 +581,13 @@ fn patience(prog: &Program, u: &mut Unit, id: &str) -> bool {
 /// on that rule. A root is never done; its goals describe it.
 fn done_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
     let n = node_at(&u.root, at);
-    if at.is_empty() || n.status != Status::Idle || prog.effect_of(&n.kind).is_some() || !needs_done(prog, &u.root, at) {
+    if at.is_empty() || n.status != Status::Idle || prog.effect_of(&n.kind).is_some() || !needs_done(prog, View::of(u), at) {
         return false;
     }
     let (kind, waiting) = (n.kind.clone(), n.waiting.clone());
     let mut t = u.root.clone();
     node_at_mut(&mut t, at).status = Status::Done;
-    match newly_broken(prog, &u.root, &t) {
+    match newly_broken(prog, View::of(u), &t) {
         Some(r) if waiting.as_deref() == Some(r.name.as_str()) => false,
         Some(r) => {
             node_at_mut(&mut u.root, at).waiting = Some(r.name.clone());
@@ -556,10 +604,10 @@ fn done_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
 }
 
 /// Whether every active need of the node at `at` has a current part that is done.
-fn needs_done(prog: &Program, root: &Node, at: &[usize]) -> bool {
-    let n = node_at(root, at);
+fn needs_done(prog: &Program, v: View, at: &[usize]) -> bool {
+    let n = node_at(v.root, at);
     prog.needs.iter().filter(|need| need.owner == n.kind).all(|need| {
-        let active = need.cond.as_ref().is_none_or(|c| eval(prog, root, at, c) == T::Yes);
+        let active = need.cond.as_ref().is_none_or(|c| eval(prog, v, at, c) == T::Yes);
         let want = if prog.slot(&need.part).is_some() { n.slots.get(&need.part).cloned() } else { Some(need.part.clone()) };
         !active || want.and_then(|w| current(n, &w)).is_some_and(|i| n.parts[i].status == Status::Done)
     })
@@ -571,13 +619,13 @@ fn needs_done(prog: &Program, root: &Node, at: &[usize]) -> bool {
 fn request_pass(prog: &Program, u: &mut Unit, at: &[usize], asks: &mut Vec<Ask>) -> bool {
     let n = node_at(&u.root, at);
     let Some(effect) = prog.effect_of(&n.kind) else { return false };
-    if n.status != Status::Idle || !needs_done(prog, &u.root, at) {
+    if n.status != Status::Idle || !needs_done(prog, View::of(u), at) {
         return false;
     }
     let (kind, waiting) = (n.kind.clone(), n.waiting.clone());
     let mut t = u.root.clone();
     node_at_mut(&mut t, at).status = Status::Requested;
-    match violated(prog, &t) {
+    match broken_rule(prog, View { root: &t, facts: &u.facts }) {
         Some(r) if waiting.as_deref() == Some(r.name.as_str()) => false,
         Some(r) => {
             node_at_mut(&mut u.root, at).waiting = Some(r.name.clone());
@@ -589,7 +637,7 @@ fn request_pass(prog: &Program, u: &mut Unit, at: &[usize], asks: &mut Vec<Ask>)
             n.waiting = None;
             n.sends = 1;
             u.root = t;
-            let a = ask_for(&u.label, &u.root, at, effect);
+            let a = ask_for(&u.label, View::of(u), at, effect);
             let sends: Vec<String> = a.sends.iter().map(|(k, v)| format!("{k} {}", v.show(&prog.currency))).collect();
             u.notes.push(format!("{kind} → {} via {} ({})", effect.verb, effect.adapter, sends.join(", ")));
             asks.push(a);
@@ -607,11 +655,11 @@ fn goals(prog: &Program, u: &mut Unit) {
         if g.kind != u.root.kind {
             continue;
         }
-        let applies = g.filter.iter().all(|f| eval(prog, &u.root, &[], f) == T::Yes);
+        let applies = g.filter.iter().all(|f| eval(prog, View::of(u), &[], f) == T::Yes);
         if applies && g.within_secs.is_some() && !u.matched.contains(&i) {
             u.matched.push(i);
         }
-        if !u.met.contains(&i) && applies && g.states.iter().all(|s| in_state(prog, &u.root, &[], s)) {
+        if !u.met.contains(&i) && applies && g.states.iter().all(|s| state_at(prog, View::of(u), &[], s)) {
             u.met.push(i);
             let late = if u.alerts.contains(&i) { " late" } else { "" };
             u.notes.push(format!("goal met{late}: {}", g.source));
@@ -619,10 +667,14 @@ fn goals(prog: &Program, u: &mut Unit) {
     }
 }
 
-/// Whether the node at `at` is in `state` (appendix B.3): `done`, `failed`, a
-/// Bool attribute, its effect's marks or outcomes, or a defined state.
-pub fn in_state(prog: &Program, root: &Node, at: &[usize], state: &str) -> bool {
-    let n = node_at(root, at);
+/// Whether the unit's node at `at` is in `state` (appendix B.3): `done`,
+/// `failed`, a Bool attribute, its effect's marks or outcomes, or a defined state.
+pub fn in_state(prog: &Program, u: &Unit, at: &[usize], state: &str) -> bool {
+    state_at(prog, View::of(u), at, state)
+}
+
+fn state_at(prog: &Program, v: View, at: &[usize], state: &str) -> bool {
+    let n = node_at(v.root, at);
     match state {
         "done" => return n.status == Status::Done,
         "failed" => return n.status == Status::Failed,
@@ -639,36 +691,40 @@ pub fn in_state(prog: &Program, root: &Node, at: &[usize], state: &str) -> bool 
             return n.outcome.as_deref() == Some(state);
         }
     }
-    prog.defines.iter().any(|d| d.kind == n.kind && d.state == state && eval(prog, root, at, &d.cond) == T::Yes)
+    prog.defines.iter().any(|d| d.kind == n.kind && d.state == state && eval(prog, v, at, &d.cond) == T::Yes)
 }
 
-/// Whether a condition is known to hold at the node at `at`.
-pub fn holds(prog: &Program, root: &Node, at: &[usize], c: &Cond) -> bool {
-    eval(prog, root, at, c) == T::Yes
+/// Whether a condition is known to hold at the unit's node at `at`.
+pub fn holds(prog: &Program, u: &Unit, at: &[usize], c: &Cond) -> bool {
+    eval(prog, View::of(u), at, c) == T::Yes
 }
 
 /// The first rule the unit's state breaks, if any. A rule applies to a node
 /// only when its filter is known to hold.
-pub fn violated<'p>(prog: &'p Program, root: &Node) -> Option<&'p Rule> {
-    prog.rules.iter().find(|r| broken(prog, root, r))
+pub fn violated<'p>(prog: &'p Program, u: &Unit) -> Option<&'p Rule> {
+    broken_rule(prog, View::of(u))
+}
+
+fn broken_rule<'p>(prog: &'p Program, v: View) -> Option<&'p Rule> {
+    prog.rules.iter().find(|r| broken(prog, v, r))
 }
 
 /// The first rule that a change from `before` to `after` breaks: one that
 /// `after` breaks and `before` does not. A rule already broken while parts
 /// are still being created (such as `every Order has a Shipment`) does not
 /// hold back the change that mends it.
-fn newly_broken<'p>(prog: &'p Program, before: &Node, after: &Node) -> Option<&'p Rule> {
-    prog.rules.iter().find(|r| broken(prog, after, r) && !broken(prog, before, r))
+fn newly_broken<'p>(prog: &'p Program, before: View, after: &Node) -> Option<&'p Rule> {
+    prog.rules.iter().find(|r| broken(prog, before.with(after), r) && !broken(prog, before, r))
 }
 
-fn broken(prog: &Program, root: &Node, r: &Rule) -> bool {
-    positions(root).iter().any(|at| {
-        node_at(root, at).kind == r.subject
-            && r.filter.iter().all(|f| eval(prog, root, at, f) == T::Yes)
+fn broken(prog: &Program, v: View, r: &Rule) -> bool {
+    positions(v.root).iter().any(|at| {
+        node_at(v.root, at).kind == r.subject
+            && r.filter.iter().all(|f| eval(prog, v, at, f) == T::Yes)
             && match &r.body {
-                Body::Every(c) => eval(prog, root, at, c) == T::No,
+                Body::Every(c) => eval(prog, v, at, c) == T::No,
                 Body::No { pred, unless } => {
-                    eval(prog, root, at, pred) == T::Yes && unless.as_ref().is_none_or(|u| eval(prog, root, at, u) != T::Yes)
+                    eval(prog, v, at, pred) == T::Yes && unless.as_ref().is_none_or(|u| eval(prog, v, at, u) != T::Yes)
                 }
             }
     })
@@ -687,26 +743,35 @@ fn truth(b: bool) -> T {
     if b { T::Yes } else { T::No }
 }
 
-fn eval(prog: &Program, root: &Node, at: &[usize], c: &Cond) -> T {
+fn eval(prog: &Program, v: View, at: &[usize], c: &Cond) -> T {
     match c {
         Cond::Cmp { left, op, right } => {
-            let (Some(l), Some(r)) = (num(prog, root, at, left), num(prog, root, at, right)) else { return T::Unknown };
+            let (Some(l), Some(r)) = (num(prog, v, at, left), num(prog, v, at, right)) else { return T::Unknown };
             compare(&l, &r, *op).map_or(T::No, truth)
         }
         Cond::State { node, state, negated } => {
-            let yes = locate(root, at, &node.steps).is_some_and(|n| in_state(prog, root, &n, state));
+            let yes = match locate(v, at, &node.steps) {
+                Some(Place::Here(n)) => state_at(prog, v, &n, state),
+                // A shared entity's only states are its Bool attributes (appendix F.2.3).
+                Some(Place::There(l)) => v.facts.get(&l).is_some_and(|f| f.attrs.get(state) == Some(&Val::Bool(true))),
+                None => false,
+            };
             truth(yes != *negated)
         }
         Cond::Has { node, part, state, negated } => {
-            let exists = locate(root, at, &node.steps).is_some_and(|n| {
-                node_at(root, &n).parts.iter().enumerate().any(|(i, p)| {
-                    p.kind == *part && state.as_ref().is_none_or(|s| in_state(prog, root, &child(&n, i), s))
+            let exists = here(v, at, &node.steps).is_some_and(|n| {
+                node_at(v.root, &n).parts.iter().enumerate().any(|(i, p)| {
+                    p.kind == *part && state.as_ref().is_none_or(|s| state_at(prog, v, &child(&n, i), s))
                 })
             });
             truth(exists != *negated)
         }
+        Cond::Contains { set, item, negated } => {
+            let (Some(Val::Set(ls)), Some(Val::Ref(l))) = (num(prog, v, at, set), num(prog, v, at, item)) else { return T::Unknown };
+            truth(ls.contains(&l) != *negated)
+        }
         Cond::And(cs) => {
-            let ts: Vec<T> = cs.iter().map(|c| eval(prog, root, at, c)).collect();
+            let ts: Vec<T> = cs.iter().map(|c| eval(prog, v, at, c)).collect();
             if ts.contains(&T::No) {
                 T::No
             } else if ts.contains(&T::Unknown) {
@@ -716,7 +781,7 @@ fn eval(prog: &Program, root: &Node, at: &[usize], c: &Cond) -> T {
             }
         }
         Cond::Or(cs) => {
-            let ts: Vec<T> = cs.iter().map(|c| eval(prog, root, at, c)).collect();
+            let ts: Vec<T> = cs.iter().map(|c| eval(prog, v, at, c)).collect();
             if ts.contains(&T::Yes) {
                 T::Yes
             } else if ts.contains(&T::Unknown) {
@@ -730,32 +795,41 @@ fn eval(prog: &Program, root: &Node, at: &[usize], c: &Cond) -> T {
 
 /// A calculation's value at the node at `at`, or `None` while a value it
 /// needs is unknown, or on overflow or division by zero (appendix E.2.3).
-pub fn num(prog: &Program, root: &Node, at: &[usize], n: &Num) -> Option<Val> {
+fn num(prog: &Program, v: View, at: &[usize], n: &Num) -> Option<Val> {
     match n {
-        Num::Path(p) => value(root, at, p).cloned(),
+        Num::Path(p) => value(v, at, p),
         Num::Lit(l) => Some(Val::from_lit(l)),
-        Num::Bin(x, op, y) => arith(num(prog, root, at, x)?, *op, num(prog, root, at, y)?),
+        Num::Bin(x, op, y) => arith(num(prog, v, at, x)?, *op, num(prog, v, at, y)?),
         Num::Sum { of, kind, calc, filter, ty } => {
-            let mut total = if *ty == Ty::Money { Val::Money(0) } else { Val::Count(0) };
-            for pos in relation(prog, root, at, of, kind, filter.as_deref())? {
-                total = arith(total, Arith::Add, num(prog, root, &pos, calc)?)?;
+            let mut total = zero(*ty);
+            for pos in relation(prog, v, at, of, kind, filter.as_deref())? {
+                total = arith(total, Arith::Add, num(prog, v, &pos, calc)?)?;
             }
             Some(total)
         }
-        Num::Count { of, kind, filter } => Some(Val::Count(relation(prog, root, at, of, kind, filter.as_deref())?.len() as i64)),
+        Num::Count { of, kind, filter } => Some(Val::Count(relation(prog, v, at, of, kind, filter.as_deref())?.len() as i64)),
+    }
+}
+
+/// Nothing, as an amount of type `ty`.
+fn zero(ty: Ty) -> Val {
+    match ty {
+        Ty::Money => Val::Money(0),
+        Ty::Duration => Val::Duration(0),
+        _ => Val::Count(0),
     }
 }
 
 /// Every part of `kind` under the node at `of`, all attempts, that the
 /// filter is known to hold for (appendix E.2.1).
-fn relation(prog: &Program, root: &Node, at: &[usize], of: &Path, kind: &str, filter: Option<&Cond>) -> Option<Vec<Vec<usize>>> {
-    let owner = locate(root, at, &of.steps)?;
-    let n = node_at(root, &owner);
+fn relation(prog: &Program, v: View, at: &[usize], of: &Path, kind: &str, filter: Option<&Cond>) -> Option<Vec<Vec<usize>>> {
+    let owner = here(v, at, &of.steps)?;
+    let n = node_at(v.root, &owner);
     Some(
         (0..n.parts.len())
             .filter(|&i| n.parts[i].kind == kind)
             .map(|i| child(&owner, i))
-            .filter(|pos| filter.is_none_or(|f| eval(prog, root, pos, f) == T::Yes))
+            .filter(|pos| filter.is_none_or(|f| eval(prog, v, pos, f) == T::Yes))
             .collect(),
     )
 }
@@ -773,6 +847,12 @@ fn arith(x: Val, op: Arith, y: Val) -> Option<Val> {
         (Val::Money(a), Val::Count(b)) if matches!(op, Arith::Mul | Arith::Div) => f(a, b).map(Val::Money),
         (Val::Count(a), Val::Money(b)) if op == Arith::Mul => f(a, b).map(Val::Money),
         (Val::Count(a), Val::Count(b)) => f(a, b).map(Val::Count),
+        (Val::Time(a), Val::Time(b)) if op == Arith::Sub => f(a, b).map(Val::Duration),
+        (Val::Time(a), Val::Duration(b)) if matches!(op, Arith::Add | Arith::Sub) => f(a, b).map(Val::Time),
+        (Val::Duration(a), Val::Time(b)) if op == Arith::Add => f(a, b).map(Val::Time),
+        (Val::Duration(a), Val::Duration(b)) if matches!(op, Arith::Add | Arith::Sub) => f(a, b).map(Val::Duration),
+        (Val::Duration(a), Val::Count(b)) if matches!(op, Arith::Mul | Arith::Div) => f(a, b).map(Val::Duration),
+        (Val::Count(a), Val::Duration(b)) if op == Arith::Mul => f(a, b).map(Val::Duration),
         _ => None,
     }
 }
@@ -781,7 +861,8 @@ fn arith(x: Val, op: Arith, y: Val) -> Option<Val> {
 fn compare(l: &Val, r: &Val, op: Op) -> Option<bool> {
     let ord = match (l, r) {
         (Val::Money(a), Val::Money(b)) | (Val::Count(a), Val::Count(b)) => a.cmp(b),
-        (Val::Text(a), Val::Text(b)) => a.cmp(b),
+        (Val::Time(a), Val::Time(b)) | (Val::Duration(a), Val::Duration(b)) => a.cmp(b),
+        (Val::Text(a), Val::Text(b)) | (Val::Ref(a), Val::Ref(b)) => a.cmp(b),
         (Val::Bool(a), Val::Bool(b)) => a.cmp(b),
         _ => return None,
     };
@@ -835,44 +916,72 @@ fn untouched(n: &Node) -> bool {
     n.status == Status::Idle && n.parts.iter().all(untouched)
 }
 
-/// Follows parts and owners. `None` if a part is missing, or the walk goes above the root.
-fn locate(root: &Node, from: &[usize], steps: &[Step]) -> Option<Vec<usize>> {
-    let mut at = from.to_vec();
+/// Follows parts, owners and references. `None` if a part is missing, a
+/// reference is not set or not carried, or the walk goes above the root.
+fn locate(v: View, from: &[usize], steps: &[Step]) -> Option<Place> {
+    let mut place = Place::Here(from.to_vec());
     for s in steps {
-        match s {
-            Step::Owner => {
+        place = match (place, s) {
+            (Place::Here(mut at), Step::Owner) => {
                 at.pop()?;
+                Place::Here(at)
             }
-            Step::Part(k) => {
-                let i = current(node_at(root, &at), k)?;
-                at.push(i);
+            (Place::Here(mut at), Step::Part(k)) => {
+                at.push(current(node_at(v.root, &at), k)?);
+                Place::Here(at)
             }
-            Step::Slot(s) => {
-                let n = node_at(root, &at);
-                let i = current(n, n.slots.get(s)?)?;
-                at.push(i);
+            (Place::Here(mut at), Step::Slot(s)) => {
+                let n = node_at(v.root, &at);
+                at.push(current(n, n.slots.get(s)?)?);
+                Place::Here(at)
             }
-            Step::Attr(_) => return None,
+            (Place::Here(at), Step::Ref(a)) => match node_at(v.root, &at).attrs.get(a) {
+                Some(Val::Ref(l)) => Place::There(l.clone()),
+                _ => return None,
+            },
+            (Place::There(l), Step::Ref(a)) => match v.facts.get(&l)?.attrs.get(a) {
+                Some(Val::Ref(next)) => Place::There(next.clone()),
+                _ => return None,
+            },
+            (Place::There(_), _) | (_, Step::Attr(_)) => return None,
+        };
+        if let Place::There(l) = &place {
+            v.facts.get(l)?;
         }
     }
-    Some(at)
+    Some(place)
+}
+
+/// A walk that must end at a node of this unit.
+fn here(v: View, from: &[usize], steps: &[Step]) -> Option<Vec<usize>> {
+    match locate(v, from, steps)? {
+        Place::Here(at) => Some(at),
+        Place::There(_) => None,
+    }
 }
 
 /// The value a path ends at, if it has one yet.
-fn value<'a>(root: &'a Node, from: &[usize], path: &Path) -> Option<&'a Val> {
+fn value(v: View, from: &[usize], path: &Path) -> Option<Val> {
     let (last, rest) = path.steps.split_last()?;
     let Step::Attr(name) = last else { return None };
-    node_at(root, &locate(root, from, rest)?).attrs.get(name)
+    match locate(v, from, rest)? {
+        Place::Here(at) if name == CREATED => Some(Val::Time(node_at(v.root, &at).created)),
+        Place::Here(at) => node_at(v.root, &at).attrs.get(name).cloned(),
+        Place::There(l) => {
+            let f = v.facts.get(&l)?;
+            if name == CREATED { Some(Val::Time(f.created)) } else { f.attrs.get(name).cloned() }
+        }
+    }
 }
 
-fn ask_for(label: &str, root: &Node, at: &[usize], e: &Effect) -> Ask {
-    let sends = e.sends.iter().filter_map(|(name, path)| value(root, at, path).map(|v| (name.clone(), v.clone()))).collect();
+fn ask_for(label: &str, v: View, at: &[usize], e: &Effect) -> Ask {
+    let sends = e.sends.iter().filter_map(|(name, path)| value(v, at, path).map(|x| (name.clone(), x))).collect();
     Ask {
         adapter: e.adapter.clone(),
         verb: e.verb.clone(),
         kind: e.kind.clone(),
         label: label.to_string(),
-        key: request_key(label, root, at),
+        key: request_key(label, v.root, at),
         sends,
     }
 }

@@ -7,11 +7,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use suture::{HoleId, Injection, Machine, NetBuilder, Value};
-use suture_lang::ir::{Program, TIMED_OUT};
+use suture_lang::ir::{Program, Ty, TIMED_OUT};
 
 use crate::interp::{self, duration, holds};
 use crate::kernel::{self, Kinds};
-use crate::state::{answer_value, send_from_value, Ask, Msg, Unit, Val};
+use crate::state::{answer_value, send_from_value, stamped, Ask, Fact, Facts, Msg, Unit, Val};
 
 pub struct Host {
     pub prog: Arc<Program>,
@@ -73,18 +73,91 @@ impl Host {
         if self.machine.hole(label).is_some() {
             return Err(format!("{label} already exists"));
         }
-        let unit = interp::new_unit_with(&self.prog, label, kind, given, items)?;
+        let given = self.resolve(kind, given)?;
+        let mut elements = vec![];
+        for (list, attrs) in items {
+            let element = self.prog.lists.iter().find(|l| l.owner == kind && l.name == *list).map_or(String::new(), |l| l.element.clone());
+            elements.push((list.clone(), self.resolve(&element, attrs)?));
+        }
+        let mut facts = Facts::new();
+        for (_, v) in given.iter().chain(elements.iter().flat_map(|(_, attrs)| attrs)) {
+            self.carry(v, &mut facts);
+        }
+        let unit = interp::new_unit_full(&self.prog, label, kind, &given, &elements, facts, self.clock())?;
         let sig = self.machine.program().sig.clone();
         let mut b = NetBuilder::new(&sig);
         let (meet, rest) = (b.var(), b.var());
         b.agent(self.kinds.unit, unit.to_value(), meet, &[]);
-        b.agent(self.kinds.msg, Msg::Create.to_value(), meet, &[rest]);
+        b.agent(self.kinds.msg, stamped(self.clock(), &Msg::Create.to_value()), meet, &[rest]);
         let net = b.finish().map_err(|e| e.to_string())?;
         self.machine.inject(Injection::new(net).new_hole(rest, Some(label))).map_err(|e| e.to_string())?;
         self.machine.run(None);
         let noted = self.note(label);
         let pumped = self.pump();
         noted.and(pumped)
+    }
+
+    /// The clock, as entities and messages read it.
+    fn clock(&self) -> i64 {
+        i64::try_from(self.now).unwrap_or(i64::MAX)
+    }
+
+    /// Given values as the kind's attributes hold them: a name given for a
+    /// reference (or a set) must name a unit of that kind (appendix F.2.2).
+    fn resolve(&self, kind: &str, given: &[(String, Val)]) -> Result<Vec<(String, Val)>, String> {
+        let Some(k) = self.prog.kind(kind) else { return Ok(given.to_vec()) };
+        let mut out = vec![];
+        for (name, v) in given {
+            let Some(a) = k.attr(name).filter(|a| matches!(a.ty, Ty::Ref | Ty::Set)) else {
+                out.push((name.clone(), v.clone()));
+                continue;
+            };
+            let target = a.of.as_deref().unwrap_or_default();
+            let names = match v {
+                Val::Text(l) | Val::Ref(l) => vec![l.clone()],
+                Val::Set(ls) => ls.clone(),
+                other => return Err(format!("{kind}.{name} refers to a {target}, not {}", other.show(&self.prog.currency))),
+            };
+            for l in &names {
+                match self.unit(l) {
+                    Some(u) if u.root.kind == target => {}
+                    Some(u) => return Err(format!("{kind}.{name} refers to a {target}, but {l} is a {}", u.root.kind)),
+                    None => return Err(format!("{kind}.{name}: there is no {target} {l}")),
+                }
+            }
+            let v = match (a.ty, names.len()) {
+                (Ty::Ref, 1) => Val::Ref(names[0].clone()),
+                (Ty::Ref, _) => return Err(format!("{kind}.{name} refers to one {target}")),
+                _ => {
+                    let mut names = names;
+                    names.sort();
+                    names.dedup();
+                    Val::Set(names)
+                }
+            };
+            out.push((name.clone(), v));
+        }
+        Ok(out)
+    }
+
+    /// Carries the units a value refers to, with the facts they carry
+    /// themselves (appendix F.2.3).
+    fn carry(&self, v: &Val, facts: &mut Facts) {
+        let labels = match v {
+            Val::Ref(l) => vec![l.clone()],
+            Val::Set(ls) => ls.clone(),
+            _ => return,
+        };
+        for l in labels {
+            if facts.contains_key(&l) {
+                continue;
+            }
+            let Some(u) = self.unit(&l) else { continue };
+            facts.insert(l, Fact { kind: u.root.kind.clone(), created: u.root.created, attrs: u.root.attrs.clone() });
+            for (k, f) in u.facts {
+                facts.entry(k).or_insert(f);
+            }
+        }
     }
 
     /// The adapter answers its oldest pending request, or the oldest for `target`.
@@ -169,7 +242,7 @@ impl Host {
             Timer::Goal(label, goal) => {
                 let Some(unit) = self.unit(&label) else { return Ok(()) };
                 let g = &self.prog.goals[goal as usize];
-                let applies = g.filter.iter().all(|f| holds(&self.prog, &unit.root, &[], f));
+                let applies = g.filter.iter().all(|f| holds(&self.prog, &unit, &[], f));
                 if !applies || unit.met.contains(&goal) || unit.alerts.contains(&goal) {
                     return Ok(());
                 }
@@ -191,7 +264,7 @@ impl Host {
         let sig = self.machine.program().sig.clone();
         let mut b = NetBuilder::new(&sig);
         let (to, next) = (b.var(), b.var());
-        b.agent(self.kinds.msg, msg.to_value(), to, &[next]);
+        b.agent(self.kinds.msg, stamped(self.clock(), &msg.to_value()), to, &[next]);
         let net = b.finish().map_err(|e| e.to_string())?;
         self.machine.inject(Injection::new(net).at_label(to, label).new_hole(next, Some(label))).map_err(|e| e.to_string())?;
         self.machine.run(None);
@@ -257,7 +330,7 @@ impl Host {
         let sig = self.machine.program().sig.clone();
         let mut b = NetBuilder::new(&sig);
         let (meet, to, next) = (b.var(), b.var(), b.var());
-        b.agent(self.kinds.deliver, (), meet, &[to, next]);
+        b.agent(self.kinds.deliver, self.clock(), meet, &[to, next]);
         let net = b.finish().map_err(|e| e.to_string())?;
         let inj = Injection::new(net).at_hole(meet, hole).at_label(to, &label).new_hole(next, Some(&label));
         self.machine.inject(inj).map_err(|e| e.to_string())?;

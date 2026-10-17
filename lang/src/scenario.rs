@@ -15,7 +15,8 @@ pub struct Scenario {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ScenarioStep {
-    /// `when a new Order O1 with country France and total 120 EUR`, then
+    /// `when a new Order O1 with country France and total 120 EUR`, or
+    /// `given a Stock S1 with …` for a shared entity (appendix F.2.1), then
     /// `and a line with …` for each list element, and optionally
     /// `is refused by rule …` when the creation must be refused.
     Create { kind: String, name: String, attrs: Vec<(String, Literal)>, items: Vec<(String, Vec<(String, Literal)>)>, refused: Option<String> },
@@ -54,8 +55,8 @@ pub fn parse_scenarios(file: &str, src: &str) -> Result<Vec<Scenario>, Error> {
                 Some(Tok::Word(w)) => w.as_str(),
                 _ => "",
             };
-            let continues = (word(0) == "and" && (word(1) == "a" || word(1) == "an") && word(2) != "new")
-                || (word(0) == "is" && word(1) == "refused");
+            let element = word(2).starts_with(char::is_lowercase) && word(2) != "new";
+            let continues = (word(0) == "and" && (word(1) == "a" || word(1) == "an") && element) || (word(0) == "is" && word(1) == "refused");
             match lines.last_mut() {
                 Some(prev) if continues => prev.extend(line.iter().cloned()),
                 _ => lines.push(line.clone()),
@@ -95,8 +96,8 @@ fn step(c: &mut Cursor) -> Result<ScenarioStep, Error> {
         *c = saved;
         return expect_cond(c);
     }
-    if !(c.eat_word("when") || c.eat_word("and")) {
-        return Err(c.error(format!("expected `when`, `and` or `expect`, found {}", c.found())));
+    if !(c.eat_word("when") || c.eat_word("and") || c.eat_word("given")) {
+        return Err(c.error(format!("expected `given`, `when`, `and` or `expect`, found {}", c.found())));
     }
     if matches!(c.peek(), Some(Tok::Num(_))) {
         let secs = duration(c)?;
@@ -106,7 +107,7 @@ fn step(c: &mut Cursor) -> Result<ScenarioStep, Error> {
         return Ok(ScenarioStep::Pass { secs });
     }
     if c.eat_word("a") || c.eat_word("an") {
-        c.expect_word("new")?;
+        c.eat_word("new");
         let kind = c.kind_name()?;
         let name = c.word()?;
         let attrs = if c.eat_word("with") { pairs(c)? } else { vec![] };
@@ -184,14 +185,27 @@ fn expect_cond(c: &mut Cursor) -> Result<ScenarioStep, Error> {
     Ok(ScenarioStep::ExpectCond { name, cond, text })
 }
 
-/// `a 1, b "x" and c 3 EUR`. A bare word is text.
+/// `a 1, b "x" and c 3 EUR`. A bare word is text, or the name of a shared
+/// entity; `{DE, FR}` names several.
 fn pairs(c: &mut Cursor) -> Result<Vec<(String, Literal)>, Error> {
     let mut out = vec![];
     loop {
         let name = c.word()?;
-        let value = match literal(c)? {
-            Some(l) => l,
-            None => Literal::Text(c.word()?),
+        let value = if c.eat_sym('{') {
+            let mut names = vec![];
+            if !c.eat_sym('}') {
+                names.push(c.word()?);
+                while c.eat_sym(',') {
+                    names.push(c.word()?);
+                }
+                c.expect_sym('}')?;
+            }
+            Literal::Set(names)
+        } else {
+            match literal(c)? {
+                Some(l) => l,
+                None => Literal::Text(c.word()?),
+            }
         };
         out.push((name, value));
         let next_element = c.is_word("and") && matches!(c.peek_at(1), Some(Tok::Word(w)) if w == "a" || w == "an");
@@ -252,6 +266,6 @@ mod tests {
     #[test]
     fn scenario_errors_say_what_was_expected() {
         let e = parse_scenarios("o.scenario", "scenario \"x\":\n  then O1 is paid\n").unwrap_err();
-        assert!(e.msg.contains("expected `when`, `and` or `expect`"), "{e}");
+        assert!(e.msg.contains("expected `given`, `when`, `and` or `expect`"), "{e}");
     }
 }

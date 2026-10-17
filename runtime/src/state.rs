@@ -6,13 +6,20 @@ use std::collections::BTreeMap;
 use suture::Value;
 use suture_lang::ir::{Lit, Ty};
 
-/// An attribute's value. Money is in cents.
+/// An attribute's value. Money is in cents; times and durations are in
+/// seconds of the runtime clock.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Val {
     Text(String),
     Bool(bool),
     Money(i64),
     Count(i64),
+    /// A reference to a shared entity: its unit's label (appendix F.2.2).
+    Ref(String),
+    /// References to shared entities, sorted, each once.
+    Set(Vec<String>),
+    Time(i64),
+    Duration(i64),
 }
 
 impl Val {
@@ -22,6 +29,7 @@ impl Val {
             Lit::Bool(b) => Val::Bool(*b),
             Lit::Money(c) => Val::Money(*c),
             Lit::Count(n) => Val::Count(*n),
+            Lit::Duration(s) => Val::Duration(*s),
         }
     }
 
@@ -31,6 +39,10 @@ impl Val {
             Val::Bool(_) => Ty::Bool,
             Val::Money(_) => Ty::Money,
             Val::Count(_) => Ty::Count,
+            Val::Ref(_) => Ty::Ref,
+            Val::Set(_) => Ty::Set,
+            Val::Time(_) => Ty::Time,
+            Val::Duration(_) => Ty::Duration,
         }
     }
 
@@ -43,28 +55,102 @@ impl Val {
             Val::Money(c) if c % 100 == 0 => format!("{} {currency}", c / 100),
             Val::Money(c) => format!("{}.{:02} {currency}", c / 100, (c % 100).abs()),
             Val::Count(n) => n.to_string(),
+            Val::Ref(l) => l.clone(),
+            Val::Set(ls) => format!("{{{}}}", ls.join(", ")),
+            Val::Time(t) => time_text(*t),
+            Val::Duration(d) => suture_lang::readback::duration_text(*d),
         }
     }
 
-    fn to_value(&self) -> Value {
+    pub(crate) fn to_value(&self) -> Value {
         match self {
             Val::Text(s) => Value::tuple([Value::from(0i64), text(s)]),
             Val::Bool(b) => Value::tuple([Value::from(1i64), Value::from(*b)]),
             Val::Money(c) => Value::tuple([Value::from(2i64), Value::from(*c)]),
             Val::Count(n) => Value::tuple([Value::from(3i64), Value::from(*n)]),
+            Val::Ref(l) => Value::tuple([Value::from(4i64), text(l)]),
+            Val::Set(ls) => Value::tuple([Value::from(5i64), Value::list(ls.iter().map(|l| text(l)))]),
+            Val::Time(t) => Value::tuple([Value::from(6i64), Value::from(*t)]),
+            Val::Duration(d) => Value::tuple([Value::from(7i64), Value::from(*d)]),
         }
     }
 
-    fn from_value(v: &Value) -> Result<Val, String> {
+    pub(crate) fn from_value(v: &Value) -> Result<Val, String> {
         let [tag, x] = fields::<2>(v, "value")?;
         Ok(match int(tag)? {
             0 => Val::Text(string(x)?),
             1 => Val::Bool(x.as_bool().ok_or_else(|| format!("not a yes or no: {x}"))?),
             2 => Val::Money(int(x)?),
             3 => Val::Count(int(x)?),
+            4 => Val::Ref(string(x)?),
+            5 => Val::Set(items(x)?.iter().map(string).collect::<Result<_, _>>()?),
+            6 => Val::Time(int(x)?),
+            7 => Val::Duration(int(x)?),
             t => return Err(format!("unknown value tag {t}")),
         })
     }
+}
+
+/// The calendar origin of the runtime clock: 0 is 2026-01-01 00:00 UTC
+/// (appendix F.2.12), as days since 1970-01-01.
+pub const EPOCH_DAYS: i64 = 20_454;
+
+/// The civil date of a day counted from 1970-01-01 (Howard Hinnant's algorithm).
+pub fn civil(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    (y, m, d)
+}
+
+/// `2026-01-03 14:05`, for a time on the runtime clock.
+pub fn time_text(t: i64) -> String {
+    let days = t.div_euclid(86_400);
+    let secs = t.rem_euclid(86_400);
+    let (y, m, d) = civil(EPOCH_DAYS + days);
+    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}", secs / 3_600, secs % 3_600 / 60)
+}
+
+/// A shared entity as another unit carries it (appendix F.2.3): its kind,
+/// when it was created, and its attributes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fact {
+    pub kind: String,
+    pub created: i64,
+    pub attrs: BTreeMap<String, Val>,
+}
+
+impl Fact {
+    fn to_value(&self) -> Value {
+        Value::tuple([text(&self.kind), Value::from(self.created), attrs_value(&self.attrs)])
+    }
+
+    fn from_value(v: &Value) -> Result<Fact, String> {
+        let [kind, created, attrs] = fields::<3>(v, "fact")?;
+        Ok(Fact { kind: string(kind)?, created: int(created)?, attrs: attrs_from(attrs)? })
+    }
+}
+
+/// Carried facts, by the label of the unit they come from.
+pub type Facts = BTreeMap<String, Fact>;
+
+fn attrs_value(attrs: &BTreeMap<String, Val>) -> Value {
+    Value::list(attrs.iter().map(|(k, v)| Value::tuple([text(k), v.to_value()])))
+}
+
+fn attrs_from(v: &Value) -> Result<BTreeMap<String, Val>, String> {
+    let mut map = BTreeMap::new();
+    for a in items(v)? {
+        let [k, x] = fields::<2>(a, "attribute")?;
+        map.insert(string(k)?, Val::from_value(x)?);
+    }
+    Ok(map)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,6 +187,8 @@ impl Status {
 pub struct Node {
     pub kind: String,
     pub attrs: BTreeMap<String, Val>,
+    /// When it was created, on the runtime clock (appendix F.2.14).
+    pub created: i64,
     pub status: Status,
     /// What the outside world reported, once it has.
     pub outcome: Option<String>,
@@ -124,7 +212,8 @@ impl Node {
     fn to_value(&self) -> Value {
         Value::tuple([
             text(&self.kind),
-            Value::list(self.attrs.iter().map(|(k, v)| Value::tuple([text(k), v.to_value()]))),
+            attrs_value(&self.attrs),
+            Value::from(self.created),
             Value::from(self.status.code()),
             text(self.outcome.as_deref().unwrap_or("")),
             Value::from(i64::from(self.attempt)),
@@ -137,12 +226,7 @@ impl Node {
     }
 
     fn from_value(v: &Value) -> Result<Node, String> {
-        let [kind, attrs, status, outcome, attempt, sends, waiting, held, slots, parts] = fields::<10>(v, "node")?;
-        let mut map = BTreeMap::new();
-        for a in items(attrs)? {
-            let [k, x] = fields::<2>(a, "attribute")?;
-            map.insert(string(k)?, Val::from_value(x)?);
-        }
+        let [kind, attrs, created, status, outcome, attempt, sends, waiting, held, slots, parts] = fields::<11>(v, "node")?;
         let mut held_by = BTreeMap::new();
         for h in items(held)? {
             let [part, rule] = fields::<2>(h, "held need")?;
@@ -156,7 +240,8 @@ impl Node {
         let some = |s: String| if s.is_empty() { None } else { Some(s) };
         Ok(Node {
             kind: string(kind)?,
-            attrs: map,
+            attrs: attrs_from(attrs)?,
+            created: int(created)?,
             status: Status::from_code(int(status)?)?,
             outcome: some(string(outcome)?),
             attempt: u32::try_from(int(attempt)?).map_err(|e| e.to_string())?,
@@ -186,6 +271,8 @@ pub struct Unit {
     /// The patience timers this unit asked for: an id and a duration
     /// (appendix D.3.5). The host starts each id once.
     pub timers: Vec<(String, u64)>,
+    /// The shared entities it reads, carried in (appendix F.2.3).
+    pub facts: Facts,
 }
 
 impl Unit {
@@ -198,11 +285,17 @@ impl Unit {
             indexes(&self.matched),
             indexes(&self.alerts),
             Value::list(self.timers.iter().map(|(id, secs)| Value::tuple([text(id), Value::from(*secs as i64)]))),
+            Value::list(self.facts.iter().map(|(label, f)| Value::tuple([text(label), f.to_value()]))),
         ])
     }
 
     pub fn from_value(v: &Value) -> Result<Unit, String> {
-        let [label, root, notes, met, matched, alerts, timers] = fields::<7>(v, "unit")?;
+        let [label, root, notes, met, matched, alerts, timers, facts] = fields::<8>(v, "unit")?;
+        let mut carried = Facts::new();
+        for f in items(facts)? {
+            let [label, fact] = fields::<2>(f, "carried fact")?;
+            carried.insert(string(label)?, Fact::from_value(fact)?);
+        }
         let mut wanted = vec![];
         for t in items(timers)? {
             let [id, secs] = fields::<2>(t, "timer")?;
@@ -216,6 +309,7 @@ impl Unit {
             matched: indexes_from(matched)?,
             alerts: indexes_from(alerts)?,
             timers: wanted,
+            facts: carried,
         })
     }
 }
@@ -313,6 +407,17 @@ pub fn answer_from_value(v: &Value) -> Result<(String, Vec<(String, Val)>), Stri
     Ok((string(outcome)?, pairs_from(data)?))
 }
 
+/// A message as it waits at a mailbox: with the clock when it was delivered,
+/// which the step reads as its `now` (appendix F.2.14).
+pub fn stamped(now: i64, msg: &Value) -> Value {
+    Value::tuple([Value::from(now), msg.clone()])
+}
+
+pub fn unstamp(v: &Value) -> Result<(i64, Msg), String> {
+    let [now, msg] = fields::<2>(v, "delivered message")?;
+    Ok((int(now)?, Msg::from_value(msg)?))
+}
+
 /// An internal message on its way to the unit labeled `label`.
 pub fn send_value(label: &str, msg: &Msg) -> Value {
     Value::tuple([text(label), msg.to_value()])
@@ -377,6 +482,7 @@ mod tests {
         let part = Node {
             kind: "Payment".into(),
             attrs: BTreeMap::new(),
+            created: 30,
             status: Status::Requested,
             outcome: None,
             attempt: 1,
@@ -389,6 +495,7 @@ mod tests {
         let root = Node {
             kind: "Order".into(),
             attrs,
+            created: 0,
             status: Status::Idle,
             outcome: None,
             attempt: 1,
@@ -406,6 +513,10 @@ mod tests {
             matched: vec![0],
             alerts: vec![0],
             timers: vec![("O1/Delivery:Shipment".into(), 172_800)],
+            facts: Facts::from([(
+                "DE".to_string(),
+                Fact { kind: "Country".into(), created: 0, attrs: BTreeMap::from([("countries".to_string(), Val::Set(vec!["A".into(), "B".into()]))]) },
+            )]),
         }
     }
 
@@ -439,6 +550,10 @@ mod tests {
         assert_eq!(Val::Money(1250).show("EUR"), "12.50 EUR");
         assert_eq!(Val::Text("alcohol".into()).show("EUR"), "\"alcohol\"");
         assert_eq!(Val::Bool(false).show("EUR"), "no");
+        assert_eq!(Val::Time(86_400 * 31 + 3_660).show("EUR"), "2026-02-01 01:01");
+        assert_eq!(Val::Duration(172_800).show("EUR"), "2 days");
+        assert_eq!(Val::Set(vec!["DE".into(), "FR".into()]).show("EUR"), "{DE, FR}");
+        assert_eq!(civil(EPOCH_DAYS), (2026, 1, 1));
     }
 
     #[test]

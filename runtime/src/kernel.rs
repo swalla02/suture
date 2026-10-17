@@ -8,7 +8,7 @@ use suture::{DigestBuilder, KindId, PatchView, Policy, Program as KernelProgram,
 use suture_lang::ir::Program;
 
 use crate::interp;
-use crate::state::{answer_from_value, send_from_value, send_value, Ask, Msg, Unit};
+use crate::state::{answer_from_value, send_from_value, send_value, stamped, unstamp, Ask, Msg, Unit};
 
 /// The runtime's kernel kinds.
 #[derive(Clone, Copy, Debug)]
@@ -39,16 +39,16 @@ pub fn program(prog: Arc<Program>) -> (KernelProgram, Kinds) {
         ask: b.kind("Ask", reply.neg()).payload(ValueType::Any).effect().done(),
         answer: b.kind("Answer", reply.pos()).payload(ValueType::Any).done(),
         send: b.kind("Send", route.neg()).payload(ValueType::Any).effect().done(),
-        deliver: b.kind("Deliver", route.pos()).aux("to", mailbox.pos()).aux("next", mailbox.neg()).done(),
+        deliver: b.kind("Deliver", route.pos()).aux("to", mailbox.pos()).aux("next", mailbox.neg()).payload(ValueType::Any).done(),
     };
     let sig = b.build().expect("the runtime signature is valid");
     let mut t = RuleTable::new();
     let p = prog.clone();
     t.def("step", k.msg, k.unit, move |cx| {
         let [rest] = cx.left_aux();
-        let msg = Msg::from_value(cx.left()).map_err(|e| cx.reject(e))?;
+        let (now, msg) = unstamp(cx.left()).map_err(|e| cx.reject(e))?;
         let unit = Unit::from_value(cx.right()).map_err(|e| cx.reject(e))?;
-        let out = interp::step(&p, &unit, &msg);
+        let out = interp::step_at(&p, &unit, &msg, now);
         cx.agent(k.unit, out.unit.to_value(), rest, &[]);
         for a in &out.asks {
             cx.effect(k.ask, a.to_value(), &[]);
@@ -66,8 +66,9 @@ pub fn program(prog: Arc<Program>) -> (KernelProgram, Kinds) {
     .emits(&[k.send]);
     t.def("deliver", k.deliver, k.send, move |cx| {
         let [to, next] = cx.left_aux();
+        let now = cx.left().as_int().ok_or_else(|| cx.reject("a delivery carries the clock"))?;
         let (_, msg) = send_from_value(cx.right()).map_err(|e| cx.reject(e))?;
-        cx.agent(k.msg, msg, to, &[next]);
+        cx.agent(k.msg, stamped(now, &msg), to, &[next]);
         Ok(())
     });
     let hash = {
@@ -97,7 +98,7 @@ impl Policy for RulesHold {
     fn check(&self, view: &PatchView<'_>) -> Result<(), String> {
         for payload in view.created_of(self.unit) {
             let unit = Unit::from_value(payload)?;
-            if let Some(r) = interp::violated(&self.prog, &unit.root) {
+            if let Some(r) = interp::violated(&self.prog, &unit) {
                 return Err(format!("rule {} would break", r.name));
             }
         }

@@ -15,6 +15,12 @@ pub fn literal(c: &mut Cursor) -> Result<Option<Literal>, Error> {
         Some(Tok::Num(n)) => {
             let n = n.clone();
             c.next();
+            if let Some(secs) = time_unit(c.peek()) {
+                c.next();
+                let k: i64 = n.parse().map_err(|_| c.error(format!("`{n}` is not a whole number")))?;
+                let d = k.checked_mul(secs).ok_or_else(|| c.error(format!("`{n}` is too long a duration")))?;
+                return Ok(Some(Literal::Duration(d)));
+            }
             let currency = match c.peek() {
                 Some(Tok::Word(w)) if w.len() == 3 && w.chars().all(|ch| ch.is_ascii_uppercase()) => Some(w.clone()),
                 _ => None,
@@ -41,6 +47,19 @@ pub fn literal(c: &mut Cursor) -> Result<Option<Literal>, Error> {
         }
         _ => Ok(None),
     }
+}
+
+/// The seconds in a time unit, if the token is one: `second`, `minutes`, `days`…
+fn time_unit(t: Option<&Tok>) -> Option<i64> {
+    let Some(Tok::Word(w)) = t else { return None };
+    Some(match w.as_str() {
+        "second" | "seconds" => 1,
+        "minute" | "minutes" => 60,
+        "hour" | "hours" => 3_600,
+        "day" | "days" => 86_400,
+        "week" | "weeks" => 604_800,
+        _ => return None,
+    })
 }
 
 /// An amount in cents: at most two decimals.
@@ -208,6 +227,22 @@ pub fn state_word(c: &mut Cursor) -> Result<String, Error> {
 /// What follows a noun phrase: `is [not] t`, `is at most t` and the other
 /// comparisons, `has a K [that is s]`, or `has no K [that is s]`.
 pub fn predicate(c: &mut Cursor, left: Num) -> Result<Cond, Error> {
+    let contains = if c.eat_word("contains") || c.eat_word("contain") {
+        Some(false)
+    } else if (c.is_word("does") || c.is_word("do")) && word_at(c, 1, "not") {
+        c.next();
+        c.next();
+        c.expect_word("contain")?;
+        Some(true)
+    } else {
+        None
+    };
+    if let Some(negated) = contains {
+        let Num::Np(set) = left else {
+            return Err(c.error("only a set contains something; a calculation does not"));
+        };
+        return Ok(Cond::Contains { set, item: noun_phrase(c)?, negated });
+    }
     if c.eat_word("has") || c.eat_word("have") {
         let Num::Np(left) = left else {
             return Err(c.error("only a noun phrase has parts; a calculation has none"));
@@ -372,7 +407,7 @@ fn each_in_cond(c: &Cond) -> Option<String> {
     match c {
         Cond::Is { left, .. } | Cond::Cmp { left, .. } => num(left),
         Cond::And(cs) | Cond::Or(cs) => cs.iter().find_map(each_in_cond),
-        Cond::Has { .. } => None,
+        Cond::Has { .. } | Cond::Contains { .. } => None,
     }
 }
 

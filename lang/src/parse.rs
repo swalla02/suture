@@ -86,12 +86,18 @@ fn type_name(c: &mut Cursor) -> Result<TypeName, Error> {
         "Bool" => TypeName::Bool,
         "Money" => TypeName::Money,
         "Count" => TypeName::Count,
+        "Time" => TypeName::Time,
+        "Duration" => TypeName::Duration,
+        "set" => {
+            c.expect_word("of")?;
+            TypeName::Set(c.kind_name()?)
+        }
         "list" => {
             c.expect_word("of")?;
             TypeName::List(c.kind_name()?)
         }
         _ if w.starts_with(char::is_uppercase) => TypeName::Kind(w),
-        _ => return Err(c.error(format!("unknown type `{w}`: use Text, Bool, Money, Count or a kind"))),
+        _ => return Err(c.error(format!("unknown type `{w}`: use Text, Bool, Money, Count, Time, Duration, a kind, `list of` a kind or `set of` a kind"))),
     })
 }
 

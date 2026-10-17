@@ -101,6 +101,14 @@ fn values(prog: &Program, pairs: &[(String, Literal)]) -> Result<Vec<(String, Va
                 Literal::Text(s) => Val::Text(s.clone()),
                 Literal::Bool(b) => Val::Bool(*b),
                 Literal::Count(n) => Val::Count(*n),
+                Literal::Duration(s) => Val::Duration(*s),
+                // Names of shared entities: the host checks and resolves them.
+                Literal::Set(names) => {
+                    let mut names = names.clone();
+                    names.sort();
+                    names.dedup();
+                    Val::Set(names)
+                }
                 Literal::Money { cents, currency } if *currency == prog.currency => Val::Money(*cents),
                 Literal::Money { currency, .. } => {
                     return Err(format!("{k}: an amount in {currency} is not in this module's currency, {}", prog.currency));
@@ -135,7 +143,7 @@ fn expect(host: &Host, name: &str, part: Option<&str>, state: &str, negated: boo
     if !states.iter().any(|s| s == state) {
         return Err(format!("{kind} has no state {state}; its states are {}", states.join(", ")));
     }
-    if in_state(&host.prog, &unit.root, &at, state) == negated {
+    if in_state(&host.prog, &unit, &at, state) == negated {
         let whose = part.map(|k| format!("{name}'s {k}")).unwrap_or_else(|| name.to_string());
         return Err(format!("expected {whose} is {}{state}", not(negated)));
     }
@@ -147,7 +155,7 @@ fn expect_cond(host: &Host, name: &str, cond: &suture_lang::ast::Cond, text: &st
     let unit = host.unit(name).ok_or_else(|| format!("there is no unit {name}"))?;
     let c = suture_lang::check::condition(&host.prog, &unit.root.kind, cond)
         .map_err(|es| es.iter().map(|e| e.msg.clone()).collect::<Vec<_>>().join("; "))?;
-    if holds(&host.prog, &unit.root, &[], &c) { Ok(()) } else { Err(format!("expected {text}")) }
+    if holds(&host.prog, &unit, &[], &c) { Ok(()) } else { Err(format!("expected {text}")) }
 }
 
 fn alert(host: &Host, name: &str, negated: bool) -> Result<(), String> {

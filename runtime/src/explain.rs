@@ -11,11 +11,11 @@ pub fn explain(prog: &Program, unit: &Unit, due: impl Fn(&str) -> Option<u64>) -
     let attrs: Vec<String> = unit.root.attrs.iter().map(|(k, v)| format!("{k} {}", v.show(&prog.currency))).collect();
     let mut out = vec![format!("{} {} ({})", unit.root.kind, unit.label, attrs.join(", "))];
     for (i, g) in prog.goals.iter().enumerate().filter(|(_, g)| g.kind == unit.root.kind) {
-        if !g.filter.iter().all(|f| holds(prog, &unit.root, &[], f)) {
+        if !g.filter.iter().all(|f| holds(prog, unit, &[], f)) {
             out.push(format!("  goal does not apply: {}", g.source));
             continue;
         }
-        let missing: Vec<&str> = g.states.iter().filter(|s| !in_state(prog, &unit.root, &[], s)).map(String::as_str).collect();
+        let missing: Vec<&str> = g.states.iter().filter(|s| !in_state(prog, unit, &[], s)).map(String::as_str).collect();
         out.push(if missing.is_empty() {
             format!("  goal met: {}", g.source)
         } else if unit.alerts.contains(&(i as u32)) {

@@ -36,7 +36,7 @@ fn has_part(u: &Unit, kind: &str) -> bool {
 }
 
 fn root_is(p: &Program, u: &Unit, state: &str) -> bool {
-    in_state(p, &u.root, &[], state)
+    in_state(p, u, &[], state)
 }
 
 #[test]
@@ -171,7 +171,7 @@ rule paid: no Order has a Shipment unless its Payment is captured
 "
     ));
     let (u, asks) = placed(&p, 50);
-    assert!(violated(&p, &u.root).is_none());
+    assert!(violated(&p, &u).is_none());
     assert!(!has_part(&u, "Shipment"), "{:?}", u.root);
     assert!(has_note(&u, "Shipment waits: rule paid"), "{:?}", u.notes);
     let (u, asks) = answer(&p, &u, ask(&asks, "payments"), "captured", &[]);
@@ -195,7 +195,7 @@ rule early: no Order has a Form that is done unless its Payment is captured
     let (u, asks) = placed(&p, 50);
     let pay = ask(&asks, "payments").clone();
     let (u, _) = answer(&p, &u, ask(&asks, "forms"), "filled", &[]);
-    assert!(violated(&p, &u.root).is_none());
+    assert!(violated(&p, &u).is_none());
     assert!(has_note(&u, "Entry filled"), "the outside fact is kept: {:?}", u.notes);
     assert!(has_note(&u, "Form waits: rule early"), "{:?}", u.notes);
     let (u, _) = answer(&p, &u, &pay, "captured", &[]);
@@ -258,7 +258,7 @@ when a Payment is declined: its Order is cancelled
     let (u, asks) = placed(&p, 50);
     let pay = ask(&asks, "payments").clone();
     let (after, again) = answer(&p, &u, &pay, "declined", &[]);
-    assert!(violated(&p, &after.root).is_none());
+    assert!(violated(&p, &after).is_none());
     assert_eq!(after.root, u.root);
     assert!(has_note(&after, "refused by rule keep"), "{:?}", after.notes);
     assert_eq!(again, vec![pay]);
@@ -288,7 +288,7 @@ fn an_unanswered_request_is_sent_again_then_times_out() {
     assert!(has_note(&u, "Payment timed out"), "{:?}", u.notes);
     assert_eq!(payment(&u).outcome.as_deref(), Some(TIMED_OUT));
     let i = u.root.parts.iter().position(|n| n.kind == "Payment").unwrap();
-    assert!(in_state(&p, &u.root, &[i], TIMED_OUT));
+    assert!(in_state(&p, &u, &[i], TIMED_OUT));
     assert_eq!(u.root.parts.iter().filter(|n| n.kind == "Payment").count(), 1, "a timed-out part is not replaced");
 }
 
@@ -360,7 +360,7 @@ when a Shipment is timed out: its Order is cancelled
     assert_eq!(s.outcome.as_deref(), Some(TIMED_OUT));
     assert!(!root_is(&p, &u, "cancelled"));
     assert!(has_note(&u, "reaction held: rule late"), "{:?}", u.notes);
-    assert!(violated(&p, &u.root).is_none());
+    assert!(violated(&p, &u).is_none());
 }
 
 #[test]
@@ -428,7 +428,7 @@ fn patience_that_would_break_a_rule_is_held() {
     let (u, asks) = order(&p, "O1", "France", 120);
     let (u, _) = answer(&p, &u, ask(&asks, "payments"), "captured", &[]);
     let (after, sent) = run(&p, &u, Msg::Patience { id: u.timers[0].0.clone() });
-    assert!(violated(&p, &after.root).is_none());
+    assert!(violated(&p, &after).is_none());
     assert_eq!(after.root, u.root);
     assert!(has_note(&after, "patience held: rule keep"), "{:?}", after.notes);
     assert!(sent.is_empty());
@@ -494,7 +494,7 @@ rule few: the number of each Order's Shipments is at most 2
     }
     assert!(has_note(&u, "Shipment waits: rule few"), "{:?}", u.notes);
     assert_eq!(u.root.parts.iter().filter(|n| n.kind == "Shipment").count(), 2);
-    assert!(violated(&p, &u.root).is_none());
+    assert!(violated(&p, &u).is_none());
 }
 
 #[test]

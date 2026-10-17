@@ -93,6 +93,8 @@ pub struct OwnerRef {
 pub struct Attr {
     pub name: String,
     pub ty: Ty,
+    /// For a reference or a set: the kind it refers to (appendix F.2.2).
+    pub of: Option<String>,
     pub default: Option<Lit>,
     /// Computed once at creation, after defaults (appendix E.2.5).
     pub formula: Option<Num>,
@@ -104,6 +106,14 @@ pub enum Ty {
     Bool,
     Money,
     Count,
+    /// A reference to a shared entity; `Attr.of` says of which kind.
+    Ref,
+    /// References to several shared entities.
+    Set,
+    /// Seconds on the runtime clock (appendix F.2.14).
+    Time,
+    /// Seconds.
+    Duration,
 }
 
 /// A literal value; money is in cents of the module's currency.
@@ -113,6 +123,8 @@ pub enum Lit {
     Bool(bool),
     Money(i64),
     Count(i64),
+    /// In seconds.
+    Duration(i64),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -199,6 +211,9 @@ pub enum Step {
     /// A slot: its current alternative's current part (appendix D.3.1).
     Slot(String),
     Owner,
+    /// Through a reference attribute, to the shared entity's carried facts
+    /// (appendix F.2.3).
+    Ref(String),
 }
 
 /// A calculation (appendix E.2.3). Paths are relative to the node it is
@@ -241,12 +256,17 @@ pub enum Cond {
     State { node: Path, state: String, negated: bool },
     /// A node has (or has no) part of a kind, optionally in a state.
     Has { node: Path, part: String, state: Option<String>, negated: bool },
+    /// A set contains (or does not contain) a reference (appendix F.2.2).
+    Contains { set: Num, item: Num, negated: bool },
     And(Vec<Cond>),
     Or(Vec<Cond>),
 }
 
 /// The outcome of a request that got no answer in time (appendix C.3.3).
 pub const TIMED_OUT: &str = "timed out";
+
+/// The built-in attribute every entity has: when it was created (appendix F.2.14).
+pub const CREATED: &str = "created";
 
 impl Program {
     pub fn kind(&self, name: &str) -> Option<&Kind> {

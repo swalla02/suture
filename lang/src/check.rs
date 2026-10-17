@@ -5,7 +5,7 @@
 use crate::ast::{self, CmpOp, Head, Literal, Loc, NounPhrase, Source, Term, TypeName};
 use crate::ir::{
     Action, Arith, Attr, Body, Cond, Define, Effect, Goal, Kind, Lit, Need, Num, Op, OwnerRef, Path, Program, Reaction,
-    Rule, Slot, Step, Ty, TIMED_OUT,
+    Rule, Slot, Step, Ty, CREATED, TIMED_OUT,
 };
 use crate::lex::Error;
 use crate::readback;
@@ -28,10 +28,18 @@ pub fn condition(p: &Program, kind: &str, c: &ast::Cond) -> Result<Cond, Vec<Err
     }
 }
 
-/// `Refunds`, `Boxes`, `Branches`: the regular plural (spec §3.1).
+/// `Refunds`, `Boxes`, `Branches`, `Countries`: the regular plural (spec §3.1).
 fn plural_of(name: &str) -> String {
+    if let Some(stem) = name.strip_suffix('y').filter(|s| s.ends_with(|c: char| !"AEIOUaeiou".contains(c))) {
+        return format!("{stem}ies");
+    }
     let es = ["s", "x", "ch", "sh"].iter().any(|e| name.ends_with(e));
     format!("{name}{}", if es { "es" } else { "s" })
+}
+
+/// `a Payment`, `an Order`, for where a loop's `a` hides [`a`].
+fn a_(k: &str) -> String {
+    a(k)
 }
 
 /// `a Payment`, `an Order`.
@@ -81,7 +89,7 @@ fn end_kind(p: &Program, kind: &str, steps: &[Step]) -> Option<String> {
         cur = match s {
             Step::Part(k) => k.clone(),
             Step::Owner => p.kind(&cur)?.owner.as_ref()?.kind.clone(),
-            Step::Slot(_) | Step::Attr(_) => return None,
+            Step::Slot(_) | Step::Attr(_) | Step::Ref(_) => return None,
         };
     }
     Some(cur)
@@ -142,6 +150,13 @@ fn arith_type(op: char, lt: Ty, rt: Ty) -> Result<(Arith, Ty), String> {
         ('*', Ty::Count, Ty::Count) => (Arith::Mul, Ty::Count),
         ('/', Ty::Money, Ty::Count) => (Arith::Div, Ty::Money),
         ('/', Ty::Count, Ty::Count) => (Arith::Div, Ty::Count),
+        ('-', Ty::Time, Ty::Time) => (Arith::Sub, Ty::Duration),
+        ('+', Ty::Time, Ty::Duration) | ('+', Ty::Duration, Ty::Time) => (Arith::Add, Ty::Time),
+        ('-', Ty::Time, Ty::Duration) => (Arith::Sub, Ty::Time),
+        ('+', Ty::Duration, Ty::Duration) => (Arith::Add, Ty::Duration),
+        ('-', Ty::Duration, Ty::Duration) => (Arith::Sub, Ty::Duration),
+        ('*', Ty::Duration, Ty::Count) | ('*', Ty::Count, Ty::Duration) => (Arith::Mul, Ty::Duration),
+        ('/', Ty::Duration, Ty::Count) => (Arith::Div, Ty::Duration),
         _ => {
             return Err(match op {
                 '+' => format!("cannot add a {lt:?} and a {rt:?}"),
@@ -172,7 +187,7 @@ fn body_sums(b: &Body) -> bool {
         match c {
             Cond::Cmp { left, right, .. } => num(left) || num(right),
             Cond::And(cs) | Cond::Or(cs) => cs.iter().any(cond),
-            Cond::State { .. } | Cond::Has { .. } => false,
+            Cond::State { .. } | Cond::Has { .. } | Cond::Contains { .. } => false,
         }
     }
     match b {
@@ -181,10 +196,33 @@ fn body_sums(b: &Body) -> bool {
     }
 }
 
-/// Where a noun phrase ends: at a node of some kind, or at a value of some type.
+/// Where a noun phrase ends: at a node of some kind, at a value of some
+/// type, at a reference to a shared entity, or at a set of them.
 enum End {
     Node(String),
     Value(Ty),
+    Ref(String),
+    Set(String),
+}
+
+/// Whether a path goes through a reference, to another unit's carried facts.
+fn through_ref(path: &Path) -> bool {
+    path.steps.iter().any(|s| matches!(s, Step::Ref(_)))
+}
+
+/// A path to a shared entity as the reference that leads to it, for
+/// comparing identities: `[…, Ref(customer)]` becomes `[…, Attr(customer)]`.
+fn as_reference(path: &Path) -> Option<Path> {
+    let (last, rest) = path.steps.split_last()?;
+    let Step::Ref(a) = last else { return None };
+    let mut steps = rest.to_vec();
+    steps.push(Step::Attr(a.clone()));
+    Some(Path { steps })
+}
+
+/// Whether amounts of this type compare with at most, at least and so on.
+fn ordered(ty: Ty) -> bool {
+    matches!(ty, Ty::Money | Ty::Count | Ty::Time | Ty::Duration)
 }
 
 fn err(at: &Loc, msg: impl Into<String>) -> Error {
@@ -197,7 +235,9 @@ fn value_type(t: &TypeName) -> Option<Ty> {
         TypeName::Bool => Some(Ty::Bool),
         TypeName::Money => Some(Ty::Money),
         TypeName::Count => Some(Ty::Count),
-        TypeName::Kind(_) | TypeName::List(_) => None,
+        TypeName::Time => Some(Ty::Time),
+        TypeName::Duration => Some(Ty::Duration),
+        TypeName::Kind(_) | TypeName::List(_) | TypeName::Set(_) => None,
     }
 }
 
@@ -249,6 +289,7 @@ impl Checker {
         self.slots(src, &mut p);
         self.lists(src, &mut p);
         let conds = self.owners(src, &mut p);
+        self.refs(src, &mut p);
         self.prefers(src, &mut p);
         self.effects(src, &mut p);
         self.list_elements(src, &p);
@@ -283,6 +324,10 @@ impl Checker {
                     self.errors.push(err(&k.at, format!("{}.{}: `{}` is a state of every kind", k.name, a.name, a.name)));
                     continue;
                 }
+                if a.name == CREATED {
+                    self.errors.push(err(&k.at, format!("{}.{CREATED}: every entity has `{CREATED}`, the time it was created", k.name)));
+                    continue;
+                }
                 let Some(ty) = value_type(&a.ty) else { continue }; // an owner reference: see `owners`
                 let default = match &a.default {
                     None => None,
@@ -295,7 +340,7 @@ impl Checker {
                         None => None,
                     },
                 };
-                attrs.push(Attr { name: a.name.clone(), ty, default, formula: None });
+                attrs.push(Attr { name: a.name.clone(), ty, of: None, default, formula: None });
             }
             let plural = k.plural.clone().unwrap_or_else(|| plural_of(&k.name));
             p.kinds.push(Kind { name: k.name.clone(), plural, attrs, owner: None });
@@ -308,6 +353,11 @@ impl Checker {
             Literal::Text(s) => (Lit::Text(s.clone()), Ty::Text),
             Literal::Bool(b) => (Lit::Bool(*b), Ty::Bool),
             Literal::Count(n) => (Lit::Count(*n), Ty::Count),
+            Literal::Duration(secs) => (Lit::Duration(*secs), Ty::Duration),
+            Literal::Set(_) => {
+                self.errors.push(err(at, "a set of names is written only in scenarios"));
+                return None;
+            }
             Literal::Money { cents, currency: c } if c == currency => (Lit::Money(*cents), Ty::Money),
             Literal::Money { currency: c, .. } => {
                 self.errors.push(err(at, format!("an amount in {c} is not in this module's currency, {currency}")));
@@ -350,18 +400,6 @@ impl Checker {
                 p.needs.push(Need { owner: n.owner.clone(), part: part.clone(), cond: None });
             }
         }
-        for k in &src.kinds {
-            for a in &k.attrs {
-                let TypeName::Kind(target) = &a.ty else { continue };
-                let owner = p.kind(&k.name).and_then(|x| x.owner.as_ref());
-                if owner.is_none_or(|o| o.kind != *target) {
-                    self.errors.push(err(
-                        &k.at,
-                        format!("{}.{}: {target} is not the owner of {}; in slice 1 a kind refers only to its owner", k.name, a.name, k.name),
-                    ));
-                }
-            }
-        }
         for k in &p.kinds {
             let mut seen = vec![k.name.clone()];
             let mut cur = k.owner.as_ref().map(|o| o.kind.clone());
@@ -375,6 +413,47 @@ impl Checker {
             }
         }
         conds
+    }
+
+    /// References and sets (appendix F.2.2): every attribute whose type is a
+    /// kind, other than the one that names the owner. It must refer to a root
+    /// kind, a shared entity; a part lives inside its owner's unit.
+    fn refs(&mut self, src: &Source, p: &mut Program) {
+        for k in &src.kinds {
+            for a in &k.attrs {
+                let (target, ty) = match &a.ty {
+                    TypeName::Kind(t) => (t, Ty::Ref),
+                    TypeName::Set(t) => (t, Ty::Set),
+                    _ => continue,
+                };
+                let me = p.kind(&k.name);
+                if ty == Ty::Ref && me.and_then(|x| x.owner.as_ref()).is_some_and(|o| o.attr == a.name) {
+                    continue;
+                }
+                if me.is_some_and(|x| x.attr(&a.name).is_some()) {
+                    continue; // declared twice: reported in `kinds`
+                }
+                match p.kind(target).map(|t| t.owner.as_ref().map(|o| o.kind.clone())) {
+                    None => {
+                        self.errors.push(err(&k.at, format!("{}.{}: unknown kind {target}", k.name, a.name)));
+                        continue;
+                    }
+                    Some(Some(owner)) => {
+                        self.errors.push(err(
+                            &k.at,
+                            format!("{}.{}: {target} is a part of {owner}, so nothing outside {} can refer to it", k.name, a.name, a_(&owner)),
+                        ));
+                        continue;
+                    }
+                    Some(None) => {}
+                }
+                if a.default.is_some() {
+                    self.errors.push(err(&k.at, format!("{}.{} refers to {}; it has no default", k.name, a.name, a_(target))));
+                }
+                let kind = p.kinds.iter_mut().find(|x| x.name == k.name).expect("declared kinds are compiled");
+                kind.attrs.push(Attr { name: a.name.clone(), ty, of: Some(target.clone()), default: None, formula: None });
+            }
+        }
     }
 
     /// Makes `part` a part of `owner`: it must name its owner with exactly one
@@ -432,7 +511,34 @@ impl Checker {
         for k in &src.kinds {
             for a in &k.attrs {
                 let Some(f) = &a.formula else { continue };
-                let Some(want) = p.kind(&k.name).and_then(|x| x.attr(&a.name)).map(|x| x.ty) else { continue };
+                let Some(attr) = p.kind(&k.name).and_then(|x| x.attr(&a.name)).cloned() else { continue };
+                let want = attr.ty;
+                if want == Ty::Set {
+                    self.errors.push(err(&k.at, format!("{}.{} is a set; a set has no formula", k.name, a.name)));
+                    continue;
+                }
+                if want == Ty::Ref {
+                    // A reference's formula copies another reference: `country: Country = customer's country`.
+                    let target = attr.of.clone().unwrap_or_default();
+                    let found = match f {
+                        ast::Num::Np(np) => Some(self.np(p, &k.at, &k.name, np)),
+                        _ => None,
+                    };
+                    match found {
+                        Some(Some((path, End::Ref(t)))) if t == target => {
+                            let kind = p.kinds.iter_mut().find(|x| x.name == k.name).expect("declared kinds are compiled");
+                            if let Some(x) = kind.attrs.iter_mut().find(|x| x.name == a.name) {
+                                x.formula = Some(Num::Path(path));
+                            }
+                        }
+                        Some(None) => {} // the noun phrase's own error is reported
+                        _ => self.errors.push(err(
+                            &k.at,
+                            format!("{}.{} refers to {}, so its formula must name one, as in `customer's {}`", k.name, a.name, a_(&target), a.name),
+                        )),
+                    }
+                    continue;
+                }
                 let Some((num, ty)) = self.num(p, &k.at, &k.name, f) else { continue };
                 if ty != want {
                     self.errors.push(err(&k.at, format!("{}.{} is {want:?}, but its formula gives a {ty:?}", k.name, a.name)));
@@ -527,14 +633,14 @@ impl Checker {
                         continue;
                     }
                     Some(_) => {}
-                    None => kind.attrs.push(Attr { name: name.clone(), ty, default: None, formula: None }),
+                    None => kind.attrs.push(Attr { name: name.clone(), ty, of: None, default: None, formula: None }),
                 }
                 data.push((name.clone(), ty));
             }
             let mut sends = vec![];
             for np in &e.sends {
                 match self.np(p, &e.at, &e.kind, np) {
-                    Some((path, End::Value(_))) => sends.push((np.steps.last().cloned().unwrap_or_default(), path)),
+                    Some((path, End::Value(_) | End::Ref(_) | End::Set(_))) => sends.push((np.steps.last().cloned().unwrap_or_default(), path)),
                     Some((_, End::Node(k))) => {
                         self.errors.push(err(&e.at, format!("an effect sends values; `{}` is a {k}", show(np))));
                     }
@@ -680,6 +786,9 @@ impl Checker {
             let mut actions = vec![];
             for a in &r.actions {
                 match self.np(p, &r.at, &r.kind, &a.target) {
+                    Some((target, End::Node(k) | End::Ref(k))) if through_ref(&target) || matches!(target.steps.last(), Some(Step::Attr(_))) => {
+                        self.errors.push(err(&r.at, format!("`{}` is a shared {k}; a reaction changes only its own unit", show(&a.target))));
+                    }
                     Some((target, End::Node(k))) if a.becomes.is_some() => {
                         let Some(want) = p.kind(&k).and_then(|x| x.attr(&a.attr)).map(|x| x.ty) else {
                             self.errors.push(err(&r.at, format!("{} has no attribute `{}` to change", self::a(&k), a.attr)));
@@ -700,7 +809,7 @@ impl Checker {
                             self.errors.push(err(&r.at, format!("a {k} has no Bool attribute `{}` to set", a.attr)));
                         }
                     }
-                    Some((_, End::Value(_))) => {
+                    Some((_, End::Value(_) | End::Set(_) | End::Ref(_))) => {
                         self.errors.push(err(&r.at, format!("`{}` is a value; an action sets an attribute of a node", show(&a.target))));
                     }
                     None => {}
@@ -723,6 +832,8 @@ impl Checker {
             }
             ast::Num::Np(np) => match self.np(p, at, from, np)? {
                 (path, End::Value(ty)) => Some((Num::Path(path), ty)),
+                (path, End::Ref(_)) => Some((Num::Path(path), Ty::Ref)),
+                (path, End::Set(_)) => Some((Num::Path(path), Ty::Set)),
                 (_, End::Node(k)) => {
                     self.errors.push(err(at, format!("`{}` is {}, not a value", show(np), a(&k))));
                     None
@@ -846,10 +957,13 @@ impl Checker {
     }
 
     /// Resolves a noun phrase from a node of kind `from` (spec B.3.8): each
-    /// word is an attribute, a part, or the owner, tried in that order.
+    /// word is an attribute, a part, or the owner, tried in that order. Past a
+    /// reference, the phrase reads a shared entity's carried facts, so only
+    /// attributes can follow (appendix F.2.3).
     fn np(&mut self, p: &Program, at: &Loc, from: &str, np: &NounPhrase) -> Option<(Path, End)> {
         let mut steps = vec![];
         let mut cur = from.to_string();
+        let mut shared = false;
         if let Head::Each(k) = &np.head {
             if k != from {
                 self.errors.push(err(at, format!("`each {k}`: this sentence is about {}", a(from))));
@@ -857,23 +971,45 @@ impl Checker {
             }
         }
         if let Head::The(k) = &np.head {
-            while cur != *k {
-                // A valid chain of owners is shorter than the number of kinds;
-                // a longer walk is going round a needs loop, reported elsewhere.
-                match p.kind(&cur).and_then(|x| x.owner.as_ref()) {
-                    Some(o) if steps.len() < p.kinds.len() => {
-                        steps.push(Step::Owner);
-                        cur = o.kind.clone();
-                    }
-                    _ => {
-                        self.errors.push(err(at, format!("`the {k}`: a {from} is not part of a {k}")));
-                        return None;
-                    }
+            // The subject, else an owner of that kind, else the subject's or
+            // an owner's unique attribute of that kind (appendix F.2.4). A
+            // valid chain of owners is shorter than the number of kinds; a
+            // longer walk is going round a needs loop, reported elsewhere.
+            let mut chain = vec![from.to_string()];
+            while let Some(o) = p.kind(chain.last().expect("never empty")).and_then(|x| x.owner.as_ref()) {
+                if chain.len() > p.kinds.len() {
+                    break;
                 }
+                chain.push(o.kind.clone());
             }
+            let unique_ref = |kind: &str| {
+                let refs: Vec<&Attr> =
+                    p.kind(kind).map(|x| x.attrs.iter().filter(|a| a.ty == Ty::Ref && a.of.as_deref() == Some(k)).collect()).unwrap_or_default();
+                if refs.len() == 1 { Some(refs[0].name.clone()) } else { None }
+            };
+            if let Some(i) = chain.iter().position(|c| c == k) {
+                steps.extend(std::iter::repeat_n(Step::Owner, i));
+            } else if let Some((i, attr)) = chain.iter().enumerate().find_map(|(i, c)| unique_ref(c).map(|r| (i, r))) {
+                steps.extend(std::iter::repeat_n(Step::Owner, i));
+                steps.push(Step::Ref(attr));
+                shared = true;
+            } else {
+                self.errors.push(err(at, format!("`the {k}`: {} is not part of {} and has no attribute of kind {k}", a(from), a(k))));
+                return None;
+            }
+            cur = k.clone();
         }
         for (i, w) in np.steps.iter().enumerate() {
-            if plural_kind(p, &cur, w).is_some() {
+            let next = np.steps.get(i + 1);
+            if w == CREATED {
+                if let Some(next) = next {
+                    self.errors.push(err(at, format!("`{}`: {w} is a value, so it has no `{next}`", show(np))));
+                    return None;
+                }
+                steps.push(Step::Attr(w.clone()));
+                return Some((Path { steps }, End::Value(Ty::Time)));
+            }
+            if !shared && plural_kind(p, &cur, w).is_some() {
                 self.errors.push(err(
                     at,
                     format!("`{}` is a relation; count it with `the number of …` or add it up with `the total … of …`", show(np)),
@@ -882,15 +1018,40 @@ impl Checker {
             }
             let kind = p.kind(&cur)?;
             if let Some(a) = kind.attr(w) {
-                if let Some(next) = np.steps.get(i + 1) {
-                    self.errors.push(err(at, format!("`{}`: {w} is a value, so it has no `{next}`", show(np))));
-                    return None;
+                match (a.ty, next) {
+                    (Ty::Ref, None) => {
+                        steps.push(Step::Attr(w.clone()));
+                        return Some((Path { steps }, End::Ref(a.of.clone().unwrap_or_default())));
+                    }
+                    (Ty::Ref, Some(_)) => {
+                        steps.push(Step::Ref(w.clone()));
+                        cur = a.of.clone().unwrap_or_default();
+                        shared = true;
+                        continue;
+                    }
+                    (Ty::Set, None) => {
+                        steps.push(Step::Attr(w.clone()));
+                        return Some((Path { steps }, End::Set(a.of.clone().unwrap_or_default())));
+                    }
+                    (_, Some(next)) => {
+                        self.errors.push(err(at, format!("`{}`: {w} is a value, so it has no `{next}`", show(np))));
+                        return None;
+                    }
+                    (ty, None) => {
+                        steps.push(Step::Attr(w.clone()));
+                        return Some((Path { steps }, End::Value(ty)));
+                    }
                 }
-                steps.push(Step::Attr(w.clone()));
-                return Some((Path { steps }, End::Value(a.ty)));
+            }
+            if shared {
+                self.errors.push(err(
+                    at,
+                    format!("`{}`: {} is shared, so only its attributes can be read, and it has no attribute `{w}`", show(np), a_(&cur)),
+                ));
+                return None;
             }
             if p.slot(w).is_some() && p.needs.iter().any(|n| n.owner == cur && n.part == *w) {
-                if np.steps.get(i + 1).is_some() {
+                if next.is_some() {
                     let first = p.slot(w).map(|s| s.alternatives[0].clone()).unwrap_or_default();
                     self.errors.push(err(at, format!("`{}`: {w} is a slot; name its alternative, such as its {first}", show(np))));
                     return None;
@@ -923,9 +1084,16 @@ impl Checker {
             ast::Cond::Or(cs) => Some(Cond::Or(cs.iter().map(|c| self.cond(p, at, from, c)).collect::<Option<Vec<_>>>()?)),
             ast::Cond::Has { owner, negated, kind, state } => {
                 let (node, end) = self.np(p, at, from, owner)?;
-                let End::Node(k) = end else {
-                    self.errors.push(err(at, format!("`{}` is a value; only a node has parts", show(owner))));
-                    return None;
+                let k = match end {
+                    End::Node(k) if !through_ref(&node) => k,
+                    End::Node(k) | End::Ref(k) => {
+                        self.errors.push(err(at, format!("`{}` is a shared {k}; its parts are not read from another unit", show(owner))));
+                        return None;
+                    }
+                    End::Value(_) | End::Set(_) => {
+                        self.errors.push(err(at, format!("`{}` is a value; only a node has parts", show(owner))));
+                        return None;
+                    }
                 };
                 if p.slot(kind).is_some() {
                     let first = p.slot(kind).map(|s| s.alternatives[0].clone()).unwrap_or_default();
@@ -941,12 +1109,29 @@ impl Checker {
                 }
                 Some(Cond::Has { node, part: kind.clone(), state: state.clone(), negated: *negated })
             }
+            ast::Cond::Contains { set, item, negated } => {
+                let (set_path, end) = self.np(p, at, from, set)?;
+                let End::Set(k) = end else {
+                    self.errors.push(err(at, format!("`{}` is not a set, so it contains nothing", show(set))));
+                    return None;
+                };
+                let (item_path, end) = self.np(p, at, from, item)?;
+                let item_path = match end {
+                    End::Ref(k2) if k2 == k => item_path,
+                    End::Node(k2) if k2 == k && as_reference(&item_path).is_some() => as_reference(&item_path)?,
+                    _ => {
+                        self.errors.push(err(at, format!("`{}` holds references to {}; `{}` is not one", show(set), p.kind(&k).map_or(k.clone(), |x| x.plural.clone()), show(item))));
+                        return None;
+                    }
+                };
+                Some(Cond::Contains { set: Num::Path(set_path), item: Num::Path(item_path), negated: *negated })
+            }
             ast::Cond::Cmp { left, op, right } => {
                 let (num, ty) = self.num(p, at, from, left)?;
-                if !matches!(ty, Ty::Money | Ty::Count) {
+                if !ordered(ty) {
                     self.errors.push(err(
                         at,
-                        format!("`{}` is {ty:?}; only amounts and counts compare with at most, at least, more than or less than", show_num(left)),
+                        format!("`{}` is {ty:?}; only amounts, counts, times and durations compare with at most, at least, more than or less than", show_num(left)),
                     ));
                     return None;
                 }
@@ -967,6 +1152,18 @@ impl Checker {
                 };
                 let (path, end) = self.np(p, at, from, left)?;
                 match end {
+                    End::Node(k) if through_ref(&path) => {
+                        let Some(reference) = as_reference(&path) else {
+                            self.errors.push(err(at, format!("`{}` is a shared {k}; compare its attributes", show(left))));
+                            return None;
+                        };
+                        self.shared_is(p, at, from, left, &k, reference, *negated, right)
+                    }
+                    End::Ref(k) => self.shared_is(p, at, from, left, &k, path, *negated, right),
+                    End::Set(_) => {
+                        self.errors.push(err(at, format!("`{}` is a set; ask whether it contains something", show(left))));
+                        None
+                    }
                     End::Node(k) => {
                         let Term::Word(s) = right else {
                             self.errors.push(err(at, format!("`{}` is a {k}; compare it with a state: {}", show(left), p.states(&k).join(", "))));
@@ -980,6 +1177,49 @@ impl Checker {
                         Some(Cond::Cmp { left: Num::Path(path), op: if *negated { Op::Ne } else { Op::Eq }, right })
                     }
                 }
+            }
+        }
+    }
+
+    /// `x is [not] …` where `x` refers to a shared K (`reference` is the path
+    /// to the reference): a Bool attribute of K, its only kind of state
+    /// (appendix F.2.3), or another reference to a K.
+    #[allow(clippy::too_many_arguments)]
+    fn shared_is(
+        &mut self,
+        p: &Program,
+        at: &Loc,
+        from: &str,
+        left: &NounPhrase,
+        k: &str,
+        reference: Path,
+        negated: bool,
+        right: &Term,
+    ) -> Option<Cond> {
+        let bools: Vec<String> = p.kind(k).map(|x| x.attrs.iter().filter(|a| a.ty == Ty::Bool).map(|a| a.name.clone()).collect()).unwrap_or_default();
+        match right {
+            Term::Word(s) if bools.contains(s) => {
+                let Some((Step::Attr(a), rest)) = reference.steps.split_last() else { unreachable!("a reference ends at its attribute") };
+                let mut steps = rest.to_vec();
+                steps.push(Step::Ref(a.clone()));
+                Some(Cond::State { node: Path { steps }, state: s.clone(), negated })
+            }
+            Term::Np(np) => {
+                let (other, end) = self.np(p, at, from, np)?;
+                let other = match end {
+                    End::Ref(k2) if k2 == k => other,
+                    End::Node(k2) if k2 == k && as_reference(&other).is_some() => as_reference(&other)?,
+                    _ => {
+                        self.errors.push(err(at, format!("`{}` refers to {}; `{}` does not", show(left), a(k), show(np))));
+                        return None;
+                    }
+                };
+                Some(Cond::Cmp { left: Num::Path(reference), op: if negated { Op::Ne } else { Op::Eq }, right: Num::Path(other) })
+            }
+            _ => {
+                let states = if bools.is_empty() { String::new() } else { format!(" or a state: {}", bools.join(", ")) };
+                self.errors.push(err(at, format!("`{}` refers to {}; compare it with another reference to {}{states}", show(left), a(k), a(k))));
+                None
             }
         }
     }
