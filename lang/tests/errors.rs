@@ -29,19 +29,49 @@ fn every_bad_statement_is_reported() {
 fn a_table_phrase_names_the_canonical_one() {
     let e = errors(&format!("{SHOP}rule cap: the total amount of each Order's Refunds may not exceed its total\n"));
     assert_eq!(e.len(), 1, "{e:?}");
-    assert!(e[0].contains("rule cap: \"may not exceed\" is not a Suture phrase; write \"is at most\""), "{e:?}");
+    assert!(e[0].contains("rule cap: \"may not exceed\" is not a Suture phrase\n"), "{e:?}");
     assert!(e[0].contains("did you mean:     the total amount of each Order's Refunds is at most its total"), "{e:?}");
 }
 
 #[test]
 fn the_longest_phrase_wins_and_case_is_ignored() {
     let e = errors(&format!("{SHOP}rule cap: the total amount of each Order's Refunds Is Less Than Or Equal To its total\n"));
-    assert!(e[0].contains("\"is less than or equal to\" is not a Suture phrase; write \"is at most\""), "{e:?}");
+    assert!(e[0].contains("\"is less than or equal to\" is not a Suture phrase\n"), "{e:?}");
 }
 
 #[test]
 fn a_suggestion_that_does_not_compile_is_not_shown() {
-    let e = errors(&format!("{SHOP}rule cap: the total weight of each Order's Refunds may not exceed its total\n"));
-    assert!(e[0].contains("\"may not exceed\" is not a Suture phrase"), "{e:?}");
+    let e = errors(&format!("{SHOP}rule cap: the total amount of each Order's Refunds may not exceed its weight\n"));
+    assert!(e[0].contains("\"may not exceed\" is not a Suture phrase; write \"is at most\""), "{e:?}");
     assert!(!e[0].contains("did you mean"), "{e:?}");
+}
+
+fn shop_with(extra: &str) -> Vec<String> {
+    let shop = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/shop/shop.st")).unwrap();
+    let files = vec![("shop.st".to_string(), shop), ("bad.st".to_string(), extra.to_string())];
+    compile(&files).err().unwrap_or_default().iter().map(|e| e.to_string()).collect()
+}
+
+#[test]
+fn the_example_of_section_3_5() {
+    let e = shop_with("rule cap2: refunds of an Order can't be more than its total\n");
+    assert_eq!(
+        e,
+        ["bad.st:1: rule cap2: \"can't be more than\" is not a Suture phrase
+  closest pattern:  the total ⟨attr⟩ of each ⟨Kind⟩'s ⟨Kinds⟩ is at most ⟨num⟩
+  did you mean:     the total amount of each Order's Refunds is at most its total"]
+    );
+}
+
+/// Golden errors (spec §7.5): each wrong sentence of `golden/bad.st`, with
+/// the shop, gives the message in `golden/bad.errors`, word for word.
+/// `UPDATE_GOLDEN=1` rewrites the expected file.
+#[test]
+fn golden_errors() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden");
+    let got = shop_with(&std::fs::read_to_string(format!("{dir}/bad.st")).unwrap()).join("\n") + "\n";
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::write(format!("{dir}/bad.errors"), &got).unwrap();
+    }
+    assert_eq!(got, std::fs::read_to_string(format!("{dir}/bad.errors")).unwrap());
 }

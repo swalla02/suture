@@ -29,7 +29,7 @@ pub fn condition(p: &Program, kind: &str, c: &ast::Cond) -> Result<Cond, Vec<Err
 }
 
 /// `Refunds`, `Boxes`, `Branches`, `Countries`: the regular plural (spec §3.1).
-fn plural_of(name: &str) -> String {
+pub(crate) fn plural_of(name: &str) -> String {
     if let Some(stem) = name.strip_suffix('y').filter(|s| s.ends_with(|c: char| !"AEIOUaeiou".contains(c))) {
         return format!("{stem}ies");
     }

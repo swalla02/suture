@@ -1,0 +1,31 @@
+bad.st:1: rule g1: "must be" is not a Suture phrase
+  closest pattern:  every ⟨Kind⟩ is ⟨state⟩
+  did you mean:     every Order is settled
+bad.st:2: rule g2: "if it isn't" is not a Suture phrase
+  closest pattern:  no ⟨Kind⟩ has a ⟨Kind⟩ unless ⟨cond⟩
+  did you mean:     no Order has a Refund unless it is paid
+bad.st:3: rule g3: "the sum of" and "may not exceed" are not Suture phrases
+  closest pattern:  the total ⟨attr⟩ taken from each ⟨Kind⟩ is at most ⟨num⟩
+  did you mean:     the total quantity taken from each Stock is at most its units
+bad.st:4: rule g4: "the count of" and "must be at most" are not Suture phrases
+  closest pattern:  the number of each ⟨Kind⟩'s ⟨Kinds⟩ is at most ⟨num⟩
+  did you mean:     the number of each Order's Shipments is at most 2
+bad.st:5: rule g5: "can't be more than" is not a Suture phrase
+  closest pattern:  the total ⟨attr⟩ of each ⟨Kind⟩'s ⟨Kinds⟩ is at most ⟨num⟩
+  did you mean:     the total amount of each Order's Refunds is at most its total
+bad.st:6: rule g6: "the sum of" and "may not exceed" are not Suture phrases
+  closest pattern:  for each ⟨Kind⟩ and ⟨period⟩, the total ⟨attr⟩ of their ⟨Kinds⟩ is at most ⟨num⟩
+  did you mean:     for each Customer and month, the total amount of their Refunds is at most 1000 EUR
+bad.st:7: rule g7: "doesn't have" is not a Suture phrase; write "has no"
+  closest pattern:  no ⟨Kind⟩ whose ⟨attr⟩ is ⟨value⟩ has a ⟨Kind⟩
+bad.st:8: rule g8: "is greater than" is not a Suture phrase
+  closest pattern:  every ⟨Kind⟩'s ⟨attr⟩ is more than ⟨num⟩
+  did you mean:     every Order's total is more than 0 EUR
+bad.st:9: rule g9: a rule starts with `every` or `no`, found `Orders`
+  closest pattern:  every ⟨Kind⟩'s ⟨attr⟩ is at most ⟨num⟩
+bad.st:10: rule g10: "isn't" is not a Suture phrase; write "is not"
+  closest pattern:  no ⟨Kind⟩ has a ⟨Kind⟩ that is ⟨state⟩
+bad.st:11: "isn't" is not a Suture phrase
+  did you mean:     an Order is closed when it is paid and it is not cancelled
+bad.st:12: "isn't" and "must be" are not Suture phrases
+  did you mean:     every Order that is not cancelled is paid
