@@ -5,7 +5,10 @@ use crate::ir::{Arith, Body, Cond, Lit, Num, Op, Path, Program, Rule, Step};
 
 /// `for each Declaration d: d.value ≤ d.form.order.total`
 pub fn formula(p: &Program, r: &Rule) -> String {
-    let v: String = r.subject.chars().next().map_or_else(|| "x".to_string(), |c| c.to_lowercase().collect());
+    // A global rule (`all Refunds`) has no subject to range over: its body
+    // is about the whole system, so no variable is bound.
+    let global = r.subject.starts_with("all ");
+    let v: String = if global { String::new() } else { r.subject.chars().next().map_or_else(|| "x".to_string(), |c| c.to_lowercase().collect()) };
     let f = |c: &Cond| cond_formula(p, &r.subject, &v, c);
     let filter: Vec<String> = r.filter.iter().map(&f).collect();
     let body = match &r.body {
@@ -20,6 +23,9 @@ pub fn formula(p: &Program, r: &Rule) -> String {
             }
         }
     };
+    if global {
+        return body;
+    }
     format!("for each {} {v}: {body}", r.subject)
 }
 
@@ -30,6 +36,7 @@ pub fn paraphrase(p: &Program, r: &Rule) -> String {
     let filter: Vec<String> = r.filter.iter().map(&w).collect();
     let scope = if filter.is_empty() { String::new() } else { format!(" where {}", filter.join(" and ")) };
     match &r.body {
+        Body::Every(c) if r.subject.starts_with("all ") => format!("across the whole system: {}", w(c)),
         Body::Every(c) => format!("each {k}{scope} on its own: {}", w(c)),
         Body::No { pred, unless } => {
             let pred = w(pred);
@@ -47,8 +54,9 @@ fn cond_formula(p: &Program, kind: &str, v: &str, c: &Cond) -> String {
         }
         Cond::State { node, state, negated } => format!("{} is {}{state}", path_formula(p, kind, v, node), not(*negated)),
         Cond::Has { node, part, state, negated } => {
-            let filter = state.as_ref().map_or_else(String::new, |s| format!(" where s is {s}"));
-            let inner = format!("exists(s in {}.{part}{filter})", path_formula(p, kind, v, node));
+            let x = element_var(part, kind);
+            let filter = state.as_ref().map_or_else(String::new, |s| format!(" where {x} is {s}"));
+            let inner = format!("exists({x} in {}.{part}{filter})", path_formula(p, kind, v, node));
             if *negated { format!("not {inner}") } else { inner }
         }
         Cond::Contains { set, item, negated } => {
@@ -65,8 +73,13 @@ fn cond_words(p: &Program, kind: &str, c: &Cond) -> String {
         Cond::State { node, state, negated } => format!("{} is {}{state}", path_words(p, kind, node), not(*negated)),
         Cond::Has { node, part, state, negated } => {
             let that = state.as_ref().map_or_else(String::new, |s| format!(" that is {s}"));
-            let a = if *negated { "no" } else { "a" };
-            format!("{} has {a} {}{that}", path_words(p, kind, node), words_of_kind(part))
+            let part = words_of_kind(part);
+            let a = match (*negated, part.starts_with(|c: char| "aeiou".contains(c))) {
+                (true, _) => "no",
+                (false, true) => "an",
+                (false, false) => "a",
+            };
+            format!("{} has {a} {part}{that}", path_words(p, kind, node))
         }
         Cond::Contains { set, item, negated } => {
             format!("{} {} {}", num_words(p, kind, set), if *negated { "does not contain" } else { "contains" }, num_words(p, kind, item))
@@ -250,6 +263,9 @@ pub fn choice(p: &Program, b: &crate::ir::Binding) -> String {
     if b.key_attr.is_empty() {
         let to = if b.target.starts_with("all ") { "the".to_string() } else { format!("its {}'s", b.key_words()) };
         let t = b.taking.as_ref().map_or_else(String::new, |t| t.name.clone());
+        if b.target.starts_with("all ") {
+            return format!("each {} adds to {to} total {t} (one total for the whole system: a bottleneck)", b.subject);
+        }
         return format!("each {} adds to {to} total {t} (no choice: the key names the {})", b.subject, b.target);
     }
     let key = match b.per.as_ref().and_then(|l| p.lists.iter().find(|x| x.name == *l)) {

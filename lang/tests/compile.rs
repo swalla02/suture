@@ -195,7 +195,7 @@ rule big: no Order whose total is at least 1000 EUR has a Shipment or a Refund u
     assert_eq!(rule(&p, "fees").tier, "local");
     assert_eq!(
         rule(&p, "big").formula,
-        "for each Order o: o.total ≥ 1000 EUR and (exists(s in o.Shipment) or exists(s in o.Refund)) implies o.items > 2 × (3 − 1)"
+        "for each Order o: o.total ≥ 1000 EUR and (exists(s in o.Shipment) or exists(r in o.Refund)) implies o.items > 2 × (3 − 1)"
     );
 }
 
@@ -283,7 +283,7 @@ fn review_totals_over_a_list_are_typed_and_read_back_plainly() {
     let p = prog(&format!("{base}rule r: every O's discount is at most the total of (the line's price - its discount) * the line's quantity over its lines\nrule s: every O's discount is at most 10 EUR * (its n / its k)\nrule t: no O has a Line that is done unless its n is at least the number of its lines that are done and its k is 2\n"));
     assert_eq!(rule(&p, "r").paraphrase, "each o on its own: its discount is at most the total of (the line's price − its discount) × the line's quantity over its lines");
     assert_eq!(rule(&p, "s").formula, "for each O o: o.discount ≤ 10 EUR × (o.n / o.k)");
-    assert_eq!(rule(&p, "t").formula, "for each O o: exists(s in o.Line where s is done) implies o.n ≥ count(l in o.lines where l is done) and o.k = 2");
+    assert_eq!(rule(&p, "t").formula, "for each O o: exists(l in o.Line where l is done) implies o.n ≥ count(l in o.lines where l is done) and o.k = 2");
 }
 
 #[test]
