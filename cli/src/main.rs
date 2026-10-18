@@ -176,9 +176,6 @@ fn unix_now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
-/// Serves the program until the process is stopped (appendix L): its state
-/// directory replayed first, `adapters.json` and (with `--models`)
-/// `models.json` read from beside it.
 /// The deploy check against the live state, which it never writes (appendix M.2.7).
 fn deploy(dir: &Path, state: Option<&Path>) -> Result<bool, String> {
     use suture_runtime::service::{Check, Service};
@@ -209,6 +206,9 @@ fn deploy(dir: &Path, state: Option<&Path>) -> Result<bool, String> {
     }
 }
 
+/// Serves the program until the process is stopped (appendix L): its state
+/// directory replayed first, `adapters.json` and (with `--models`)
+/// `models.json` read from beside it.
 fn serve(dir: &Path, flags: &[&str]) -> Result<bool, String> {
     let (mut state, mut listen, mut models) = (suture_runtime::service::Service::default_state(dir), LISTEN.to_string(), false);
     let mut rest = flags.iter();

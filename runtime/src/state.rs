@@ -537,7 +537,8 @@ pub enum Msg {
     Due { id: String },
     /// The program was deployed in a new version: for each old goal, by
     /// index, its index in the new one, if it is still there (appendix M.2.5).
-    Upgrade { goals: Vec<Option<u32>> },
+    /// `facts`: the shared entities it reads, as carried over too.
+    Upgrade { goals: Vec<Option<u32>>, facts: Facts },
 }
 
 impl Msg {
@@ -560,7 +561,9 @@ impl Msg {
             Msg::Change { attr, value, by } => Value::tuple([Value::from(10i64), pairs_value(&[(attr.clone(), value.clone())]), text(by)]),
             Msg::Refresh { facts } => Value::tuple([Value::from(11i64), facts_value(facts)]),
             Msg::Due { id } => Value::tuple([Value::from(12i64), text(id)]),
-            Msg::Upgrade { goals } => Value::tuple([Value::from(13i64), Value::list(goals.iter().map(|g| Value::from(g.map_or(-1, i64::from))))]),
+            Msg::Upgrade { goals, facts } => {
+                Value::tuple([Value::from(13i64), Value::list(goals.iter().map(|g| Value::from(g.map_or(-1, i64::from)))), facts_value(facts)])
+            }
         }
     }
 
@@ -619,9 +622,9 @@ impl Msg {
                 Ok(Msg::Due { id: string(id)? })
             }
             Some(Ok(13)) => {
-                let [_, goals] = fields::<2>(v, "upgrade message")?;
+                let [_, goals, facts] = fields::<3>(v, "upgrade message")?;
                 let goals = items(goals)?.iter().map(|g| int(g).map(|i| u32::try_from(i).ok())).collect::<Result<_, _>>()?;
-                Ok(Msg::Upgrade { goals })
+                Ok(Msg::Upgrade { goals, facts: facts_from(facts)? })
             }
             _ => Err(format!("not a message: {v}")),
         }

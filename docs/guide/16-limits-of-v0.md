@@ -7,7 +7,8 @@ Suture v0 is a prototype. Everything earlier in this guide runs and is tested. T
 - **One process.** `suture serve` (chapter 17) runs a program as one process, applying one input at a time. Several runtime pods sharing the work, with failover between them, are a later slice.
 - **The log only grows.** It is never compacted or snapshotted, so a restart replays every input since the start.
 - **Deploys happen at start.** A new version is deployed when `suture serve` starts it (chapter 18), not while the service runs. Going back to an older version is not supported.
-- **Resolutions are few.** A rule over totals (`per-group` or `global`) cannot apply from a version, and a value cannot be migrated by a formula; change the rule, or give the attribute a default.
+- **Resolutions are few.** A rule over totals (`per-group` or `global`) cannot apply from a version, and a value cannot be migrated by a formula; change the rule, or give the attribute a default. A changed formula keeps the values it gave on live units.
+- **Totals are not checked at a deploy.** A new or tighter total (`per-group` or `global`) is checked from the next take on; a renamed `checked globally` total starts again from zero.
 - **Whole seconds.** The clock and every timer count whole seconds.
 - **HTTP only.** The service speaks plain HTTP/1.1, one request per connection, with a `Content-Length` body, and leaves TLS to the gateway in front of it. Adapters are reached over HTTP through `curl`.
 - **One request at a time.** Inputs, reads, timers and adapter posts take turns, so a slow adapter holds up the service for as long as its post takes (at most 10 seconds).

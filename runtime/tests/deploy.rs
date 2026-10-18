@@ -202,3 +202,28 @@ fn a_service_deploys_a_new_version_and_a_restart_replays_across_it() {
     let e = Service::open(&other, &dir, T0 + 20, |_| {}).err().unwrap();
     assert!(e.ends_with("this program differs under the same version; give it a new version to deploy it"), "{e}");
 }
+
+#[test]
+fn the_check_reads_carried_facts_as_the_new_version_has_them() {
+    let h = live();
+    let limit = [
+        ("kind Show    { name: Text, price: Money }", "kind Show    { name: Text, price: Money, limit: Count = 1 }"),
+        ("rule early:", "rule limit: every Booking's quantity is at most its show's limit\nrule early:"),
+    ];
+    let breaks = h.deploy_check(&tickets(2, &limit)).unwrap();
+    assert!(breaks.iter().any(|b| b.starts_with("rule limit would break") && b.contains("live in B1")), "{breaks:?}");
+}
+
+#[test]
+fn an_added_formula_is_computed_and_pools_follow_new_keys() {
+    let mut h = live();
+    let edits = [
+        ("cancelled: Bool = no }", "cancelled: Bool = no, seats: Count = quantity * 2, zone: Text = \"A\" }"),
+        ("kind Session { show: Show, day: Text, seats: Count }", "kind Session { show: Show, day: Text, seats: Count, zone: Text = \"A\" }"),
+        ("where the Session's show is the Booking's show,", "where the Session's zone is the Booking's zone,"),
+    ];
+    h.deploy(tickets(2, &edits)).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(h.unit("B1").unwrap().root.attrs.get("seats"), Some(&Val::Count(4)), "{:?}", h.trace);
+    book(&mut h, "B2").unwrap();
+    assert!(h.trace.iter().any(|l| l == "B2  Ticket gets Session Fri"), "the pool is keyed by zone now: {:?}", h.trace);
+}

@@ -116,6 +116,12 @@ pub struct Service {
     pub deployed: Vec<String>,
 }
 
+/// Why a deploy did not happen.
+enum Refusal {
+    Breaks(Vec<String>),
+    Other(String),
+}
+
 /// What `suture deploy` finds (appendix M.2.7).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Check {
@@ -202,28 +208,61 @@ impl Service {
         if svc.newer(prog)? {
             return Ok(Check::Same);
         }
-        let breaks = svc.host.deploy_check(prog)?;
-        if !breaks.is_empty() {
-            return Ok(Check::Refused(breaks));
-        }
         let from = svc.host.trace.len();
-        svc.deploy(prog, now)?;
-        Ok(Check::Deploys(svc.host.trace[from..].to_vec()))
+        match svc.deploy(prog, now) {
+            Ok(a) => match a.refused {
+                None => Ok(Check::Deploys(svc.host.trace[from..].to_vec())),
+                Some(e) => Ok(Check::Refused(vec![format!("the deploy would go ahead, but then: {e}")])),
+            },
+            Err(Refusal::Breaks(b)) => Ok(Check::Refused(b)),
+            Err(Refusal::Other(e)) => Err(e),
+        }
     }
 
-    /// Deploys `prog` over the running program at Unix time `now`: its file
-    /// is kept, then the deploy applies and is logged (appendix M.2.6).
-    fn deploy(&mut self, prog: &Program, now: u64) -> Result<Applied, String> {
-        let breaks = self.host.deploy_check(prog)?;
+    /// Deploys `prog` over the running program at Unix time `now`
+    /// (appendix M.2.6): the clock moves on first, and the check runs at
+    /// that time. Then its file is kept, the deploy applies, and it is logged
+    /// only if the new program took over. `refused` in the result is an
+    /// error after it took over, such as a step that faulted.
+    fn deploy(&mut self, prog: &Program, now: u64) -> Result<Applied, Refusal> {
+        if let Some(why) = &self.broken {
+            return Err(Refusal::Other(format!("the log could not be written ({why})")));
+        }
+        // A deploy refused as things stand writes nothing.
+        let breaks = self.host.deploy_check(prog).map_err(Refusal::Other)?;
         if !breaks.is_empty() {
-            return Err(format!("the deploy of {} v{} is refused; these breaks need a resolution:\n  {}", prog.module, prog.version, breaks.join("\n  ")));
+            return Err(Refusal::Breaks(breaks));
+        }
+        let from = self.host.trace.len();
+        let elapsed = self.elapsed(now);
+        if elapsed > self.host.now {
+            self.applied(Record::Pass(elapsed - self.host.now)).map_err(Refusal::Other)?;
+        }
+        let breaks = self.host.deploy_check(prog).map_err(Refusal::Other)?;
+        if !breaks.is_empty() {
+            return Err(Refusal::Breaks(breaks));
         }
         if let (Some(state), Some(_)) = (&self.state, &self.log) {
             let path = Self::program_file(state, prog.version, false);
-            synced(&path, &serde_json::to_string(prog).map_err(|e| e.to_string())?).map_err(|e| format!("{}: {e}", path.display()))?;
+            let shown = |p: &Path, e: std::io::Error| Refusal::Other(format!("{}: {e}", p.display()));
+            synced(&path, &serde_json::to_string(prog).map_err(|e| Refusal::Other(e.to_string()))?).map_err(|e| shown(&path, e))?;
+            File::open(state).and_then(|d| d.sync_all()).map_err(|e| shown(state, e))?;
         }
         self.programs.insert(prog.version, prog.clone());
-        self.input(Record::Deploy { version: prog.version }, now)
+        let asked = self.host.model_answers.len();
+        let r = Record::Deploy { version: prog.version };
+        let refused = self.apply(&r).err();
+        if self.host.prog.version != prog.version {
+            return Err(Refusal::Other(refused.unwrap_or_default()));
+        }
+        let mut lines = vec![r];
+        lines.extend(self.host.model_answers[asked..].iter().map(|(key, answer)| Record::Model { key: key.clone(), answer: answer.clone() }));
+        self.write(&lines).map_err(Refusal::Other)?;
+        if let Some(e) = &refused {
+            self.host.trace.push(format!("deploy: {e}"));
+        }
+        self.post_new(now).map_err(Refusal::Other)?;
+        Ok(Applied { trace: self.host.trace[from..].to_vec(), refused })
     }
 
     /// Opens the state directory: a new one starts its log at `now`; one with a
@@ -238,7 +277,13 @@ impl Service {
             let same = svc.newer(prog).map_err(|e| format!("{}: {e}", shown(state)))?;
             svc.log = Some(OpenOptions::new().append(true).open(&log_path).map_err(|e| format!("{}: {e}", shown(&log_path)))?);
             if !same {
-                svc.deployed = svc.deploy(prog, now).map_err(|e| format!("{}: {e}", shown(state)))?.trace;
+                svc.deployed = match svc.deploy(prog, now) {
+                    Ok(a) => a.trace,
+                    Err(Refusal::Breaks(b)) => {
+                        return Err(format!("{}: the deploy of {} v{} is refused; these breaks need a resolution:\n  {}", shown(state), prog.module, prog.version, b.join("\n  ")))
+                    }
+                    Err(Refusal::Other(e)) => return Err(format!("{}: {e}", shown(state))),
+                };
             }
             return Ok(svc);
         }

@@ -235,35 +235,57 @@ fn formulas(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize]) -> boo
 /// version removes are dropped, added ones take their defaults, and the
 /// goals already met or alerted keep that, by their text. The step then
 /// settles it under the new version.
-fn upgrade(prog: &Program, u: &mut Unit, goals: &[Option<u32>]) {
-    let mut dropped = vec![];
-    for at in positions(&u.root) {
-        let n = node_at_mut(&mut u.root, &at);
-        let Some(k) = prog.kind(&n.kind) else { continue };
-        n.attrs.retain(|a, _| {
-            let keep = k.attr(a).is_some();
-            if !keep {
-                dropped.push(format!("{}'s {a}", k.name));
-            }
-            keep
-        });
-        for a in &k.attrs {
-            if let (false, Some(d)) = (n.attrs.contains_key(&a.name), &a.default) {
-                n.attrs.insert(a.name.clone(), Val::from_lit(d));
-            }
-        }
+fn upgrade(prog: &Program, u: &mut Unit, goals: &[Option<u32>], facts: &Facts) {
+    for (l, f) in facts {
+        u.facts.insert(l.clone(), f.clone());
     }
+    let dropped = carry_over(prog, u);
     let map = |v: &[u32]| v.iter().filter_map(|g| goals.get(*g as usize).copied().flatten()).collect::<Vec<u32>>();
     (u.met, u.matched, u.alerts) = (map(&u.met), map(&u.matched), map(&u.alerts));
-    dropped.dedup();
     let dropped = if dropped.is_empty() { String::new() } else { format!(", dropped {}", dropped.join(", ")) };
     u.notes.push(format!("now under version {}{dropped}", prog.version));
+}
+
+/// A unit's attributes under a new version: the removed ones dropped, the
+/// added ones given their defaults, then their formulas, over the facts it
+/// carries. Returns what was dropped, as `Kind's attr`, once each.
+pub fn carry_over(prog: &Program, u: &mut Unit) -> Vec<String> {
+    let mut dropped: Vec<String> = vec![];
+    for f in u.facts.values_mut() {
+        carry_attrs(prog, &f.kind, &mut f.attrs, &mut vec![]);
+    }
+    let all = positions(&u.root);
+    for at in &all {
+        let n = node_at_mut(&mut u.root, at);
+        let kind = n.kind.clone();
+        carry_attrs(prog, &kind, &mut n.attrs, &mut dropped);
+    }
+    // Every position each round: formulas may read each other in any order.
+    while all.iter().map(|at| formulas(prog, &mut u.root, &u.facts, at)).filter(|changed| *changed).count() > 0 {}
+    dropped
+}
+
+fn carry_attrs(prog: &Program, kind: &str, attrs: &mut BTreeMap<String, Val>, dropped: &mut Vec<String>) {
+    let Some(k) = prog.kind(kind) else { return };
+    attrs.retain(|a, _| {
+        let keep = k.attr(a).is_some();
+        let name = format!("{}'s {a}", k.name);
+        if !keep && !dropped.contains(&name) {
+            dropped.push(name);
+        }
+        keep
+    });
+    for a in &k.attrs {
+        if let (false, Some(d)) = (attrs.contains_key(&a.name), &a.default) {
+            attrs.insert(a.name.clone(), Val::from_lit(d));
+        }
+    }
 }
 
 /// The breaks a deploy of `prog` would make in this live unit, which was
 /// running under `old` (appendix M.2.4): parts or attributes the new
 /// version cannot carry, then the rules it would break once carried over.
-pub fn upgrade_breaks(old: &Program, prog: &Program, unit: &Unit, goals: &[Option<u32>], now: i64) -> Vec<String> {
+pub fn upgrade_breaks(old: &Program, prog: &Program, unit: &Unit, goals: &[Option<u32>], facts: &Facts, now: i64) -> Vec<String> {
     let mut out = vec![];
     for at in positions(&unit.root) {
         let n = node_at(&unit.root, &at);
@@ -274,8 +296,11 @@ pub fn upgrade_breaks(old: &Program, prog: &Program, unit: &Unit, goals: &[Optio
         for a in &k.attrs {
             let was = old.kind(&n.kind).and_then(|o| o.attr(&a.name));
             match (was, n.attrs.get(&a.name)) {
-                (Some(w), Some(_)) if w.ty != a.ty => out.push(format!("{}'s {} changes from {:?} to {:?}", k.name, a.name, w.ty, a.ty)),
-                (None, None) if a.default.is_none() && !is_answered(prog, &k.name, &a.name) => {
+                (Some(w), Some(_)) if w.ty != a.ty || w.of != a.of => {
+                    let ty = |t: Ty, of: &Option<String>| of.clone().unwrap_or_else(|| format!("{t:?}"));
+                    out.push(format!("{}'s {} changes from {} to {}", k.name, a.name, ty(w.ty, &w.of), ty(a.ty, &a.of)))
+                }
+                (None, None) if a.default.is_none() && a.formula.is_none() && !is_answered(prog, &k.name, &a.name) => {
                     out.push(format!("{}'s {} is added without a default", k.name, a.name))
                 }
                 _ => {}
@@ -285,7 +310,7 @@ pub fn upgrade_breaks(old: &Program, prog: &Program, unit: &Unit, goals: &[Optio
     out.sort();
     out.dedup();
     if out.is_empty() {
-        let after = step_at(prog, unit, &Msg::Upgrade { goals: goals.to_vec() }, now).unit;
+        let after = step_at(prog, unit, &Msg::Upgrade { goals: goals.to_vec(), facts: facts.clone() }, now).unit;
         if let Some(r) = violated(prog, &after) {
             out.push(format!("rule {} would break: {}", r.name, r.paraphrase));
         }
@@ -366,7 +391,7 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
             }
         }
         Msg::Due { id } => fetch_due(&mut u, id),
-        Msg::Upgrade { goals } => upgrade(prog, &mut u, goals),
+        Msg::Upgrade { goals, facts } => upgrade(prog, &mut u, goals, facts),
         Msg::Answer { key, outcome, .. } if outcome == TIMED_OUT => {
             if let Err(refusal) = deadline(prog, &mut u, key, &mut out) {
                 return Outcome::kept(unit, refusal.note, Out::default());

@@ -46,7 +46,9 @@ These are the breaks the check finds:
 | an attribute whose type changed while live units hold a value of it | keep the type, and add an attribute of the new type under another name |
 | an attribute added without a default, on a kind with live units | give it a default, as in `vip: Bool = no` |
 
-An attribute an effect's answer sets, or a source fetches, needs no default: it is not known until then anyway.
+An attribute an effect's answer sets, or a source fetches, needs no default: it is not known until then anyway. Neither does an added formula: it is computed on the live units.
+
+The check carries every unit over first, so a rule is checked against the facts a unit carries from shared entities as they are under the new version, with their new attributes too. A `uses` whose candidate kind is removed while units wait for one is a break as well.
 
 ## Applying a rule from a version
 
@@ -79,11 +81,14 @@ tickets v2 on http://127.0.0.1:7878, state in examples/tickets/.suture
 ```
 
 - Attributes the new version removes are dropped from live units, and the trace says which.
-- Added attributes take their defaults.
+- Added attributes take their defaults, and added formulas are computed. A formula that changed keeps the values it gave under the old version.
+- The pools are rebuilt, so a `uses` keyed by another attribute finds its candidates.
 - Goals are matched by their text, so a goal already met or alerted stays so.
-- Then every live unit settles once under the new version. A new `needs` creates its parts, and their requests go out. A request already sent stays sent, and its answer is awaited as before.
+- Then every live unit settles once under the new version, and only after all of them have are the messages they send each other delivered. A new `needs` creates its parts, and their requests go out. A request already sent stays sent, and its answer is awaited as before.
 
 Nothing that already happened is undone.
+
+A deploy is checked when `suture serve` starts the new version, at the time it starts, after the timers that fell due while the service was down have fired.
 
 ## The log
 

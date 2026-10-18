@@ -303,19 +303,25 @@ impl Host {
         self.waiters.retain(|w| w.decide.key() != d.key());
         let u = self.unit(&d.label).ok_or_else(|| format!("{}: a choice for a unit that is gone", d.label))?;
         let b = self.prog.bindings.get(d.binding as usize).ok_or("a choice for an unknown binding")?;
-        let key = match interp::decide_key(&self.prog, &u, &d) {
-            // A key that names the unit itself (appendix F.2.11).
-            Some(Val::Text(l)) if b.key_attr.is_empty() => key_text(&Val::Ref(l)),
-            Some(k) => key_text(&k),
-            None => String::new(),
-        };
         let kind = b.target.clone();
+        let key = self.pool_key(&u, &d);
         match self.gather(&u, &d, &key) {
             Some((label, how)) => self.pick(hole, &label, &d, &how),
             None => {
                 self.waiters.push(Waiter { hole, decide: d.clone(), kind, key });
                 self.post(&d.label, &Msg::Waiting { key: d.key() })
             }
+        }
+    }
+
+    /// The pool key a binding's choice draws from.
+    fn pool_key(&self, u: &Unit, d: &Decide) -> String {
+        let empty = self.prog.bindings.get(d.binding as usize).is_some_and(|b| b.key_attr.is_empty());
+        match interp::decide_key(&self.prog, u, d) {
+            // A key that names the unit itself (appendix F.2.11).
+            Some(Val::Text(l)) if empty => key_text(&Val::Ref(l)),
+            Some(k) => key_text(&k),
+            None => String::new(),
         }
     }
 
@@ -703,6 +709,39 @@ impl Host {
         self.prog.goals.iter().map(|g| new.goals.iter().position(|n| n.source == g.source).map(|i| i as u32)).collect()
     }
 
+    /// For each binding of the running program, by index, its index in `new`.
+    fn binding_map(&self, new: &Program) -> Vec<Option<usize>> {
+        self.prog.bindings.iter().map(|b| new.bindings.iter().position(|n| n.id == b.id && n.subject == b.subject && n.per == b.per)).collect()
+    }
+
+    /// Every live unit carried over to `new` on its own, then, for each, the
+    /// facts it carries as those units are under `new` (appendix M.2.5).
+    fn carried(&self, new: &Program) -> Vec<(Unit, Facts)> {
+        let units: Vec<Unit> = self.units();
+        let over: BTreeMap<String, Unit> = units
+            .iter()
+            .map(|u| {
+                let mut c = u.clone();
+                interp::carry_over(new, &mut c);
+                (c.label.clone(), c)
+            })
+            .collect();
+        units
+            .into_iter()
+            .map(|u| {
+                let facts = u
+                    .facts
+                    .iter()
+                    .map(|(l, f)| match over.get(l) {
+                        Some(c) => (l.clone(), Fact { kind: c.root.kind.clone(), created: c.root.created, attrs: c.root.attrs.clone() }),
+                        None => (l.clone(), f.clone()),
+                    })
+                    .collect();
+                (u, facts)
+            })
+            .collect()
+    }
+
     /// The deploy check (appendix M.2.4): every break that `new` would make
     /// in the live units, each with the units it concerns and how it can be
     /// resolved. Empty when the deploy can go ahead.
@@ -715,12 +754,21 @@ impl Host {
         }
         let goals = self.goal_map(new);
         let mut breaks: Vec<(String, Vec<String>)> = vec![];
-        for u in self.units() {
-            for b in interp::upgrade_breaks(&self.prog, new, &u, &goals, self.clock()) {
-                match breaks.iter_mut().find(|(x, _)| *x == b) {
-                    Some((_, units)) => units.push(u.label.clone()),
-                    None => breaks.push((b, vec![u.label.clone()])),
-                }
+        let mut add = |b: String, label: &str| match breaks.iter_mut().find(|(x, _)| *x == b) {
+            Some((_, units)) if units.iter().any(|u| u == label) => {}
+            Some((_, units)) => units.push(label.to_string()),
+            None => breaks.push((b, vec![label.to_string()])),
+        };
+        for (u, facts) in self.carried(new) {
+            for b in interp::upgrade_breaks(&self.prog, new, &u, &goals, &facts, self.clock()) {
+                add(b, &u.label);
+            }
+        }
+        let bindings = self.binding_map(new);
+        for w in &self.waiters {
+            if bindings.get(w.decide.binding as usize).copied().flatten().is_none() {
+                let b = &self.prog.bindings[w.decide.binding as usize];
+                add(format!("{} uses a {} that is removed, and live units wait for one", b.subject, b.target), &w.decide.label);
             }
         }
         Ok(breaks
@@ -733,15 +781,18 @@ impl Host {
     }
 
     /// Deploys `new` over the running program, once [`Host::deploy_check`]
-    /// finds nothing: the kernel takes its rules, and every live unit is
-    /// carried over and settles once under it (appendix M.2.5).
+    /// finds nothing: the kernel takes its rules, every live unit is carried
+    /// over and settles once under it, and only then are the messages they
+    /// sent each other delivered (appendix M.2.5). An error before the
+    /// kernel takes the new program leaves everything as it was.
     pub fn deploy(&mut self, new: Program) -> Result<(), String> {
         let breaks = self.deploy_check(&new)?;
         if !breaks.is_empty() {
             return Err(format!("the deploy is refused: {} would break live units:\n  {}", new.version, breaks.join("\n  ")));
         }
         let goals = self.goal_map(&new);
-        let labels: Vec<String> = self.units().into_iter().map(|u| u.label).collect();
+        let bindings = self.binding_map(&new);
+        let carried: Vec<(String, Facts)> = self.carried(&new).into_iter().map(|(u, f)| (u.label, f)).collect();
         let new = Arc::new(new);
         let (kernel, kinds) = kernel::program(new.clone());
         self.machine.upgrade(kernel).map_err(|e| e.to_string())?;
@@ -757,11 +808,33 @@ impl Host {
                 *g = goals[*g as usize].expect("kept above");
             }
         }
+        for w in &mut self.waiters {
+            w.decide.binding = bindings[w.decide.binding as usize].expect("the check refuses a removed binding") as u32;
+        }
         self.trace.push(format!("deployed {} v{} over v{}", self.prog.module, self.prog.version, old.version));
-        let msg = Msg::Upgrade { goals };
         let mut first_error = None;
-        for l in &labels {
-            if let Err(e) = self.tell(l, &msg) {
+        for (l, facts) in carried {
+            if let Err(e) = self.post(&l, &Msg::Upgrade { goals: goals.clone(), facts }) {
+                first_error.get_or_insert(e);
+            }
+        }
+        // The pools and the waiters' keys follow the new bindings and attributes.
+        self.pools.clear();
+        for l in self.machine.labels() {
+            self.index(&l);
+        }
+        let waiters = std::mem::take(&mut self.waiters);
+        for mut w in waiters {
+            let Some(u) = self.unit(&w.decide.label) else { continue };
+            w.key = self.pool_key(&u, &w.decide);
+            w.kind = self.prog.bindings[w.decide.binding as usize].target.clone();
+            self.waiters.push(w);
+        }
+        if let Err(e) = self.pump() {
+            first_error.get_or_insert(e);
+        }
+        for l in self.machine.labels() {
+            if let Err(e) = self.wake(&l).and_then(|_| self.pump()) {
                 first_error.get_or_insert(e);
             }
         }
