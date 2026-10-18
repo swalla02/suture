@@ -1,7 +1,7 @@
 //! The `suture` command (spec appendix B.1):
 //!
 //! - `suture build <dir>`
-//! - `suture run <dir> --scenario <file>`
+//! - `suture run <dir> --scenario <file> [--models]`
 //! - `suture explain <dir> --scenario <file> <name>`
 
 use std::path::Path;
@@ -10,15 +10,16 @@ use std::process::ExitCode;
 use suture_lang::ir::Program;
 
 const USAGE: &str =
-    "usage:\n  suture build <dir>\n  suture run <dir> --scenario <file>\n  suture explain <dir> --scenario <file> <name>";
+    "usage:\n  suture build <dir>\n  suture run <dir> --scenario <file> [--models]\n  suture explain <dir> --scenario <file> <name>";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let result = match args.as_slice() {
         ["build", dir] => build(Path::new(dir)),
-        ["run", dir, "--scenario", file] => scenarios(Path::new(dir), Path::new(file), None),
-        ["explain", dir, "--scenario", file, name] => scenarios(Path::new(dir), Path::new(file), Some(*name)),
+        ["run", dir, "--scenario", file] => scenarios(Path::new(dir), Path::new(file), None, false),
+        ["run", dir, "--scenario", file, "--models"] => scenarios(Path::new(dir), Path::new(file), None, true),
+        ["explain", dir, "--scenario", file, name] => scenarios(Path::new(dir), Path::new(file), Some(*name), false),
         _ => Err(USAGE.to_string()),
     };
     match result {
@@ -63,8 +64,15 @@ fn build(dir: &Path) -> Result<bool, String> {
     }
     if !prog.sources.is_empty() {
         println!("\nsourcing:");
-        for s in &prog.sources {
+        for (i, s) in prog.sources.iter().enumerate() {
             println!("  {}", suture_lang::readback::source_line(&prog, s));
+            // After an attribute's last source, who picks among several.
+            let last = !prog.sources[i + 1..].iter().any(|x| x.kind == s.kind && x.attr == s.attr);
+            if last && prog.sources_of(&s.kind, &s.attr).len() > 1 {
+                let point = format!("{}'s {}", s.kind, s.attr);
+                let fallback = "otherwise in the order they are declared".to_string();
+                println!("    decided by: {}", suture_lang::readback::handlers_for(&prog, &point, &s.kind, fallback).join("; "));
+            }
         }
     }
     if !prog.bindings.is_empty() {
@@ -74,6 +82,14 @@ fn build(dir: &Path) -> Result<bool, String> {
             if !prog.decisions.is_empty() && !b.key_attr.is_empty() {
                 println!("    decided by: {}", suture_lang::readback::handlers(&prog, b).join("; "));
             }
+        }
+    }
+    if !prog.decisions.is_empty() && !prog.slots.is_empty() {
+        println!("\nslots:");
+        for s in &prog.slots {
+            println!("  {}'s {}: {}", s.owner, s.name, s.alternatives.join(", then "));
+            let fallback = format!("otherwise `prefer {}`", s.name);
+            println!("    decided by: {}", suture_lang::readback::handlers_for(&prog, &s.name, &s.owner, fallback).join("; "));
         }
     }
     if !prog.roles.is_empty() || !prog.admits.is_empty() {
@@ -98,14 +114,31 @@ fn build(dir: &Path) -> Result<bool, String> {
 }
 
 /// Runs every scenario in `file` and prints its trace. With `explain`, it
-/// also explains that unit at the end of each scenario that has it.
-fn scenarios(dir: &Path, file: &Path, explain: Option<&str>) -> Result<bool, String> {
+/// also explains that unit at the end of each scenario that has it. With
+/// `models`, the backends in the module's `models.json` answer the models a
+/// scenario does not script (appendix K.2.7).
+fn scenarios(dir: &Path, file: &Path, explain: Option<&str>, models: bool) -> Result<bool, String> {
     let prog = compile(dir)?;
+    let config = if models {
+        let path = dir.join("models.json");
+        Some(std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?)
+    } else {
+        None
+    };
+    if let Some(text) = &config {
+        // Checked once up front, so a bad file stops the run before any scenario.
+        suture_runtime::backend::load(text, || Box::new(suture_runtime::backend::Curl))?;
+    }
     let src = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
     let list = suture_lang::scenario::parse_scenarios(&file.display().to_string(), &src).map_err(|e| e.to_string())?;
     let mut all_passed = true;
     for sc in &list {
-        let report = suture_runtime::scenario::run(&prog, sc);
+        let report = suture_runtime::scenario::run_with(&prog, sc, |host| {
+            let backends = config.as_deref().map(|t| suture_runtime::backend::load(t, || Box::new(suture_runtime::backend::Curl)));
+            for (name, b) in backends.and_then(Result::ok).unwrap_or_default() {
+                host.models.register_backend(&name, b);
+            }
+        });
         println!("scenario \"{}\"", report.title);
         for line in &report.host.trace {
             println!("  {line}");

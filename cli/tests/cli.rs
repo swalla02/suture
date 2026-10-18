@@ -58,3 +58,56 @@ fn build_prints_warnings() {
     assert!(ok, "{out}");
     assert!(out.contains("warning: D has no `prefer`"), "{out}");
 }
+
+const ROUTED: &str = "module r version 1, currency EUR
+kind Applicant   { name: Text }
+kind Application { applicant: Applicant }
+kind Courier     { application: Application }
+kind Locker      { application: Application }
+Application needs Return
+Return is Courier or Locker
+effect send Courier via couriers within 2 days
+  sends    the application's applicant's name
+  reports  delivered
+effect open Locker via lockers within 1 hour
+  sends    the application's applicant's name
+  reports  opened
+prefer Return: Courier, then Locker
+decide Return with model \"routing@1\" within 500 milliseconds
+";
+
+fn routed(name: &str, models: Option<&str>) -> std::path::PathBuf {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("r.st"), ROUTED).unwrap();
+    std::fs::write(dir.join("r.scenario"), "scenario \"s\":\n  given  an Applicant Ada with name Ada\n  when   a new Application A1 with applicant Ada\n").unwrap();
+    if let Some(m) = models {
+        std::fs::write(dir.join("models.json"), m).unwrap();
+    }
+    dir
+}
+
+#[test]
+fn build_lists_who_decides_a_slot() {
+    let dir = routed("routed-build", None);
+    let (ok, out) = suture(&["build", dir.to_str().unwrap()]);
+    assert!(ok, "{out}");
+    assert!(out.contains("slots:\n  Application's Return: Courier, then Locker\n    decided by: model \"routing@1\" within 500 ms; otherwise `prefer Return`"), "{out}");
+}
+
+#[test]
+fn run_with_models_asks_the_configured_backend_and_falls_back_when_it_fails() {
+    // A closed local port: the backend fails at once, and `prefer` picks.
+    let dir = routed("routed-run", Some(r#"{"routing@1": {"backend": "custom", "url": "http://127.0.0.1:9/", "pick": "/pick"}}"#));
+    let scenario = dir.join("r.scenario");
+    let (ok, out) = suture(&["run", dir.to_str().unwrap(), "--scenario", scenario.to_str().unwrap(), "--models"]);
+    assert!(ok, "{out}");
+    assert!(out.contains("choice: Courier for A1?Return#1 by prefer (model \"routing@1\" failed: "), "{out}");
+    let (ok, out) = suture(&["run", dir.to_str().unwrap(), "--scenario", scenario.to_str().unwrap()]);
+    assert!(ok, "{out}");
+    assert!(out.contains("choice: Courier for A1?Return#1 by prefer (model \"routing@1\" is not available)"), "{out}");
+    let bad = routed("routed-bad", Some(r#"{"routing@1": {"backend": "magic"}}"#));
+    let (ok, out) = suture(&["run", bad.to_str().unwrap(), "--scenario", scenario.to_str().unwrap(), "--models"]);
+    assert!(!ok);
+    assert!(out.contains("models.json: routing@1: unknown backend `magic`"), "{out}");
+}
