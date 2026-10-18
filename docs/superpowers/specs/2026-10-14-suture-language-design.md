@@ -1229,3 +1229,45 @@ decide Order's credit with model "sources@1"
 - An attribute with two sources asks the one a model picks, moves to the other when it fails, and applies its `otherwise` when both fail.
 - The Jev backend builds the documented request and reads the documented response through a fake transport; low confidence and transport errors fall back. A custom format reads the pick at its pointer.
 - Every scenario replays to the same state.
+
+## Appendix L. Prototype slice 11: serving a program (2026-10-18)
+
+Until slice 10, a program ran only inside a scenario: the inputs, the outside answers and the clock all came from the scenario, and nothing outlived the run. Slice 11 makes a program a service. `suture serve` runs it as a long-lived process, as one pod among the others (see `docs/architecture.svg`). It takes admitted inputs over HTTP, calls adapters over HTTP, follows the real clock, and keeps a log on disk, from which a restart rebuilds the same state.
+
+### L.1 What slice 11 adds
+
+| Added in slice 11 | Still waits |
+|---|---|
+| `suture serve <dir> [--state <dir>] [--listen <addr>] [--models]` | several runtime pods sharing the work |
+| the input log: every input, clock move and model answer, one JSON line each, written before the input is answered | versioning: a deploy with live units under a changed program (refused for now) |
+| restart: the log replays into the same state; picks are not asked again | compaction or snapshots of the log |
+| an HTTP API: inputs from callers, the world and adapter answers from the operator, and reads | authentication beyond a gateway's caller header and an operator token |
+| `adapters.json`: each request posted to its adapter, answered at once or later | TLS in the host itself (the gateway terminates it) |
+| the real clock, which fires timers when they fall due | sub-second timers |
+
+### L.2 Semantics that slice 11 settles
+
+1. **The state directory** (default `<dir>/.suture/`) holds `program.json`, the compiled program the log was written under, and `log.jsonl`. Its first line is a header, `{"suture": 1, "module", "version", "started"}`, where `started` is the Unix time of the clock's zero. Each later line is one record: `{"pass": secs}`, `{"world": …}`, `{"new": …}`, `{"event": …}`, `{"change": …}`, `{"answer": …}`, or `{"model": {"key", "answer"}}`.
+2. **One input at a time.** Inputs are applied in the order they arrive, one at a time; the log's order is that order. Before an input is applied, the clock is moved to the current time. An input is written to the log, with the model answers it caused, after it is applied and before its caller is answered. An input that is refused is written too, since the gate's decisions are part of what happened. An input whose caller got no answer may have been lost, and may be sent again.
+3. **Restart.** On start, a state directory with a log is replayed: each record is applied in order, and each model answer comes from the log, not from the model. A log written under a different program is refused, with the module, its version and what to do: start with a fresh state directory, until versioning (a later slice) can resolve the live units.
+4. **The clock.** The runtime clock reads whole seconds since `started`. Once a second, the host fires every timer that has fallen due, as one `pass` record. After a stop, the first tick passes the downtime, so the deadlines that ran out meanwhile fire then, in order.
+5. **Callers.** An input from a caller carries the header `Suture-Caller: <role> <name>`, which the gateway in front of the host sets after it has authenticated the caller. The gate decides as in G.2. Operator requests (`/world`, `/answers`) carry `Authorization: Bearer <token>`, the value of `SUTURE_OPERATOR_TOKEN`; without that variable, they are refused.
+6. **The API.** The bodies are JSON.
+   - `POST /inputs` takes `{"new": {"verb", "kind", "label", "attrs", "items"}}`, `{"event": {"verb", "target"}}` or `{"change": {"target", "attr", "value"}}`. It answers 200 with the trace lines the input caused, 409 with the refusal, or 400 with the error.
+   - `POST /world` takes `{"kind", "label", "attrs", "items"}`, which is a scenario's `given`.
+   - `POST /answers` takes `{"adapter", "outcome", "key" or "target", "data"}`, which is an adapter's answer to the request with that key, or to the oldest for that unit.
+   - `GET /pending` lists the requests that wait for an answer.
+   - `GET /units/<label>` explains a unit.
+   - `GET /trace?from=<n>` gives trace lines from the nth on.
+   - `GET /health` answers ok.
+7. **Values in JSON** follow the attribute's type: text as a string, a yes or no as a boolean, a count as an integer, an amount as a string with its currency (`"80 EUR"`, `"12.50 EUR"`), a duration or a time as an integer number of seconds, a reference as the entity's label, and a set as a list of labels.
+8. **Adapters.** `adapters.json` in the module's directory maps an adapter's name to `{"url", "key_env"}`. Once an input is written to the log, each new request is posted to its adapter's URL as `{"key", "adapter", "verb", "kind", "unit", "sends"}`. A reply with an `outcome` (and `data`) is that adapter's answer, applied and logged as one. A reply without one means the adapter answers later through `/answers`. A failed post leaves the request waiting, and its effect's deadline decides what happens next. An adapter that `adapters.json` does not name is reached through `GET /pending` and `/answers` only. On restart, every waiting request is posted again with the same key, which the adapter uses to do the work once.
+9. **Models.** With `--models`, `models.json` configures the backends as in K.2.7.
+
+### L.3 Acceptance
+
+- A served program applies inputs, refuses what the gate or a rule refuses, and answers with the trace.
+- Stopping and starting again from the log gives the same units, the same trace and the same pending requests, and no model is asked again.
+- A log written under a different program is refused.
+- Time passing on the real clock fires a deadline; downtime fires the deadlines it covered.
+- A request is posted to its adapter; an immediate reply is applied, and a later one arrives through `/answers`; restart posts waiting requests again with the same key.
