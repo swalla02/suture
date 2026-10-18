@@ -20,6 +20,9 @@ pub enum Val {
     Set(Vec<String>),
     Time(i64),
     Duration(i64),
+    /// A secret Text, by its number in the secret store: the value itself
+    /// never enters a unit (appendix N.2.4).
+    Secret(u64),
 }
 
 impl Val {
@@ -35,7 +38,7 @@ impl Val {
 
     pub fn ty(&self) -> Ty {
         match self {
-            Val::Text(_) => Ty::Text,
+            Val::Text(_) | Val::Secret(_) => Ty::Text,
             Val::Bool(_) => Ty::Bool,
             Val::Money(_) => Ty::Money,
             Val::Count(_) => Ty::Count,
@@ -59,6 +62,7 @@ impl Val {
             Val::Set(ls) => format!("{{{}}}", ls.join(", ")),
             Val::Time(t) => time_text(*t),
             Val::Duration(d) => suture_lang::readback::duration_text(*d),
+            Val::Secret(_) => "(secret)".into(),
         }
     }
 
@@ -72,6 +76,7 @@ impl Val {
             Val::Set(ls) => Value::tuple([Value::from(5i64), Value::list(ls.iter().map(|l| text(l)))]),
             Val::Time(t) => Value::tuple([Value::from(6i64), Value::from(*t)]),
             Val::Duration(d) => Value::tuple([Value::from(7i64), Value::from(*d)]),
+            Val::Secret(n) => Value::tuple([Value::from(8i64), Value::from(*n as i64)]),
         }
     }
 
@@ -86,6 +91,7 @@ impl Val {
             5 => Val::Set(items(x)?.iter().map(string).collect::<Result<_, _>>()?),
             6 => Val::Time(int(x)?),
             7 => Val::Duration(int(x)?),
+            8 => Val::Secret(u64::try_from(int(x)?).map_err(|e| e.to_string())?),
             t => return Err(format!("unknown value tag {t}")),
         })
     }

@@ -1,3 +1,4 @@
 /target
 examples/**/*.sut
 .suture/
+examples/**/*.manifest

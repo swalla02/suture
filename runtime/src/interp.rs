@@ -363,7 +363,7 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
     let mut out = Out::default();
     match msg {
         Msg::Create => {
-            let attrs: Vec<String> = u.root.attrs.iter().map(|(k, v)| format!("{k} {}", v.show(&prog.currency))).collect();
+            let attrs: Vec<String> = u.root.attrs.iter().map(|(k, v)| format!("{k} {}", shown(prog, k, v))).collect();
             u.notes.push(format!("placed: {}", attrs.join(", ")));
         }
         Msg::GoalDue { goal } => {
@@ -440,7 +440,7 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
         }
         Msg::Granted { key, by, taken, facts } => granted(prog, &mut u, key, by, taken, facts, &mut out),
         Msg::Change { attr, value, by } => {
-            u.notes.push(format!("{by} changes {attr} to {}", value.show(&prog.currency)));
+            u.notes.push(format!("{by} changes {attr} to {}", shown(prog, attr, value)));
             u.root.attrs.insert(attr.clone(), value.clone());
         }
         Msg::Refresh { facts } => {
@@ -824,7 +824,7 @@ fn answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[(Strin
         n.status = if success { Status::Done } else { Status::Failed };
         n.waiting = None;
     }
-    let shown: Vec<String> = data.iter().map(|(k, v)| format!("{k} {}", v.show(&prog.currency))).collect();
+    let shown: Vec<String> = data.iter().map(|(k, v)| format!("{k} {}", shown(prog, k, v))).collect();
     let mut notes =
         vec![if shown.is_empty() { format!("{kind} {outcome}") } else { format!("{kind} {outcome}: {}", shown.join(", ")) }];
     react(prog, &mut t, &u.facts, &at, &kind, outcome, None, &mut notes);
@@ -965,7 +965,7 @@ fn apply(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize], actions: 
                 Some(v) => v,
             };
             let n = node_at_mut(root, &target);
-            notes.push(format!("{}'s {} becomes {}", n.kind, a.attr, value.show(&prog.currency)));
+            notes.push(format!("{}'s {} becomes {}", n.kind, a.attr, shown(prog, &a.attr, &value)));
             n.attrs.insert(a.attr.clone(), value);
         }
     }
@@ -1332,7 +1332,7 @@ fn request_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut 
             n.sends = 1;
             u.root = t;
             let a = ask_for(&u.label, View::of(u), at, effect);
-            let sends: Vec<String> = a.sends.iter().map(|(k, v)| format!("{k} {}", v.show(&prog.currency))).collect();
+            let sends: Vec<String> = a.sends.iter().map(|(k, v)| format!("{k} {}", shown(prog, k, v))).collect();
             u.notes.push(format!("{kind} → {} via {} ({})", effect.verb, effect.adapter, sends.join(", ")));
             out.asks.push(a);
             true
@@ -1391,7 +1391,7 @@ fn ask_source(prog: &Program, u: &mut Unit, at: &[usize], attr: &str, adapter: &
     f.via = adapter.to_string();
     f.sends = 1;
     let a = fetch_ask(&u.label, View::of(u), at, src);
-    let sends: Vec<String> = a.sends.iter().map(|(k, v)| format!("{k} {}", v.show(&prog.currency))).collect();
+    let sends: Vec<String> = a.sends.iter().map(|(k, v)| format!("{k} {}", shown(prog, k, v))).collect();
     u.notes.push(format!("{attr}: {why}asking {adapter}{again} ({})", sends.join(", ")));
     out.asks.push(a);
 }
@@ -1484,7 +1484,7 @@ fn fetch_answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[
         [(name, v)] if *name == attr => return refuse(format!("{attr} must be {:?}, not {}", src.ty, v.show(&prog.currency))),
         _ => return refuse(format!("a `{}` answer carries {attr} and nothing else", src.success)),
     };
-    let shown = value.show(&prog.currency);
+    let shown = shown(prog, &attr, &value);
     let n = node_at_mut(&mut u.root, &at);
     n.attrs.insert(attr.clone(), value);
     let f = n.fetched.entry(attr.clone()).or_default();
@@ -1541,7 +1541,7 @@ fn fail(prog: &Program, u: &mut Unit, at: &[usize], src: &Source, key: &str, why
         Otherwise::Hold => u.notes.push(format!("{failed}; the steps its rules guard wait")),
         Otherwise::Use(l) => {
             let v = Val::from_lit(l);
-            u.notes.push(format!("{failed}: using {} instead", v.show(&prog.currency)));
+            u.notes.push(format!("{failed}: using {} instead", shown(prog, attr, &v)));
             let n = node_at_mut(&mut u.root, at);
             n.attrs.insert(attr.clone(), v);
             let f = n.fetched.entry(attr.clone()).or_default();
@@ -1656,6 +1656,15 @@ pub fn holds(prog: &Program, u: &Unit, at: &[usize], c: &Cond) -> bool {
 /// only when its filter is known to hold.
 pub fn violated<'p>(prog: &'p Program, u: &Unit) -> Option<&'p Rule> {
     broken_rule(prog, View::of(u))
+}
+
+/// A value as the trace and explanations show it: a secret as `(secret)`,
+/// and the value of an attribute some kind marks personal as `(personal)`
+/// (appendix N.2.5). Marks are matched by the attribute's name, so this
+/// masks more than it needs to, never less.
+pub fn shown(prog: &Program, attr: &str, v: &Val) -> String {
+    let personal = prog.kinds.iter().any(|k| k.attr(attr).is_some_and(|a| a.mark == Some(suture_lang::ir::Mark::Personal)));
+    if personal && !matches!(v, Val::Secret(_)) { "(personal)".into() } else { v.show(&prog.currency) }
 }
 
 /// `a Payment`, `an Order`.

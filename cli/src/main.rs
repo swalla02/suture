@@ -49,7 +49,10 @@ fn build(dir: &Path) -> Result<bool, String> {
     let out = dir.join(format!("{}-v{}.sut", prog.module, prog.version));
     let json = serde_json::to_string_pretty(&prog).map_err(|e| e.to_string())?;
     std::fs::write(&out, json).map_err(|e| format!("{}: {e}", out.display()))?;
-    println!("{} v{} → {}", prog.module, prog.version, out.display());
+    let manifest = suture_lang::manifest::manifest(&prog);
+    let mpath = dir.join(format!("{}-v{}.manifest", prog.module, prog.version));
+    std::fs::write(&mpath, &manifest).map_err(|e| format!("{}: {e}", mpath.display()))?;
+    println!("{} v{} → {}, {}", prog.module, prog.version, out.display(), mpath.display());
     println!(
         "  kinds {} · effects {} · rules {} · goals {}",
         prog.kinds.len(),
@@ -119,6 +122,9 @@ fn build(dir: &Path) -> Result<bool, String> {
                 println!("  {w}");
             }
         }
+    }
+    if !prog.effects.is_empty() || !prog.sources.is_empty() {
+        print!("\n{}", suture_lang::manifest::adapters(&prog));
     }
     Ok(true)
 }

@@ -13,7 +13,7 @@ pub fn explain(prog: &Program, unit: &Unit, due: impl Fn(&str) -> Option<u64>) -
 
 /// [`explain`] at the clock `now`, which also gives each sourced value's age.
 pub fn explain_at(prog: &Program, unit: &Unit, now: Option<i64>, due: impl Fn(&str) -> Option<u64>) -> Vec<String> {
-    let attrs: Vec<String> = unit.root.attrs.iter().map(|(k, v)| format!("{k} {}", v.show(&prog.currency))).collect();
+    let attrs: Vec<String> = unit.root.attrs.iter().map(|(k, v)| format!("{k} {}", crate::interp::shown(prog, k, v))).collect();
     let mut out = vec![format!("{} {} ({})", unit.root.kind, unit.label, attrs.join(", "))];
     for (i, g) in prog.goals.iter().enumerate().filter(|(_, g)| g.kind == unit.root.kind) {
         if !g.filter.iter().all(|f| holds(prog, unit, &[], f)) {
@@ -49,7 +49,7 @@ fn sourced(prog: &Program, n: &Node, now: Option<i64>, depth: usize, out: &mut V
         let f = n.fetched.get(&first.attr).cloned().unwrap_or_default();
         // The source the open or last fetch asked (appendix K.2.4).
         let src = prog.sources_of(&n.kind, &first.attr).into_iter().find(|s| s.adapter == f.via).unwrap_or(first);
-        let value = n.attrs.get(&src.attr).map(|v| v.show(&prog.currency));
+        let value = n.attrs.get(&src.attr).map(|v| crate::interp::shown(prog, &src.attr, v));
         let picking = n.choosing.iter().find(|(k, _)| k.ends_with("?source") && k.contains(&format!("~{}#", src.attr)));
         let what = match (&f, value) {
             _ if picking.is_some() => format!("a model is picking its source among {}", picking.expect("checked").1.join(", ")),
@@ -105,7 +105,7 @@ fn part(prog: &Program, unit: &Unit, at: &[usize], now: Option<i64>, due: &impl 
         (Status::Failed, _) => format!("failed ({})", n.outcome.as_deref().unwrap_or("?")),
     };
     let attempt = if n.attempt > 1 { format!(" (attempt {})", n.attempt) } else { String::new() };
-    let attrs: Vec<String> = n.attrs.iter().map(|(k, v)| format!("{k} {}", v.show(&prog.currency))).collect();
+    let attrs: Vec<String> = n.attrs.iter().map(|(k, v)| format!("{k} {}", crate::interp::shown(prog, k, v))).collect();
     let attrs = if attrs.is_empty() { String::new() } else { format!(" — {}", attrs.join(", ")) };
     out.push(format!("{}{}{attempt}: {what}{attrs}", "  ".repeat(depth), n.kind));
     sourced(prog, n, now, depth + 1, out);

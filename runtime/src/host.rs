@@ -52,6 +52,8 @@ pub struct Host {
     pub model_answers: Vec<(String, Answer)>,
     /// Answers to give again on replay instead of asking (appendix L.2.3).
     pub replay: VecDeque<(String, Answer)>,
+    /// The secret store: each secret value by its number (appendix N.2.4).
+    pub secrets: BTreeMap<u64, String>,
 }
 
 /// A binding waiting on its pool key, with its choice's hole.
@@ -101,6 +103,7 @@ impl Host {
             models: Models::default(),
             model_answers: vec![],
             replay: VecDeque::new(),
+            secrets: BTreeMap::new(),
         };
         // One unit holds each total `checked globally` (appendix F.2.13).
         for g in h.prog.globals.clone() {
@@ -171,7 +174,8 @@ impl Host {
             (t, v) => return Err(format!("{kind}.{attr} is {t:?}, not {}", v.show(&self.prog.currency))),
         };
         let fits = |a: &Admitted| matches!(a, Admitted::Change { kind: k, attr: x } if by.is_some_and(|c| c.verb == "changes") && *k == kind && x == attr);
-        self.gate(by, fits, &format!("{target}'s {attr} to {}", value.show(&self.prog.currency)), &unit)?;
+        let value = self.seal(&kind, vec![(attr.to_string(), value)])?.remove(0).1;
+        self.gate(by, fits, &format!("{target}'s {attr} to {}", interp::shown(&self.prog, attr, &value)), &unit)?;
         let who = by.map_or(String::new(), |c| format!("{} {}", c.role, c.name));
         let msg = Msg::Change { attr: attr.to_string(), value, by: who };
         let refusal = |u: &Unit| u.notes.iter().find_map(|n| n.split_once(": refused by rule ").map(|(_, r)| r.to_string()));
@@ -226,10 +230,12 @@ impl Host {
             return Err(format!("{label} already exists"));
         }
         let given = self.resolve(kind, given)?;
+        let given = self.seal(kind, given)?;
         let mut elements = vec![];
         for (list, attrs) in items {
             let element = self.prog.lists.iter().find(|l| l.owner == kind && l.name == *list).map_or(String::new(), |l| l.element.clone());
-            elements.push((list.clone(), self.resolve(&element, attrs)?));
+            let attrs = self.resolve(&element, attrs)?;
+            elements.push((list.clone(), self.seal(&element, attrs)?));
         }
         let mut facts = Facts::new();
         for (_, v) in given.iter().chain(elements.iter().flat_map(|(_, attrs)| attrs)) {
@@ -344,8 +350,8 @@ impl Host {
             unit: u.label.clone(),
             key: d.key(),
             chooser,
-            facts,
-            options: options.iter().map(|o| Option_ { label: o.label.clone(), attrs: o.root.attrs.clone().into_iter().collect() }).collect(),
+            facts: unmarked(&prog, facts),
+            options: options.iter().map(|o| Option_ { label: o.label.clone(), attrs: unmarked(&prog, o.root.attrs.clone().into_iter().collect()) }).collect(),
             currency: prog.currency.clone(),
         };
         Some(self.consult(&model, &choice, within))
@@ -391,7 +397,7 @@ impl Host {
             unit: ask.label.clone(),
             key: ask.key.clone(),
             chooser,
-            facts,
+            facts: unmarked(&self.prog, facts),
             options: options.iter().map(|o| Option_ { label: o.clone(), attrs: vec![] }).collect(),
             currency: self.prog.currency.clone(),
         };
@@ -584,6 +590,8 @@ impl Host {
             return Ok(());
         };
         let hole = self.pending[i].1;
+        let kind = self.pending[i].0.kind.clone();
+        let data = &self.seal(&kind, data.to_vec())?;
         let sig = self.machine.program().sig.clone();
         let mut b = NetBuilder::new(&sig);
         let meet = b.var();
@@ -593,7 +601,7 @@ impl Host {
         // An answer that cannot be delivered leaves its request waiting (spec §5.5).
         self.machine.inject(inj).map_err(|e| e.to_string())?;
         let (ask, _) = self.pending.remove(i);
-        let shown: Vec<String> = data.iter().map(|(k, v)| format!("{k} {}", v.show(&self.prog.currency))).collect();
+        let shown: Vec<String> = data.iter().map(|(k, v)| format!("{k} {}", interp::shown(&self.prog, k, v))).collect();
         let tail = if shown.is_empty() { String::new() } else { format!(", {}", shown.join(", ")) };
         self.trace.push(format!("      {adapter}: {outcome}{tail}   ({})", ask.key));
         self.pump()
@@ -696,6 +704,35 @@ impl Host {
         self.machine.inject(Injection::new(net).at_label(to, label).new_hole(next, Some(label))).map_err(|e| e.to_string())?;
         self.machine.run(None);
         self.note(label)
+    }
+
+    /// Puts each secret value of an entity of `kind` in the secret store, and
+    /// a reference to it in its place (appendix N.2.4). A reference already
+    /// in the store, as a replayed log holds, is kept.
+    pub fn seal(&mut self, kind: &str, attrs: Vec<(String, Val)>) -> Result<Vec<(String, Val)>, String> {
+        let secret = |a: &str| self.prog.kind(kind).and_then(|k| k.attr(a)).is_some_and(|a| a.mark == Some(suture_lang::ir::Mark::Secret));
+        let mut out = vec![];
+        for (a, v) in attrs {
+            let v = match v {
+                Val::Text(s) if secret(&a) => {
+                    let n = self.secrets.keys().next_back().map_or(1, |n| n + 1);
+                    self.secrets.insert(n, s);
+                    Val::Secret(n)
+                }
+                Val::Secret(n) if !self.secrets.contains_key(&n) => return Err(format!("{kind}.{a}: secret {n} is not in the secret store")),
+                v => v,
+            };
+            out.push((a, v));
+        }
+        Ok(out)
+    }
+
+    /// A value as an adapter granted it receives it: a secret's own value.
+    pub fn reveal(&self, v: &Val) -> Val {
+        match v {
+            Val::Secret(n) => self.secrets.get(n).map_or_else(|| v.clone(), |s| Val::Text(s.clone())),
+            v => v.clone(),
+        }
     }
 
     /// The live units, in the order they were created.
@@ -973,4 +1010,10 @@ fn resolution(new: &Program, b: &str, units: &[String], host: &Host) -> String {
         return "resolve: keep the type, and add an attribute of the new type under another name".into();
     }
     "resolve: give it a default, as in `cancelled: Bool = no`".into()
+}
+
+/// Facts without the marked ones: a decision model is not granted any
+/// (appendix N.2.4–N.2.5).
+fn unmarked(prog: &Program, xs: Vec<(String, Val)>) -> Vec<(String, Val)> {
+    xs.into_iter().filter(|(k, v)| !matches!(v, Val::Secret(_)) && interp::shown(prog, k, v) != "(personal)").collect()
 }

@@ -68,8 +68,10 @@ pub fn handle(svc: &mut Service, req: &Request, operator: Option<&str>, now: u64
     match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/health") => (200, json!({ "ok": true, "module": svc.host.prog.module, "version": svc.host.prog.version })),
         ("GET", "/pending") => {
-            let prog = svc.host.prog.clone();
-            let list: Vec<Value> = svc.host.pending().into_iter().map(|a| service::request_json(&prog, a)).collect();
+            // With the operator token, an adapter polling for its requests
+            // receives the marked fields it was granted (appendix N.2.5).
+            let reveal = matches!((operator, req.header("authorization").and_then(|a| a.strip_prefix("Bearer "))), (Some(t), Some(given)) if same(t, given));
+            let list: Vec<Value> = svc.host.pending().into_iter().map(|a| service::request_json(&svc.host, a, reveal)).collect();
             (200, json!({ "pending": list }))
         }
         ("GET", "/trace") => {

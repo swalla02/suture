@@ -5,6 +5,7 @@ pub mod ast;
 pub mod check;
 pub mod ir;
 pub mod lex;
+pub mod manifest;
 pub mod parse;
 pub mod readback;
 pub mod scenario;

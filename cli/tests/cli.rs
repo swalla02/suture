@@ -11,7 +11,10 @@ fn suture(args: &[&str]) -> (bool, String) {
 fn build_prints_read_backs() {
     let (ok, out) = suture(&["build", "examples/shop"]);
     assert!(ok, "{out}");
-    assert!(out.contains("shop v1 → examples/shop/shop-v1.sut"), "{out}");
+    assert!(out.contains("shop v1 → examples/shop/shop-v1.sut, examples/shop/shop-v1.manifest"), "{out}");
+    assert!(out.contains("\nadapters:\n"), "{out}");
+    let m = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/shop/shop-v1.manifest")).unwrap();
+    assert!(m.starts_with("manifest of shop v1\n\nadapters:\n"), "{m}");
     assert!(out.contains("rule declared: every Declaration's value is at most its form's order's total"), "{out}");
     assert!(out.contains("in other words:  each declaration on its own"), "{out}");
     assert!(out.contains("rule monthly: for each Customer and month"), "{out}");

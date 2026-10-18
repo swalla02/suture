@@ -114,6 +114,8 @@ pub struct Service {
     programs: BTreeMap<u32, Program>,
     /// The trace of the deploy `open` made, if it made one.
     pub deployed: Vec<String>,
+    /// How many secrets `secrets.json` holds.
+    kept_secrets: usize,
 }
 
 /// Why a deploy did not happen.
@@ -157,6 +159,39 @@ impl Service {
             state: None,
             programs: BTreeMap::new(),
             deployed: vec![],
+            kept_secrets: 0,
+        }
+    }
+
+    /// Writes the secret store to `secrets.json`, readable only by this
+    /// user, synced, and replaced in one step (appendix N.2.6).
+    fn keep_secrets(&mut self) -> Result<(), String> {
+        let Some(state) = &self.state else { return Ok(()) };
+        let (path, tmp) = (state.join("secrets.json"), state.join("secrets.json.tmp"));
+        let text = serde_json::to_string(&self.host.secrets).map_err(|e| e.to_string())?;
+        let write = || -> std::io::Result<()> {
+            let mut o = OpenOptions::new();
+            o.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+            let mut f = o.open(&tmp)?;
+            f.write_all(text.as_bytes())?;
+            f.sync_all()?;
+            std::fs::rename(&tmp, &path)?;
+            File::open(state)?.sync_all()
+        };
+        write().map_err(|e| format!("{}: {e}", path.display()))?;
+        self.kept_secrets = self.host.secrets.len();
+        Ok(())
+    }
+
+    /// The secret store a state directory keeps, if any.
+    fn read_secrets(state: &Path) -> Result<BTreeMap<u64, String>, String> {
+        let path = state.join("secrets.json");
+        match std::fs::read_to_string(&path) {
+            Ok(t) => serde_json::from_str(&t).map_err(|e| format!("{}: {e}", path.display())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
+            Err(e) => Err(format!("{}: {e}", path.display())),
         }
     }
 
@@ -177,6 +212,8 @@ impl Service {
         let mut svc = Service::in_memory(&prog, now);
         svc.state = Some(state.to_path_buf());
         setup(&mut svc.host);
+        svc.host.secrets = Self::read_secrets(state)?;
+        svc.kept_secrets = svc.host.secrets.len();
         svc.replay(&state.join("log.jsonl"), cut)?;
         Ok(svc)
     }
@@ -350,7 +387,9 @@ impl Service {
                 _ => unreachable!(),
             }).collect();
             let skip = self.host.replay.len();
-            let applied = self.apply(&records[i]);
+            // A reference missing from the secret store is an error (appendix N.2.6).
+            let sealed = self.seal(records[i].clone()).map_err(|e| format!("{}: {e}", path.display()))?;
+            let applied = self.apply(&sealed);
             if let Record::Deploy { version } = &records[i] {
                 // A deploy that cannot be made again would replay the rest under the wrong program.
                 if self.host.prog.version != *version {
@@ -408,8 +447,50 @@ impl Service {
         Ok(Applied { trace: self.host.trace[from..].to_vec(), refused })
     }
 
+    /// Puts the record's secret values in the secret store and references in
+    /// their place, so the log never holds a secret (appendix N.2.4).
+    fn seal(&mut self, r: Record) -> Result<Record, String> {
+        let h = &mut self.host;
+        let items = |h: &mut Host, kind: &str, items: Items| -> Result<Items, String> {
+            items
+                .into_iter()
+                .map(|(list, attrs)| {
+                    let element = h.prog.lists.iter().find(|l| l.owner == kind && l.name == list).map_or(String::new(), |l| l.element.clone());
+                    h.seal(&element, attrs).map(|attrs| (list, attrs))
+                })
+                .collect()
+        };
+        Ok(match r {
+            Record::World { kind, label, attrs, items: xs } => {
+                let attrs = h.seal(&kind, attrs)?;
+                let xs = items(h, &kind, xs)?;
+                Record::World { kind, label, attrs, items: xs }
+            }
+            Record::New { by, verb, kind, label, attrs, items: xs } => {
+                let attrs = h.seal(&kind, attrs)?;
+                let xs = items(h, &kind, xs)?;
+                Record::New { by, verb, kind, label, attrs, items: xs }
+            }
+            Record::Change { by, target, attr, value } => {
+                let kind = h.unit(&target).map(|u| u.root.kind).unwrap_or_default();
+                let value = h.seal(&kind, vec![(attr.clone(), value)])?.remove(0).1;
+                Record::Change { by, target, attr, value }
+            }
+            Record::Answer { adapter, outcome, key, target, data } => {
+                let ask = h.pending().into_iter().find(|a| {
+                    a.adapter == adapter && key.as_ref().map_or_else(|| target.as_ref().is_none_or(|t| *t == a.label), |k| *k == a.key)
+                });
+                let kind = ask.map(|a| a.kind.clone()).unwrap_or_default();
+                let data = h.seal(&kind, data)?;
+                Record::Answer { adapter, outcome, key, target, data }
+            }
+            r => r,
+        })
+    }
+
     /// Applies one record and logs it with the model answers it caused.
     fn applied(&mut self, r: Record) -> Result<Option<String>, String> {
+        let r = self.seal(r)?;
         let asked = self.host.model_answers.len();
         let refused = self.apply(&r).err();
         let mut lines = vec![r];
@@ -419,6 +500,16 @@ impl Service {
     }
 
     fn write(&mut self, records: &[Record]) -> Result<(), String> {
+        if self.log.is_none() {
+            return Ok(());
+        }
+        // The secrets a line refers to are on disk before the line is.
+        if self.host.secrets.len() != self.kept_secrets {
+            if let Err(e) = self.keep_secrets() {
+                self.broken = Some(e.clone());
+                return Err(format!("the secret store could not be written ({e}), so no input is taken until the service restarts"));
+            }
+        }
         let Some(log) = self.log.as_mut() else { return Ok(()) };
         let mut text = String::new();
         for r in records {
@@ -488,7 +579,7 @@ impl Service {
                 Some(Ok(k)) => Some(k),
                 None => None,
             };
-            let body = request_json(&self.host.prog, &ask);
+            let body = request_json(&self.host, &ask, true);
             let timeout = Duration::from_secs(self.host.prog.request_within(&ask.kind).max(1)).min(POST_TIMEOUT);
             match self.transport.post(&adapter.url, key.as_deref(), &body, timeout) {
                 Ok(reply) => match reply.get("outcome").and_then(Value::as_str) {
@@ -516,9 +607,21 @@ impl Service {
 }
 
 /// A request as posted to its adapter, and as `GET /pending` shows it.
-pub fn request_json(prog: &Program, a: &Ask) -> Value {
-    let sends: serde_json::Map<String, Value> = a.sends.iter().map(|(k, v)| (k.clone(), to_json(v, &prog.currency))).collect();
+/// A request as an adapter receives it. Only with `reveal` does it carry the
+/// marked fields' values; otherwise they are masked (appendix N.2.4–N.2.5).
+pub fn request_json(host: &Host, a: &Ask, reveal: bool) -> Value {
+    let prog = &host.prog;
+    let field = |k: &String, v: &Val| if reveal { to_json(&host.reveal(v), &prog.currency) } else { masked(prog, k, v) };
+    let sends: serde_json::Map<String, Value> = a.sends.iter().map(|(k, v)| (k.clone(), field(k, v))).collect();
     json!({ "key": a.key, "adapter": a.adapter, "verb": a.verb, "kind": a.kind, "unit": a.label, "sends": sends })
+}
+
+/// A value as a read shows it: a marked one masked, as in the trace.
+fn masked(prog: &Program, attr: &str, v: &Val) -> Value {
+    match crate::interp::shown(prog, attr, v) {
+        s if s == "(secret)" || s == "(personal)" => json!(s),
+        _ => to_json(v, &prog.currency),
+    }
 }
 
 /// A value as the API shows it (appendix L.2.7).
