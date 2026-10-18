@@ -83,6 +83,10 @@ fn uri_of(path: &Path) -> String {
     out
 }
 
+fn is_suture(p: &Path) -> bool {
+    p.extension().is_some_and(|x| x == "st")
+}
+
 /// An LSP position's character (in UTF-16 units) as a character index.
 fn column(line: &str, utf16: usize) -> usize {
     let mut units = 0;
@@ -110,7 +114,7 @@ impl Server {
             }
         }
         for (p, t) in &self.open {
-            if p.parent() == Some(dir) {
+            if p.parent() == Some(dir) && is_suture(p) {
                 out.insert(p.clone(), t.clone());
             }
         }
@@ -201,7 +205,8 @@ impl Server {
     }
 
     fn notify(&mut self, method: &str, params: &Value, out: &mut impl Write) -> std::io::Result<()> {
-        let path = params["textDocument"]["uri"].as_str().and_then(path_of);
+        // Other files an editor opens beside a module are not part of it.
+        let path = params["textDocument"]["uri"].as_str().and_then(path_of).filter(|p| is_suture(p));
         match (method, path) {
             ("textDocument/didOpen", Some(p)) => {
                 self.open.insert(p.clone(), params["textDocument"]["text"].as_str().unwrap_or_default().to_string());

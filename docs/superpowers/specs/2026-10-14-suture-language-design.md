@@ -1405,3 +1405,5 @@ Slice 11 serves a program as one process. Slice 14 runs it as several pods over 
 - An error appears on its line as the text is typed, and goes when it is fixed.
 - After `every Booking's`, the completions are Booking's attributes; after `is`, the comparisons; after `via`, the program's adapters.
 - Hovering a rule shows its read-back; hovering a kind's name shows the kind.
+
+**P.2.5 Review updates.** Only `.st` files are part of a module, whatever else the editor opens beside them. A blank or comment line has no read-back, and nothing is completed inside a comment. Typing `'` after a kind's name offers its attributes, inserting `s` and the attribute.

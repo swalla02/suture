@@ -45,6 +45,12 @@ fn completion_offers_what_the_grammar_takes_next() {
     let first = offered("");
     assert!(first.starts_with(&["kind".into(), "needs".into(), "effect".into()]) && first.contains(&"Booking".into()), "{first:?}");
     assert_eq!(offered("al"), ["allow"]);
+    assert!(offered("-- every ").is_empty(), "nothing inside a comment");
+    let text = tickets();
+    let p = suture_lang::compile(&[("t.st".into(), text.clone())]).unwrap();
+    let t = format!("{text}\nrule x: every Booking'");
+    let poss = complete(Some(&p), &t, t.lines().count(), "rule x: every Booking'".len());
+    assert_eq!(poss.first().map(|c| c.insert.as_str()), Some("s quantity"), "{poss:?}");
 }
 
 #[test]
@@ -63,4 +69,5 @@ fn hover_reads_back_the_statement() {
     let col = line.find("Ticket").unwrap() + 1;
     assert!(hover(&p, &text, at("rule early"), col).unwrap().starts_with("**kind Ticket**"));
     assert_eq!(hover(&p, &text, 1, 3), None, "a comment has no read-back");
+    assert_eq!(hover(&p, &text, at("rule seats") + 2, 0), None, "nor has a blank line after a rule");
 }

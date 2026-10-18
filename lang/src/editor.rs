@@ -124,7 +124,12 @@ fn effect_text(p: &Program, e: &crate::ir::Effect) -> String {
 /// meaning as the compiler understood it, or what a kind name refers to.
 /// `line` counts from 1 and `col` from 0, in characters.
 pub fn hover(p: &Program, text: &str, line: usize, col: usize) -> Option<String> {
-    let word = text.lines().nth(line.checked_sub(1)?).and_then(|l| word_at(l, col));
+    let here = text.lines().nth(line.checked_sub(1)?)?;
+    // A blank or comment line belongs to no statement.
+    if tokens(strip(here)).map_or(true, |t| t.is_empty()) {
+        return None;
+    }
+    let word = word_at(here, col);
     let (st, _) = statement_at(text, line)?;
     let toks = st.tokens();
     let w = |i: usize| match toks.get(i) {
@@ -183,19 +188,21 @@ pub struct Completion {
 
 /// The grammar's words: every word the parsers look for, read from their
 /// own source, so the list cannot fall behind them.
-fn grammar_words() -> Vec<String> {
+fn grammar_words() -> &'static [String] {
+    static WORDS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    WORDS.get_or_init(scan_grammar)
+}
+
+fn scan_grammar() -> Vec<String> {
     let mut out = vec![];
     for src in [include_str!("parse.rs"), include_str!("sentence.rs")] {
-        for marker in ["_word(\"", "\"=> "] {
-            let mut rest = src;
-            while let Some(i) = rest.find(marker) {
-                rest = &rest[i + marker.len()..];
-                if marker == "_word(\"" {
-                    let w: String = rest.chars().take_while(|c| c.is_ascii_alphabetic() || *c == '-').collect();
-                    if !w.is_empty() && rest[w.len()..].starts_with('"') {
-                        out.push(w);
-                    }
-                }
+        let marker = "_word(\"";
+        let mut rest = src;
+        while let Some(i) = rest.find(marker) {
+            rest = &rest[i + marker.len()..];
+            let w: String = rest.chars().take_while(|c| c.is_ascii_alphabetic() || *c == '-').collect();
+            if !w.is_empty() && rest[w.len()..].starts_with('"') {
+                out.push(w);
             }
         }
         // `match` arms on words: `"seconds" | "minutes" =>`.
@@ -208,7 +215,7 @@ fn grammar_words() -> Vec<String> {
             }
         }
     }
-    for t in ["Text", "Bool", "Count", "Money", "Duration", "Time", "secret", "personal", "yes", "no"] {
+    for t in ["Text", "Bool", "Count", "Money", "Duration", "Time", "secret", "personal", "yes", "no", "true", "false"] {
         out.push(t.to_string());
     }
     out.sort();
@@ -249,8 +256,17 @@ fn viable(lines: &[Vec<Tok>]) -> bool {
 /// attributes from the program, and the canonical phrases (appendix P.2.3).
 pub fn complete(p: Option<&Program>, text: &str, line: usize, col: usize) -> Vec<Completion> {
     let Some(here) = text.lines().nth(line.saturating_sub(1)).or(Some("")) else { return vec![] };
-    let before: String = here.chars().take(col).collect();
-    let typed: String = before.chars().rev().take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '-').collect::<Vec<_>>().into_iter().rev().collect();
+    let mut before: String = here.chars().take(col).collect();
+    // Nothing is offered inside a comment.
+    if strip(&before).len() < before.len() {
+        return vec![];
+    }
+    // Right after `Kind'`, the possessive is being typed: complete `'s` too.
+    let poss = before.ends_with('\'');
+    if poss {
+        before.pop();
+    }
+    let typed: String = if poss { String::new() } else { before.chars().rev().take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '-').collect::<Vec<_>>().into_iter().rev().collect() };
     let head = &before[..before.len() - typed.len()];
     let indented = here.starts_with(' ') || here.starts_with('\t');
     let item = |label: &str, detail: &str, insert: &str| Completion { label: label.into(), detail: detail.into(), insert: insert.into() };
@@ -273,7 +289,10 @@ pub fn complete(p: Option<&Program>, text: &str, line: usize, col: usize) -> Vec
             }
         }
     }
-    let Ok(last) = tokens(strip(head)) else { return vec![] };
+    let Ok(mut last) = tokens(strip(head)) else { return vec![] };
+    if poss {
+        last.push(Tok::Poss);
+    }
     lines.push(last);
     let prev = lines.last().and_then(|l| l.last()).cloned();
     let before_prev = lines.last().and_then(|l| l.len().checked_sub(2).and_then(|i| l.get(i))).cloned();
@@ -299,10 +318,11 @@ pub fn complete(p: Option<&Program>, text: &str, line: usize, col: usize) -> Vec
     };
     for (a, ty) in &attrs {
         if starts(a) && with(&[a]) {
-            out.push(item(a, &format!("attribute: {ty}"), a));
+            let insert = if poss { format!("s {a}") } else { a.clone() };
+            out.push(item(a, &format!("attribute: {ty}"), &insert));
         }
     }
-    if !attrs.is_empty() {
+    if !attrs.is_empty() || poss {
         return out;
     }
     // Where the grammar takes any word, a made-up one fits too: there the
@@ -343,7 +363,7 @@ pub fn complete(p: Option<&Program>, text: &str, line: usize, col: usize) -> Vec
             out.push(item(&label, "phrase", &label));
         }
     }
-    for w in grammar_words() {
+    for w in grammar_words().iter().cloned() {
         let open = if w.starts_with(char::is_uppercase) { open_upper } else { open_lower };
         if !open && starts(&w) && with(&[&w]) && !out.iter().any(|c| c.label == w) {
             out.push(item(&w, "keyword", &w));
