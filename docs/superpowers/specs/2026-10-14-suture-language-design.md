@@ -1379,3 +1379,29 @@ Slice 11 serves a program as one process. Slice 14 runs it as several pods over 
 - A line cut short by a pod that crashed is cut off by the next pod to take the lock.
 
 **O.2.10 Review updates.** Every request, not only a read, catches up with the log first, so an input is read against the units and the program other pods made. A pod whose write failed takes nothing, serves nothing and stops beating, so its units go to the others; it comes back only by restarting and replaying the log. A pod forgets the requests it posted for units it no longer owns, so it posts them again if they come back. A pod beats while it posts, so a run of slow posts does not let its beat lapse.
+
+## Appendix P. Prototype slice 15: editor support (2026-10-18)
+
+§7.4 asks for an editor that completes sentences, shows each statement's read-back, and marks errors where they are. Slice 15 builds it as a language server, so that any editor with an LSP client gets it.
+
+### P.1 What slice 15 adds
+
+| Added in slice 15 | Still waits |
+|---|---|
+| `suture lsp`: a language server over stdin and stdout | a packaged VS Code extension |
+| errors and warnings as diagnostics on their lines, for every file of the module | ranges narrower than the line; quick fixes from `did you mean` |
+| hover: the read-back of the statement under the cursor, or of the kind named there | go to definition, find references, rename |
+| completion: the words the grammar takes next, with the program's kinds, attributes, adapters and states, the canonical phrases, and statement templates on an empty line | completion inside scenario files |
+
+### P.2 Semantics that slice 15 settles
+
+1. **A module is a directory.** The server compiles the `.st` files of the directory an open file is in, as `suture build` does, with the open files as the editor has them, not as saved. Each change publishes the diagnostics of every file of the module, so a file whose error was fixed elsewhere is cleared.
+2. **Diagnostics.** An error is shown on its line. Warnings name no line, so they are shown on the `module` line.
+3. **Completion is the grammar's.** A word is offered if the statement, with the word added at the cursor, parses, or fails only at its end, wanting more. The words tried are the grammar's own (read from the parser's source, so the list cannot fall behind it), the program's names, and the canonical phrases of the phrasing table (§H.2.2), offered whole or, after their first word, as the rest (`at most` after `is`). Where the grammar takes any word (a name), a made-up word fits too: there, only the program's names of the right sort are offered (adapters after `via` and `allow`; kinds and states elsewhere), not keywords. After `Kind's`, only that kind's attributes are offered; after `its`, any kind's. Nothing is ranked by a model (D4).
+4. **Hover is the read-back.** On a rule: what the compiler understood, in other words, and its cost, as `suture build` prints them. On a kind's name, anywhere: its attributes with types, marks, defaults and formulas, its parts, its effect and the rules about it. On an effect: what it sends and may answer, from the manifest (§N.2.7). On `allow`, `role` and `admit`: the adapters part of the manifest and the roles. While the text has errors, hover and completion use the module's last program that compiled.
+
+### P.3 Acceptance
+
+- An error appears on its line as the text is typed, and goes when it is fixed.
+- After `every Booking's`, the completions are Booking's attributes; after `is`, the comparisons; after `via`, the program's adapters.
+- Hovering a rule shows its read-back; hovering a kind's name shows the kind.
