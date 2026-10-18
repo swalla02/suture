@@ -6,6 +6,45 @@ You do not write the steps. You declare what exists, what each thing needs, the 
 
 Suture is a v0 prototype: a Rust compiler and runtime, a guide whose every example is tested, and five example systems. It is not production software yet.
 
+## Where Suture fits
+
+Suture is not infrastructure, and it does not replace your databases or providers. It replaces the code in the middle: the services written to coordinate steps, call providers, retry, compensate, check permissions, keep a state machine per entity and log what happened. Today, that code is most of a backend team's work.
+
+```text
+  ┌────────────────────────────────────────────────────────────────────────────┐
+  │ Infrastructure      Terraform provisions it · Kubernetes runs it           │
+  └────────────────────────────────────────────────────────────────────────────┘
+          │ deploys
+          ▼
+  ┌──────────────────────────────── Suture ────────────────────────────────────┐
+  │   program (.st)           what exists, needs, rules, goals, who may do what │
+  │   compiler                read-backs, every open choice listed, checked     │
+  │   runtime                 orders the steps, holds back what a rule forbids, │
+  │                           retries, gives back, meets deadlines              │
+  │   journal                 every input, answer, timer and pick: replayable   │
+  └──────────┬──────────────────────────┬──────────────────────────┬───────────┘
+             │ adapters                 │ model backends           │ callers
+             ▼                          ▼                          ▼
+  ┌───────────────────────┐  ┌───────────────────────────┐  ┌──────────────────┐
+  │ outside services      │  │ decision models           │  │ apps, staff,     │
+  │ databases · caches    │  │ served by vLLM, SGLang,   │  │ other services   │
+  │ secret managers       │  │ a hosted Jev, …           │  │ (admitted by     │
+  │ payments · mail       │  │ (optional: `prefer` makes │  │  role)           │
+  │ carriers · Prometheus │  │  every choice without)    │  │                  │
+  └───────────────────────┘  └───────────────────────────┘  └──────────────────┘
+```
+
+| Layer | Who does it | What it is responsible for |
+|---|---|---|
+| infrastructure | Terraform, Kubernetes, your cloud | machines, networks, deploying and scaling the runtime |
+| outside services | databases, caches, secret managers, Prometheus, payment, mail and carrier providers | storing data, holding secrets, metrics, the actual work in the world |
+| **business logic** | **Suture** | what has to happen, in which order, under which rules, by whom, until which goal, and what to do when something fails |
+| decision models | an inference engine such as vLLM or SGLang, or a hosted API | picking among allowed options where the program asks for it |
+
+The program talks to all of these only through declared boundaries: an `effect` or a `source` names an adapter, a `decide` names a model, and an `admit` names a role. Nothing else leaves the runtime, so the program says, in one place, everything the system does and with whom.
+
+In v0, adapters and models are played by scenarios (or registered in Rust), and model backends can call a real API. A long-running host with a durable journal, an input API and real adapters is the next slice.
+
 ## A program
 
 Here is a whole ticketing system ([`examples/tickets/tickets.st`](examples/tickets/tickets.st)). Fans book seats, the system charges them, finds a session with room and mails the ticket:
