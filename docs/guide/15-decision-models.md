@@ -95,6 +95,8 @@ The trace names the model and the options it had:
 
 The options come in `prefer` order, best first, so a model can see what `prefer` would have picked.
 
+Each time a model is asked, it takes the next queued pick: once per choice, and once more for each re-ask (after a refused take, or when a waiting binding is woken). A total across units, such as `the total amount of their Refunds` (chapter 9), chooses nothing and never asks a model. Scripting a model that no `decide` names fails the scenario.
+
 ### One decision
 
 ```suture

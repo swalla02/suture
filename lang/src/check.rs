@@ -1238,7 +1238,7 @@ impl Checker {
                     self.errors.push(err(&d.at, format!("{point} is a slot; v0 picks a slot's alternative by `prefer` and patience, not by a model")));
                     continue;
                 }
-                if !p.bindings.iter().any(|b| b.target == *point) {
+                if !p.bindings.iter().any(|b| b.target == *point && !b.key_attr.is_empty()) {
                     self.errors.push(err(&d.at, format!("no `uses` picks {}, so there is no choice to decide", a(point))));
                     continue;
                 }
@@ -1254,7 +1254,11 @@ impl Checker {
                 },
             };
             if let Some(k) = &scope {
-                let inside = p.bindings.iter().any(|b| d.point.as_ref().is_none_or(|x| *x == b.target) && chain(p, &b.subject).contains(k));
+                let inside = p
+                    .bindings
+                    .iter()
+                    .filter(|b| !b.key_attr.is_empty())
+                    .any(|b| d.point.as_ref().is_none_or(|x| *x == b.target) && chain(p, &b.subject).contains(k));
                 if !inside {
                     let what = d.point.as_deref().map_or_else(|| "choice is made".to_string(), |x| format!("{x} is chosen"));
                     self.errors.push(err(&d.at, format!("no {what} inside {}", a(k))));
@@ -1273,14 +1277,20 @@ impl Checker {
                     Some(c) => Some(c),
                     None => continue,
                 },
-                _ => None,
+                (None, _) => None,
+                (Some(_), None) => unreachable!("the parser reads `whose` only after `for`"),
             };
+            let scope_text = d.scope.as_ref().map(|w| {
+                let whose = d.source.split_once(" whose ").and_then(|(_, r)| r.rsplit_once(" with ")).map(|(c, _)| format!(" whose {c}"));
+                format!("{w}{}", whose.unwrap_or_default())
+            });
             kept.push((p.decisions.len(), d));
-            p.decisions.push(Decision { point: d.point.clone(), scope, cond, model: d.model.clone(), source: d.source.clone() });
+            p.decisions.push(Decision { point: d.point.clone(), scope, cond, model: d.model.clone(), scope_text, source: d.source.clone() });
         }
         // Two that can both decide one choice, at the same rank (J.2.3).
         let mut seen = vec![];
-        for b in &p.bindings {
+        // A binding with no pool key adds to a total and chooses nothing (F.2.11).
+        for b in p.bindings.iter().filter(|b| !b.key_attr.is_empty()) {
             let chain = chain(p, &b.subject);
             let rank = |x: &Decision| -> Option<(bool, usize, bool)> {
                 let near = match &x.scope {

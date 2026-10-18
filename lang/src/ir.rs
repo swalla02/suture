@@ -85,6 +85,8 @@ pub struct Decision {
     pub cond: Option<Cond>,
     /// `None`: `with prefer`.
     pub model: Option<String>,
+    /// `Orders whose total is at least 1000 EUR`, as written.
+    pub scope_text: Option<String>,
     pub source: String,
 }
 

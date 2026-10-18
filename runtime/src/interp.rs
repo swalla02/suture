@@ -623,7 +623,7 @@ pub fn options(prog: &Program, u: &Unit, d: &Decide, candidates: impl Iterator<I
 /// of those that apply, the one that names the choice point, then the one
 /// scoped nearest the choosing part, then the one with a `whose` that holds.
 pub fn handler<'p>(prog: &'p Program, u: &Unit, d: &Decide) -> Option<&'p Decision> {
-    let b = prog.bindings.get(d.binding as usize)?;
+    let b = prog.bindings.get(d.binding as usize).filter(|b| !b.key_attr.is_empty())?;
     let (at, _) = decide_place(prog, u, d)?;
     // The choosing part, its owner, …, the root.
     let chain: Vec<Vec<usize>> = (0..=at.len()).rev().map(|n| at[..n].to_vec()).collect();

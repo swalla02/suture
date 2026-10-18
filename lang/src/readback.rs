@@ -315,8 +315,7 @@ pub fn handlers(p: &Program, b: &crate::ir::Binding) -> Vec<String> {
     ranked.sort_by_key(|x| std::cmp::Reverse(x.0));
     let mut out = vec![];
     for (_, d) in ranked {
-        let scope = d.source.split_once(" for ").and_then(|(_, rest)| rest.rsplit_once(" with ")).map(|(s, _)| s.to_string());
-        out.push(match scope {
+        out.push(match &d.scope_text {
             Some(s) => format!("for {s}: {}", d.handler()),
             None => d.handler(),
         });

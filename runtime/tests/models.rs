@@ -177,3 +177,72 @@ fn picks_replay_without_the_model_and_only_under_the_same_model() {
     let (kernel_program, _) = kernel::program(Arc::new(other));
     assert!(matches!(Machine::recover(kernel_program, again.host.machine.into_journal()).err(), Some(suture::RecoveryError::Version { .. })));
 }
+
+#[test]
+fn a_workflow_level_model_beats_the_app_level_one() {
+    let p = prog("decide with model \"planner@3\"\ndecide for Orders with model \"orders@2\"\n");
+    let t = trace(&p, &format!("  when   model \"orders@2\" picks Fast, then Big\n  and    model \"planner@3\" picks Cheap\n{ORDER}"));
+    assert_eq!(carrier(&t), "choice: Fast for O1/Shipment#1@Carrier by model \"orders@2\" (of Cheap, Fast)");
+}
+
+#[test]
+fn a_condition_that_does_not_hold_falls_to_the_next_handler() {
+    let p = prog("decide for Orders with model \"orders@2\"\ndecide for Orders whose total is at least 1000 EUR with prefer\n");
+    let t = trace(&p, &format!("  when   model \"orders@2\" picks Fast, then Big\n{BIG_ORDER}"));
+    assert_eq!(carrier(&t), "choice: Cheap for O1/Shipment#1@Carrier");
+    let t = trace(&p, &format!("  when   model \"orders@2\" picks Fast, then Big\n{ORDER}"));
+    assert_eq!(carrier(&t), "choice: Fast for O1/Shipment#1@Carrier by model \"orders@2\" (of Cheap, Fast)");
+}
+
+#[test]
+fn a_total_across_units_is_not_a_choice_and_never_asks_a_model() {
+    let src = SHOP
+        .replace("kind Product  { name: Text }", "kind Product  { name: Text }\nkind Customer { name: Text }")
+        .replace("kind Order    { product: Product,", "kind Order    { customer: Customer, product: Product,")
+        .replace("prefer Carrier: lowest fee", "rule cap: for each Customer and month, the total total of their Orders is at most 10000 EUR\nprefer Carrier: lowest fee");
+    let files = vec![("shop.st".to_string(), format!("{src}decide with model \"planner@3\"\n"))];
+    let p = suture_lang::compile(&files).unwrap_or_else(|e| panic!("{e:?}"));
+    let r = run(
+        &p,
+        &parse_scenarios(
+            "s.scenario",
+            &format!(
+                "scenario \"s\":\n{WORLD}  and    a Customer Ada with name Ada\n  when   model \"planner@3\" picks Big, then Fast\n  and    staff Sam places a new Order O1 with customer Ada, product Kettle, zone EU, quantity 1 and total 50 EUR\n"
+            ),
+        )
+        .unwrap()[0],
+    );
+    assert!(r.passed(), "{:?}", r.failures);
+    let t = r.host.trace.join("\n");
+    assert_eq!(carrier(&t), "choice: Fast for O1/Shipment#1@Carrier by model \"planner@3\" (of Cheap, Fast)", "{t}");
+    assert!(!t.contains("Customer by model"), "{t}");
+    let errors = suture_lang::compile(&[("shop.st".to_string(), format!("{src}decide Customer with model \"m@1\"\n"))]).err().unwrap();
+    assert!(errors.iter().any(|e| e.to_string().contains("no `uses` picks a Customer")), "{errors:?}");
+}
+
+#[test]
+fn a_scenario_cannot_script_a_model_no_decide_names() {
+    let p = prog("decide Carrier with model \"carriers@1\"\n");
+    let r = scenario(&p, &format!("  when   model \"carrier@1\" picks Fast\n{ORDER}"));
+    assert!(r.failures.iter().any(|f| f.contains("no `decide` names model \"carrier@1\"")), "{:?}", r.failures);
+}
+
+#[test]
+fn fallbacks_and_refused_picks_replay_to_the_same_state() {
+    let cases = [
+        ("decide Carrier with model \"carriers@1\"\n", format!("  when   model \"carriers@1\" picks Slow\n{ORDER}")),
+        (
+            "decide Stock with model \"stock@4\"\n",
+            "  when   model \"stock@4\" picks Small, then Big\n  and    staff Sam places a new Order O1 with product Kettle, zone EU, quantity 2 and total 50 EUR\n".to_string(),
+        ),
+    ];
+    for (decides, steps) in cases {
+        let p = prog(decides);
+        let r = scenario(&p, &steps);
+        assert!(r.passed(), "{:?}", r.failures);
+        let digest = r.host.machine.digest();
+        let (kernel_program, _) = kernel::program(Arc::new(p.clone()));
+        let replayed = Machine::recover(kernel_program, r.host.machine.into_journal()).unwrap();
+        assert_eq!(replayed.digest(), digest);
+    }
+}

@@ -40,6 +40,9 @@ pub fn run(prog: &Program, sc: &Scenario) -> Report {
                 let r = values(prog, &[(attr.clone(), value.clone())]).and_then(|v| host.input_change(Some(by), target, attr, v[0].1.clone()));
                 refusal(&mut host, target, refused.as_ref(), r, "it was changed")
             }
+            ScenarioStep::Model { model, .. } if !prog.decisions.iter().any(|d| d.model.as_ref() == Some(model)) => {
+                Err(format!("no `decide` names model \"{model}\""))
+            }
             ScenarioStep::Model { model, picks } => {
                 host.trace.push(format!("      model \"{model}\" will pick {}", picks.join(", then ")));
                 host.models.script(model, picks.iter().cloned());
