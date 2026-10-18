@@ -154,6 +154,51 @@ fn serve_runs_a_program_and_a_restart_keeps_its_state() {
 }
 
 #[test]
+fn two_pods_serve_one_state() {
+    use std::io::{BufRead, BufReader, Read, Write};
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let state = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("pods-state");
+    let _ = std::fs::remove_dir_all(&state);
+    let start = |pod: &str| {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_suture"))
+            .args(["serve", "examples/tickets", "--listen", "127.0.0.1:0", "--state", state.to_str().unwrap(), "--pod", pod])
+            .env("SUTURE_OPERATOR_TOKEN", "t")
+            .current_dir(&root)
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut reader = BufReader::new(child.stdout.take().unwrap());
+        let mut first = String::new();
+        reader.read_line(&mut first).unwrap();
+        assert!(first.trim_end().ends_with(&format!("pod {pod}")), "{first}");
+        let addr = first.split("http://").nth(1).and_then(|r| r.split(',').next()).unwrap_or_else(|| panic!("{first}")).to_string();
+        // Keep reading what it prints, so it never blocks on a full pipe.
+        std::thread::spawn(move || std::io::copy(&mut reader, &mut std::io::sink()));
+        (child, addr)
+    };
+    let send = |addr: &str, req: String| {
+        let mut s = std::net::TcpStream::connect(addr).unwrap();
+        s.write_all(req.as_bytes()).unwrap();
+        let mut out = String::new();
+        s.read_to_string(&mut out).unwrap();
+        out
+    };
+    let (mut a, addr_a) = start("a");
+    let (mut b, addr_b) = start("b");
+    let body = r#"{"kind": "Fan", "label": "Ada", "attrs": {"name": "Ada"}}"#;
+    let out = send(&addr_a, format!("POST /world HTTP/1.1\r\nContent-Length: {}\r\nAuthorization: Bearer t\r\n\r\n{body}", body.len()));
+    assert!(out.starts_with("HTTP/1.1 200"), "{out}");
+    let units = send(&addr_b, "GET /units/Ada HTTP/1.1\r\n\r\n".into());
+    let health = send(&addr_b, "GET /health HTTP/1.1\r\n\r\n".into());
+    for c in [&mut a, &mut b] {
+        c.kill().unwrap();
+        c.wait().unwrap();
+    }
+    assert!(units.starts_with("HTTP/1.1 200"), "b reads what a took: {units}");
+    assert!(health.contains(r#""pod":"b""#) && health.contains(r#""pods":["a","b"]"#), "{health}");
+}
+
+#[test]
 fn deploy_checks_a_new_version_against_the_live_state() {
     use std::io::{BufRead, BufReader, Read, Write};
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");

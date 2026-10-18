@@ -2,7 +2,7 @@
 name = "suture-lang"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.89"
 description = "The Suture language: parser, checks, read-backs and compiled programs"
 publish = false
 

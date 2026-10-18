@@ -209,11 +209,10 @@ impl Graph {
                 }
                 _ => {}
             }
-            if let Some(l) = &hole.label {
-                if self.labels.get(l) != Some(&h) {
+            if let Some(l) = &hole.label
+                && self.labels.get(l) != Some(&h) {
                     return Err(GraphError::Label(format!("hole {h} label {l:?} not indexed")));
                 }
-            }
         }
         for (l, h) in &self.labels {
             if self.holes.get(h).and_then(|x| x.label.as_ref()) != Some(l) {

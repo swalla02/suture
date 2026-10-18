@@ -622,11 +622,10 @@ impl Machine {
     /// Every connection between two typed ports must be compatible.
     fn check_conns(&self, net: Option<&NetData>, conns: &[(Ep, Ep)]) -> Result<(), (String, String)> {
         for &(a, b) in conns {
-            if let (Some(ta), Some(tb)) = (self.port_type(net, a), self.port_type(net, b)) {
-                if !self.prog.sig.compatible(ta, tb) {
+            if let (Some(ta), Some(tb)) = (self.port_type(net, a), self.port_type(net, b))
+                && !self.prog.sig.compatible(ta, tb) {
                     return Err((self.describe_ep(net, a), self.describe_ep(net, b)));
                 }
-            }
         }
         Ok(())
     }
@@ -731,11 +730,10 @@ impl Machine {
     /// (consuming them) or to new holes. Validation happens before any
     /// mutation; on error the graph is unchanged.
     pub fn inject(&mut self, inj: Injection) -> Result<InjectReceipt, InjectError> {
-        if let Some(k) = &inj.key {
-            if let Some(&seq) = self.keys.get(k) {
+        if let Some(k) = &inj.key
+            && let Some(&seq) = self.keys.get(k) {
                 return Ok(InjectReceipt { seq, new_holes: vec![], duplicate: true });
             }
-        }
         let seq = self.inject_seq;
         let plan = self.plan_inject(&inj, seq)?;
         let new_holes = plan.created.iter().map(|(v, h, _)| (*v, *h)).collect();
@@ -780,11 +778,10 @@ impl Machine {
             }
         }
         for l in &labels {
-            if let Some(h) = self.graph.hole_by_label(l) {
-                if !consumed.contains(&h) {
+            if let Some(h) = self.graph.hole_by_label(l)
+                && !consumed.contains(&h) {
                     return Err(InjectError::LabelInUse(l.to_string()));
                 }
-            }
         }
         let ext: Vec<ExtKind> = targets
             .iter()

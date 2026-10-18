@@ -125,7 +125,7 @@ fn the_server_answers_over_tcp() {
         })
     };
     let auth = format!("Bearer {TOKEN}");
-    assert_eq!(send(&addr, "GET", "/health", &[], ""), (200, json!({ "ok": true, "module": "tickets", "version": 1 })));
+    assert_eq!(send(&addr, "GET", "/health", &[], ""), (200, json!({ "ok": true, "module": "tickets", "version": 1, "pod": "solo", "pods": ["solo"] })));
     let (status, _) = send(&addr, "POST", "/world", &[("Authorization", &auth)], r#"{"kind": "Fan", "label": "Ada", "attrs": {"name": "Ada"}}"#);
     assert_eq!(status, 200);
     let (status, body) = send(&addr, "POST", "/inputs", &[("Suture-Caller", "fan Ada")], "not json");

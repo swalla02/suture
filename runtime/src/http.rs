@@ -65,8 +65,13 @@ fn decoded(path: &str) -> String {
 /// requests must carry; without one, they are refused.
 pub fn handle(svc: &mut Service, req: &Request, operator: Option<&str>, now: u64) -> (u16, Value) {
     let error = |status: u16, msg: String| (status, json!({ "error": msg }));
+    // A read first catches up with what other pods appended (appendix O.2.2).
+    if req.method == "GET"
+        && let Err(e) = svc.refresh() {
+            return error(500, e);
+        }
     match (req.method.as_str(), req.path.as_str()) {
-        ("GET", "/health") => (200, json!({ "ok": true, "module": svc.host.prog.module, "version": svc.host.prog.version })),
+        ("GET", "/health") => (200, json!({ "ok": true, "module": svc.host.prog.module, "version": svc.host.prog.version, "pod": svc.pod, "pods": svc.pods(now) })),
         ("GET", "/pending") => {
             // With the operator token, an adapter polling for its requests
             // receives the marked fields it was granted (appendix N.2.5).
@@ -306,5 +311,6 @@ pub fn serve(svc: &mut Service, listener: TcpListener, operator: Option<&str>, s
         }
         shown = svc.host.trace.len();
     }
+    svc.leave();
     Ok(())
 }

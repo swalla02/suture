@@ -876,11 +876,10 @@ impl Host {
             }
         }
         for g in self.prog.globals.clone() {
-            if self.unit(&g).is_none() {
-                if let Err(e) = self.create(&g, &g, &[]) {
+            if self.unit(&g).is_none()
+                && let Err(e) = self.create(&g, &g, &[]) {
                     first_error.get_or_insert(e);
                 }
-            }
         }
         first_error.map_or(Ok(()), Err)
     }
@@ -981,11 +980,10 @@ impl Host {
         }
         for &g in &unit.matched {
             let within = self.prog.goals.get(g as usize).and_then(|x| x.within_secs);
-            if let Some(secs) = within {
-                if self.goal_timers.insert((label.to_string(), g)) {
+            if let Some(secs) = within
+                && self.goal_timers.insert((label.to_string(), g)) {
                     self.schedule(self.now + secs, Timer::Goal(label.to_string(), g));
                 }
-            }
         }
         Ok(())
     }

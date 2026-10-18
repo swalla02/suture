@@ -129,11 +129,10 @@ fn step(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {
             return Ok(ScenarioStep::Alert { name: c.word()?, negated });
         }
         let saved = c.clone();
-        if let Ok(short) = short_expect(c) {
-            if c.at_end() {
+        if let Ok(short) = short_expect(c)
+            && c.at_end() {
                 return Ok(short);
             }
-        }
         *c = saved;
         return expect_cond(c);
     }
@@ -151,8 +150,8 @@ fn step(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {
         }
         return Ok(ScenarioStep::Pass { secs });
     }
-    if c.is_word("model") {
-        if let Some(Tok::Str(model)) = c.peek_at(1) {
+    if c.is_word("model")
+        && let Some(Tok::Str(model)) = c.peek_at(1) {
             let model = model.clone();
             c.next();
             c.next();
@@ -173,7 +172,6 @@ fn step(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {
             c.expect_end()?;
             return Ok(ScenarioStep::Model { model, answers });
         }
-    }
     let by = if c.is_word("a") || c.is_word("an") || matches!(c.peek_at(1), Some(Tok::Word(w)) if w == "answers") {
         None
     } else {

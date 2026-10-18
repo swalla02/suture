@@ -814,11 +814,10 @@ fn answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[(Strin
             None => return Err(refuse(format!("a {kind} answer has no field {name}"))),
         }
     }
-    if success {
-        if let Some((name, _)) = effect.data.iter().find(|(n, _)| !data.iter().any(|(d, _)| d == n)) {
+    if success
+        && let Some((name, _)) = effect.data.iter().find(|(n, _)| !data.iter().any(|(d, _)| d == n)) {
             return Err(refuse(format!("the answer is missing {name}")));
         }
-    }
     let mut t = u.root.clone();
     {
         let n = node_at_mut(&mut t, &at);
@@ -927,7 +926,7 @@ fn goal_due(prog: &Program, u: &mut Unit, goal: u32) {
 pub fn duration(secs: u64) -> String {
     let (n, unit) = [(86_400, "day"), (3_600, "hour"), (60, "minute")]
         .into_iter()
-        .find(|(n, _)| secs >= *n && secs % n == 0)
+        .find(|(n, _)| secs >= *n && secs.is_multiple_of(*n))
         .map_or((secs, "second"), |(n, unit)| (secs / n, unit));
     format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
 }
@@ -1597,11 +1596,10 @@ pub fn fetch_due_matters(u: &Unit, id: &str) -> bool {
 /// still waits fetches what it needs.
 fn fetch_due(u: &mut Unit, id: &str) {
     let Some(key) = id.strip_suffix(":again") else { return };
-    if let Some((at, attr)) = find_fetch(u, key, false) {
-        if let Some(f) = node_at_mut(&mut u.root, &at).fetched.get_mut(&attr) {
+    if let Some((at, attr)) = find_fetch(u, key, false)
+        && let Some(f) = node_at_mut(&mut u.root, &at).fetched.get_mut(&attr) {
             f.failed = false;
         }
-    }
 }
 
 /// Records each goal with a deadline the first time the root matches its

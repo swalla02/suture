@@ -3,7 +3,7 @@
 //! - `suture build <dir>`
 //! - `suture run <dir> --scenario <file> [--models]`
 //! - `suture explain <dir> --scenario <file> <name>`
-//! - `suture serve <dir> [--state <dir>] [--listen <addr>] [--models]` (appendix L)
+//! - `suture serve <dir> [--state <dir>] [--listen <addr>] [--pod <name>] [--models]` (appendices L, O)
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -11,7 +11,7 @@ use std::process::ExitCode;
 use suture_lang::ir::Program;
 
 const USAGE: &str =
-    "usage:\n  suture build <dir>\n  suture run <dir> --scenario <file> [--models]\n  suture explain <dir> --scenario <file> <name>\n  suture serve <dir> [--state <dir>] [--listen <addr>] [--models]\n  suture deploy <dir> [--state <dir>]";
+    "usage:\n  suture build <dir>\n  suture run <dir> --scenario <file> [--models]\n  suture explain <dir> --scenario <file> <name>\n  suture serve <dir> [--state <dir>] [--listen <addr>] [--pod <name>] [--models]\n  suture deploy <dir> [--state <dir>]";
 
 /// Where `suture serve` listens unless told otherwise.
 const LISTEN: &str = "127.0.0.1:7878";
@@ -217,12 +217,14 @@ fn deploy(dir: &Path, state: Option<&Path>) -> Result<bool, String> {
 /// `models.json` read from beside it.
 fn serve(dir: &Path, flags: &[&str]) -> Result<bool, String> {
     let (mut state, mut listen, mut models) = (suture_runtime::service::Service::default_state(dir), LISTEN.to_string(), false);
+    let mut pod = "solo".to_string();
     let mut rest = flags.iter();
     while let Some(f) = rest.next() {
         match *f {
             "--state" => state = rest.next().map(Path::new).ok_or(USAGE)?.to_path_buf(),
             "--listen" => listen = rest.next().ok_or(USAGE)?.to_string(),
             "--models" => models = true,
+            "--pod" => pod = rest.next().ok_or(USAGE)?.to_string(),
             _ => return Err(USAGE.to_string()),
         }
     }
@@ -247,6 +249,7 @@ fn serve(dir: &Path, flags: &[&str]) -> Result<bool, String> {
         }
     })?;
     let replayed = svc.host.trace.len() - svc.deployed.len();
+    svc.join(&pod, unix_now())?;
     svc.connect(adapters, Box::new(suture_runtime::backend::Curl));
     let listener = std::net::TcpListener::bind(&listen).map_err(|e| format!("{listen}: {e}"))?;
     let operator = std::env::var("SUTURE_OPERATOR_TOKEN").ok();
@@ -254,7 +257,11 @@ fn serve(dir: &Path, flags: &[&str]) -> Result<bool, String> {
         return Err("SUTURE_OPERATOR_TOKEN is empty; set a token, or unset it to refuse operator requests".into());
     }
     let bound = listener.local_addr().map_err(|e| e.to_string())?;
-    println!("{} v{} on http://{bound}, state in {}", prog.module, prog.version, state.display());
+    println!("{} v{} on http://{bound}, state in {}, pod {pod}", prog.module, prog.version, state.display());
+    let others: Vec<String> = svc.pods(unix_now()).into_iter().filter(|p| *p != pod).collect();
+    if !others.is_empty() {
+        println!("  with pods {}", others.join(", "));
+    }
     if !bound.ip().is_loopback() {
         println!("  warning: listening beyond this machine; only the gateway may reach this port, since it trusts the Suture-Caller header");
     }

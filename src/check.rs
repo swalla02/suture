@@ -174,11 +174,10 @@ pub(crate) fn check_inject_static(
     max_payload: usize,
 ) -> Result<(), NetError> {
     check_agents(sig, net, max_agents, max_payload, None)?;
-    if !mint {
-        if let Some(a) = net.agents.iter().find(|a| sig.kind(a.kind).conserved.is_some()) {
+    if !mint
+        && let Some(a) = net.agents.iter().find(|a| sig.kind(a.kind).conserved.is_some()) {
             return Err(NetError::MintRequired(sig.kind(a.kind).name.clone()));
         }
-    }
     Ok(())
 }
 

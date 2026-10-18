@@ -222,7 +222,7 @@ impl Sim<'_> {
         if let Some(v) = self.provider.violations.first() {
             return Err(format!("provider: {v}"));
         }
-        if self.actions % 16 == 0 {
+        if self.actions.is_multiple_of(16) {
             self.m().check_invariants().map_err(|e| e.to_string())?;
         }
         Ok(())
