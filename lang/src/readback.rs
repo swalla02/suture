@@ -312,7 +312,7 @@ pub fn handlers(p: &Program, b: &crate::ir::Binding) -> Vec<String> {
             Some(((d.point.is_some(), near, d.cond.is_some()), d))
         })
         .collect();
-    ranked.sort_by(|x, y| y.0.cmp(&x.0));
+    ranked.sort_by_key(|x| std::cmp::Reverse(x.0));
     let mut out = vec![];
     for (_, d) in ranked {
         let scope = d.source.split_once(" for ").and_then(|(_, rest)| rest.rsplit_once(" with ")).map(|(s, _)| s.to_string());

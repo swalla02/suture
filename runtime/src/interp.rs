@@ -4,9 +4,9 @@
 
 use std::collections::BTreeMap;
 
-use suture_lang::ir::{Action, Arith, Body, Cond, Criterion, Effect, Num, Op, Otherwise, Path, Program, Rule, Source, Step, Ty, CREATED, TIMED_OUT};
+use suture_lang::ir::{Action, Arith, Body, Cond, Criterion, Decision, Effect, Num, Op, Otherwise, Path, Program, Rule, Source, Step, Ty, CREATED, TIMED_OUT};
 
-use crate::choice::{choose, pick};
+use crate::choice::{choose, order};
 use crate::state::{period_key, Ask, Bind, Decide, Fact, Facts, Fetch, Msg, Node, Status, Unit, Val};
 
 static NO_TOTALS: BTreeMap<String, Val> = BTreeMap::new();
@@ -587,12 +587,20 @@ fn decide_place(prog: &Program, u: &Unit, d: &Decide) -> Option<(Vec<usize>, Opt
     Some((at, elem.map(|(_, p)| p)))
 }
 
-/// The choice point for a binding (appendix F.2.7): of the candidates, in
-/// creation order, the first `candidates` that meet the binding's filter
-/// are ranked by its `prefer`. Returns the pick and how many were gathered.
+/// The pick for a binding under `prefer` alone (appendix F.2.7), and how
+/// many options there were; see [`options`].
 pub fn choose_among(prog: &Program, u: &Unit, d: &Decide, candidates: impl Iterator<Item = Unit>) -> Option<(String, usize)> {
-    let b = prog.bindings.get(d.binding as usize)?;
-    let (at, elem) = decide_place(prog, u, d)?;
+    let ranked = options(prog, u, d, candidates);
+    let n = ranked.len();
+    ranked.into_iter().next().map(|c| (c.label, n))
+}
+
+/// The options of a binding's choice (appendix J.2.4): of the candidates, in
+/// creation order, the first `candidates` that meet the binding's filter,
+/// best first under its `prefer`.
+pub fn options(prog: &Program, u: &Unit, d: &Decide, candidates: impl Iterator<Item = Unit>) -> Vec<Unit> {
+    let Some(b) = prog.bindings.get(d.binding as usize) else { return vec![] };
+    let Some((at, elem)) = decide_place(prog, u, d) else { return vec![] };
     let mut gathered = vec![];
     for c in candidates {
         if gathered.len() >= prog.candidates as usize {
@@ -603,11 +611,41 @@ pub fn choose_among(prog: &Program, u: &Unit, d: &Decide, candidates: impl Itera
         let v = View { facts: &facts, cand: Some(&c.label), elem: elem.as_deref(), ..View::of(u) };
         if b.filter.iter().all(|f| eval(prog, v, &at, f) == T::Yes) {
             let scores = b.prefer.iter().map(|cr| score(prog, v, &at, cr)).collect::<Vec<_>>();
-            gathered.push((c.label.clone(), scores));
+            gathered.push((c, scores));
         }
     }
     let scores: Vec<Vec<(u8, i128)>> = gathered.iter().map(|(_, s)| s.clone()).collect();
-    pick(&scores).map(|i| (gathered[i].0.clone(), gathered.len()))
+    let mut slots: Vec<Option<Unit>> = gathered.into_iter().map(|(c, _)| Some(c)).collect();
+    order(&scores).into_iter().filter_map(|i| slots[i].take()).collect()
+}
+
+/// The `decide` that handles a binding's choice, if any (appendix J.2.3):
+/// of those that apply, the one that names the choice point, then the one
+/// scoped nearest the choosing part, then the one with a `whose` that holds.
+pub fn handler<'p>(prog: &'p Program, u: &Unit, d: &Decide) -> Option<&'p Decision> {
+    let b = prog.bindings.get(d.binding as usize)?;
+    let (at, _) = decide_place(prog, u, d)?;
+    // The choosing part, its owner, …, the root.
+    let chain: Vec<Vec<usize>> = (0..=at.len()).rev().map(|n| at[..n].to_vec()).collect();
+    let v = View::of(u);
+    prog.decisions
+        .iter()
+        .filter(|x| x.point.as_ref().is_none_or(|p| *p == b.target))
+        .filter_map(|x| {
+            let (near, pos) = match &x.scope {
+                None => (0, vec![]),
+                Some(k) => {
+                    let i = chain.iter().position(|pos| node_at(&u.root, pos).kind == *k)?;
+                    (chain.len() - i, chain[i].clone())
+                }
+            };
+            if x.cond.as_ref().is_some_and(|c| eval(prog, v, &pos, c) != T::Yes) {
+                return None;
+            }
+            Some(((x.point.is_some(), near, x.cond.is_some()), x))
+        })
+        .max_by_key(|(rank, _)| *rank)
+        .map(|(_, x)| x)
 }
 
 /// A candidate's rank on one criterion; lower comes first, and an unknown value last.

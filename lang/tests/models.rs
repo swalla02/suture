@@ -40,7 +40,8 @@ decide Carrier for Orders whose total is at least 1000 EUR with model \"careful@
 decide Carrier for Shipments whose Order is local with prefer
 "
     ));
-    let d: Vec<(Option<&str>, Option<&str>, bool, Option<&str>)> =
+    type Row<'a> = (Option<&'a str>, Option<&'a str>, bool, Option<&'a str>);
+    let d: Vec<Row> =
         p.decisions.iter().map(|d| (d.point.as_deref(), d.scope.as_deref(), d.cond.is_some(), d.model.as_deref())).collect();
     assert_eq!(
         d,

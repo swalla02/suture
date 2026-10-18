@@ -37,6 +37,9 @@ pub enum ScenarioStep {
     Change { by: Caller, target: String, attr: String, value: Literal, refused: Option<Refused> },
     /// `and forms answers filled with licence "L-77" [for O1]`
     Answer { adapter: String, outcome: String, data: Vec<(String, Literal)>, target: Option<String> },
+    /// `when model "carriers@1" picks Hermes[, then DHL]`: the stand-in's
+    /// next picks (appendix J.2.7).
+    Model { model: String, picks: Vec<String> },
     /// `expect O1 is [not] settled`
     Expect { name: String, state: String, negated: bool },
     /// `expect O1's Payment is [not] timed out`: the unit's current part of that kind.
@@ -139,6 +142,21 @@ fn step(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {
             return Err(c.error(format!("expected `pass` after a duration, found {}", c.found())));
         }
         return Ok(ScenarioStep::Pass { secs });
+    }
+    if c.is_word("model") {
+        if let Some(Tok::Str(model)) = c.peek_at(1) {
+            let model = model.clone();
+            c.next();
+            c.next();
+            c.expect_word("picks")?;
+            let mut picks = vec![c.word()?];
+            while c.eat_sym(',') {
+                c.expect_word("then")?;
+                picks.push(c.word()?);
+            }
+            c.expect_end()?;
+            return Ok(ScenarioStep::Model { model, picks });
+        }
     }
     let by = if c.is_word("a") || c.is_word("an") || matches!(c.peek_at(1), Some(Tok::Word(w)) if w == "answers") {
         None

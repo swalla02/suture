@@ -12,6 +12,7 @@ use suture_lang::scenario::Caller;
 
 use crate::interp::{self, duration, holds};
 use crate::kernel::{self, Kinds};
+use crate::choice::{Answer, Choice, Models, Option_};
 use crate::state::{answer_value, send_from_value, stamped, Ask, Decide, Fact, Facts, Msg, Unit, Val};
 
 pub struct Host {
@@ -44,6 +45,8 @@ pub struct Host {
     /// it, and those it granted a binding (appendix G.2.7).
     /// In the order they started reading it.
     readers: BTreeMap<String, Vec<String>>,
+    /// The decision models, by `name@version` (appendix J.2.7).
+    pub models: Models,
 }
 
 /// A binding waiting on its pool key, with its choice's hole.
@@ -90,6 +93,7 @@ impl Host {
             waiters: vec![],
             gate: vec![],
             readers: BTreeMap::new(),
+            models: Models::default(),
         };
         // One unit holds each total `checked globally` (appendix F.2.13).
         for g in h.prog.globals.clone() {
@@ -300,7 +304,7 @@ impl Host {
         };
         let kind = b.target.clone();
         match self.gather(&u, &d, &key) {
-            Some(label) => self.pick(hole, &label, &d),
+            Some((label, how)) => self.pick(hole, &label, &d, &how),
             None => {
                 self.waiters.push(Waiter { hole, decide: d.clone(), kind, key });
                 self.post(&d.label, &Msg::Waiting { key: d.key() })
@@ -308,15 +312,34 @@ impl Host {
         }
     }
 
-    /// The pick among the pool's candidates for this key, if any.
-    fn gather(&self, u: &Unit, d: &Decide, key: &str) -> Option<String> {
-        let b = self.prog.bindings.get(d.binding as usize)?;
-        let labels = self.pools.get(&(b.target.clone(), b.key_attr.clone()))?.get(key)?;
-        let candidates = labels.iter().filter(|l| !d.skip.contains(l)).filter_map(|l| self.unit(l));
-        interp::choose_among(&self.prog, u, d, candidates).map(|(label, _)| label)
+    /// The pick among the pool's candidates for this key, if any, and how it
+    /// was made: by `prefer`, or by the model that handles the choice, which
+    /// may pick only among the options (appendix J.2.4).
+    fn gather(&mut self, u: &Unit, d: &Decide, key: &str) -> Option<(String, String)> {
+        let prog = self.prog.clone();
+        let b = prog.bindings.get(d.binding as usize)?;
+        let labels = self.pools.get(&(b.target.clone(), b.key_attr.clone()))?.get(key)?.clone();
+        let candidates = labels.iter().filter(|l| !d.skip.contains(l)).filter_map(|l| self.unit(l)).collect::<Vec<_>>();
+        let options = interp::options(&prog, u, d, candidates.into_iter());
+        let first = options.first()?.label.clone();
+        let Some(model) = interp::handler(&prog, u, d).and_then(|h| h.model.clone()) else { return Some((first, String::new())) };
+        let names: Vec<&str> = options.iter().map(|o| o.label.as_str()).collect();
+        let choice = Choice {
+            point: b.target.clone(),
+            unit: u.label.clone(),
+            key: d.key(),
+            options: options.iter().map(|o| Option_ { label: o.label.clone(), attrs: o.root.attrs.clone().into_iter().collect() }).collect(),
+        };
+        let how = match self.models.ask(&model, &choice) {
+            Answer::Picked(p) if names.contains(&p.as_str()) => return Some((p, format!(" by model \"{model}\" (of {})", names.join(", ")))),
+            Answer::Picked(p) => format!("model \"{model}\" picked {p}, which it was not offered"),
+            Answer::Declined => format!("model \"{model}\" declined"),
+            Answer::Unknown => format!("model \"{model}\" is not available"),
+        };
+        Some((first, format!(" by prefer ({how})")))
     }
 
-    fn pick(&mut self, hole: HoleId, label: &str, d: &Decide) -> Result<(), String> {
+    fn pick(&mut self, hole: HoleId, label: &str, d: &Decide, how: &str) -> Result<(), String> {
         let sig = self.machine.program().sig.clone();
         let mut b = NetBuilder::new(&sig);
         let meet = b.var();
@@ -324,7 +347,7 @@ impl Host {
         let net = b.finish().map_err(|e| e.to_string())?;
         let inj = Injection::new(net).at_hole(meet, hole).key(format!("pick:{:032x}", hole.0));
         self.machine.inject(inj).map_err(|e| e.to_string())?;
-        self.trace.push(format!("      choice: {label} for {}", d.key()));
+        self.trace.push(format!("      choice: {label} for {}{how}", d.key()));
         Ok(())
     }
 
@@ -347,9 +370,9 @@ impl Host {
             };
             let fresh = Decide { skip: vec![], ..w.decide.clone() };
             match self.gather(&requester, &fresh, &w.key) {
-                Some(pick) => {
+                Some((pick, how)) => {
                     self.waiters.remove(i);
-                    self.pick(w.hole, &pick, &fresh)?;
+                    self.pick(w.hole, &pick, &fresh, &how)?;
                 }
                 None => i += 1,
             }
