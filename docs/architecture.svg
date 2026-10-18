@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760">
+<defs><marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#7b8794"/></marker></defs>
+<rect width="1200" height="760" fill="#ffffff"/>
+<rect x="40" y="24" width="1120" height="76" rx="10" fill="#eef2f7" stroke="#616e7c" stroke-width="1.5"/>
+<text x="600.0" y="56" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="17" font-weight="bold" fill="#1f2933" text-anchor="middle">Infrastructure</text>
+<text x="600.0" y="80" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="normal" fill="#52606d" text-anchor="middle">Terraform provisions it · Kubernetes runs it · your cloud</text>
+<line x1="600.0" y1="100" x2="600.0" y2="148" stroke="#7b8794" stroke-width="2" marker-end="url(#head)"/>
+<text x="610.0" y="129.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">deploys and scales</text>
+<rect x="40" y="150" width="1120" height="300" rx="14" fill="#fff8ec" stroke="#d9822b" stroke-width="3"/>
+<text x="600.0" y="186" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="21" font-weight="bold" fill="#1f2933" text-anchor="middle">Suture: the business logic</text>
+<text x="600.0" y="210" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="normal" fill="#52606d" text-anchor="middle">what has to happen, in which order, under which rules, by whom, until which goal</text>
+<rect x="70" y="240" width="245" height="170" rx="8" fill="#ffffff" stroke="#e0a85a" stroke-width="1.5"/>
+<text x="192.5" y="292" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#1f2933" text-anchor="middle">program (.st)</text>
+<text x="192.5" y="316" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">what exists, what it needs,</text>
+<text x="192.5" y="336" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">rules, goals, who may</text>
+<text x="192.5" y="356" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">do what</text>
+<line x1="317" y1="325.0" x2="346" y2="325.0" stroke="#7b8794" stroke-width="2" marker-end="url(#head)"/>
+<rect x="348" y="240" width="245" height="170" rx="8" fill="#ffffff" stroke="#e0a85a" stroke-width="1.5"/>
+<text x="470.5" y="292" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#1f2933" text-anchor="middle">compiler</text>
+<text x="470.5" y="316" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">read-backs for every rule,</text>
+<text x="470.5" y="336" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">every open choice listed,</text>
+<text x="470.5" y="356" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">everything checked</text>
+<line x1="595" y1="325.0" x2="624" y2="325.0" stroke="#7b8794" stroke-width="2" marker-end="url(#head)"/>
+<rect x="626" y="240" width="245" height="170" rx="8" fill="#ffffff" stroke="#e0a85a" stroke-width="1.5"/>
+<text x="748.5" y="292" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#1f2933" text-anchor="middle">runtime</text>
+<text x="748.5" y="316" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">orders the steps, holds back</text>
+<text x="748.5" y="336" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">what a rule forbids, retries,</text>
+<text x="748.5" y="356" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">gives back, meets deadlines</text>
+<line x1="873" y1="325.0" x2="902" y2="325.0" stroke="#7b8794" stroke-width="2" marker-end="url(#head)"/>
+<rect x="904" y="240" width="245" height="170" rx="8" fill="#ffffff" stroke="#e0a85a" stroke-width="1.5"/>
+<text x="1026.5" y="292" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#1f2933" text-anchor="middle">journal</text>
+<text x="1026.5" y="316" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">every input, answer,</text>
+<text x="1026.5" y="336" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">timer and model pick:</text>
+<text x="1026.5" y="356" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">replayable, explainable</text>
+<rect x="40" y="590" width="356" height="140" rx="10" fill="#f5f7fa" stroke="#9aa5b1" stroke-width="1.5"/>
+<text x="218.0" y="632" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#1f2933" text-anchor="middle">Outside services</text>
+<text x="218.0" y="656" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">databases · caches</text>
+<text x="218.0" y="676" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">secret managers · Prometheus</text>
+<text x="218.0" y="696" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">payment, mail, carrier providers</text>
+<line x1="218.0" y1="452" x2="218.0" y2="588" stroke="#7b8794" stroke-width="2" marker-end="url(#head)"/>
+<text x="232.0" y="515" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2933" text-anchor="start">effect · source</text>
+<text x="232.0" y="535" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">adapters</text>
+<rect x="422" y="590" width="356" height="140" rx="10" fill="#f5f7fa" stroke="#9aa5b1" stroke-width="1.5"/>
+<text x="600.0" y="632" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#1f2933" text-anchor="middle">Decision models</text>
+<text x="600.0" y="656" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">served by vLLM, SGLang,</text>
+<text x="600.0" y="676" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">or a hosted API such as Jev</text>
+<text x="600.0" y="696" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">optional: `prefer` decides without</text>
+<line x1="600.0" y1="452" x2="600.0" y2="588" stroke="#7b8794" stroke-width="2" marker-end="url(#head)"/>
+<text x="614.0" y="515" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2933" text-anchor="start">decide</text>
+<text x="614.0" y="535" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">picks among allowed options</text>
+<rect x="804" y="590" width="356" height="140" rx="10" fill="#f5f7fa" stroke="#9aa5b1" stroke-width="1.5"/>
+<text x="982.0" y="632" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#1f2933" text-anchor="middle">Callers</text>
+<text x="982.0" y="656" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">apps, staff,</text>
+<text x="982.0" y="676" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">other services</text>
+<text x="982.0" y="696" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">admitted by role</text>
+<line x1="982.0" y1="588" x2="982.0" y2="452" stroke="#7b8794" stroke-width="2" marker-end="url(#head)"/>
+<text x="996.0" y="515" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2933" text-anchor="start">admit</text>
+<text x="996.0" y="535" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">inputs</text>
+</svg>

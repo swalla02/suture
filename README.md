@@ -10,29 +10,7 @@ Suture is a v0 prototype: a Rust compiler and runtime, a guide whose every examp
 
 Suture is not infrastructure, and it does not replace your databases or providers. It replaces the code in the middle: the services written to coordinate steps, call providers, retry, compensate, check permissions, keep a state machine per entity and log what happened. Today, that code is most of a backend team's work.
 
-```text
-  ┌────────────────────────────────────────────────────────────────────────────┐
-  │ Infrastructure      Terraform provisions it · Kubernetes runs it           │
-  └────────────────────────────────────────────────────────────────────────────┘
-          │ deploys
-          ▼
-  ┌──────────────────────────────── Suture ────────────────────────────────────┐
-  │   program (.st)           what exists, needs, rules, goals, who may do what │
-  │   compiler                read-backs, every open choice listed, checked     │
-  │   runtime                 orders the steps, holds back what a rule forbids, │
-  │                           retries, gives back, meets deadlines              │
-  │   journal                 every input, answer, timer and pick: replayable   │
-  └──────────┬──────────────────────────┬──────────────────────────┬───────────┘
-             │ adapters                 │ model backends           │ callers
-             ▼                          ▼                          ▼
-  ┌───────────────────────┐  ┌───────────────────────────┐  ┌──────────────────┐
-  │ outside services      │  │ decision models           │  │ apps, staff,     │
-  │ databases · caches    │  │ served by vLLM, SGLang,   │  │ other services   │
-  │ secret managers       │  │ a hosted Jev, …           │  │ (admitted by     │
-  │ payments · mail       │  │ (optional: `prefer` makes │  │  role)           │
-  │ carriers · Prometheus │  │  every choice without)    │  │                  │
-  └───────────────────────┘  └───────────────────────────┘  └──────────────────┘
-```
+![Where Suture fits: infrastructure deploys it; Suture holds the business logic; it reaches outside services through adapters, decision models through `decide`, and takes admitted inputs from callers](docs/architecture.svg)
 
 | Layer | Who does it | What it is responsible for |
 |---|---|---|
