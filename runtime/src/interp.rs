@@ -31,11 +31,14 @@ pub struct View<'a> {
     pub now: Option<i64>,
     /// While a rule is checked: its `with a at most … old` bounds.
     pub bounds: &'a [(String, u64)],
+    /// The version the unit was created under; `None` for a tree being
+    /// built, which is of the current version (appendix M.2.3).
+    pub version: Option<u32>,
 }
 
 impl<'a> View<'a> {
     pub fn of(u: &'a Unit) -> View<'a> {
-        View { root: &u.root, facts: &u.facts, taken: &u.taken, cand: None, elem: None, period: None, caller: None, now: None, bounds: &[] }
+        View { root: &u.root, facts: &u.facts, taken: &u.taken, cand: None, elem: None, period: None, caller: None, now: None, bounds: &[], version: Some(u.version) }
     }
 
     /// The view a step checks its rules with before acting at `now`.
@@ -45,7 +48,7 @@ impl<'a> View<'a> {
 
     /// A tree being built, with its facts and nothing taken yet.
     fn bare(root: &'a Node, facts: &'a Facts) -> View<'a> {
-        View { root, facts, taken: &NO_TOTALS, cand: None, elem: None, period: None, caller: None, now: None, bounds: &[] }
+        View { root, facts, taken: &NO_TOTALS, cand: None, elem: None, period: None, caller: None, now: None, bounds: &[], version: None }
     }
 
     fn with(self, root: &'a Node) -> View<'a> {
@@ -165,6 +168,7 @@ pub fn build_unit(
         timers: vec![],
         facts,
         taken: BTreeMap::new(),
+        version: prog.version,
     };
     Ok(unit)
 }
@@ -225,6 +229,74 @@ fn formulas(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize]) -> boo
         }
     }
     changed
+}
+
+/// A unit carried into a new version (appendix M.2.5): attributes the new
+/// version removes are dropped, added ones take their defaults, and the
+/// goals already met or alerted keep that, by their text. The step then
+/// settles it under the new version.
+fn upgrade(prog: &Program, u: &mut Unit, goals: &[Option<u32>]) {
+    let mut dropped = vec![];
+    for at in positions(&u.root) {
+        let n = node_at_mut(&mut u.root, &at);
+        let Some(k) = prog.kind(&n.kind) else { continue };
+        n.attrs.retain(|a, _| {
+            let keep = k.attr(a).is_some();
+            if !keep {
+                dropped.push(format!("{}'s {a}", k.name));
+            }
+            keep
+        });
+        for a in &k.attrs {
+            if let (false, Some(d)) = (n.attrs.contains_key(&a.name), &a.default) {
+                n.attrs.insert(a.name.clone(), Val::from_lit(d));
+            }
+        }
+    }
+    let map = |v: &[u32]| v.iter().filter_map(|g| goals.get(*g as usize).copied().flatten()).collect::<Vec<u32>>();
+    (u.met, u.matched, u.alerts) = (map(&u.met), map(&u.matched), map(&u.alerts));
+    dropped.dedup();
+    let dropped = if dropped.is_empty() { String::new() } else { format!(", dropped {}", dropped.join(", ")) };
+    u.notes.push(format!("now under version {}{dropped}", prog.version));
+}
+
+/// The breaks a deploy of `prog` would make in this live unit, which was
+/// running under `old` (appendix M.2.4): parts or attributes the new
+/// version cannot carry, then the rules it would break once carried over.
+pub fn upgrade_breaks(old: &Program, prog: &Program, unit: &Unit, goals: &[Option<u32>], now: i64) -> Vec<String> {
+    let mut out = vec![];
+    for at in positions(&unit.root) {
+        let n = node_at(&unit.root, &at);
+        let Some(k) = prog.kind(&n.kind) else {
+            out.push(format!("kind {} is removed", n.kind));
+            continue;
+        };
+        for a in &k.attrs {
+            let was = old.kind(&n.kind).and_then(|o| o.attr(&a.name));
+            match (was, n.attrs.get(&a.name)) {
+                (Some(w), Some(_)) if w.ty != a.ty => out.push(format!("{}'s {} changes from {:?} to {:?}", k.name, a.name, w.ty, a.ty)),
+                (None, None) if a.default.is_none() && !is_answered(prog, &k.name, &a.name) => {
+                    out.push(format!("{}'s {} is added without a default", k.name, a.name))
+                }
+                _ => {}
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    if out.is_empty() {
+        let after = step_at(prog, unit, &Msg::Upgrade { goals: goals.to_vec() }, now).unit;
+        if let Some(r) = violated(prog, &after) {
+            out.push(format!("rule {} would break: {}", r.name, r.paraphrase));
+        }
+    }
+    out
+}
+
+/// Whether an effect's answer or a source sets the attribute, rather than
+/// whoever creates the entity.
+fn is_answered(prog: &Program, kind: &str, attr: &str) -> bool {
+    prog.effect_of(kind).is_some_and(|e| e.data.iter().any(|(n, _)| n == attr)) || prog.source_of(kind, attr).is_some()
 }
 
 fn blank(prog: &Program, kind: &str, attempt: u32, now: i64) -> Node {
@@ -294,6 +366,7 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
             }
         }
         Msg::Due { id } => fetch_due(&mut u, id),
+        Msg::Upgrade { goals } => upgrade(prog, &mut u, goals),
         Msg::Answer { key, outcome, .. } if outcome == TIMED_OUT => {
             if let Err(refusal) = deadline(prog, &mut u, key, &mut out) {
                 return Outcome::kept(unit, refusal.note, Out::default());
@@ -1587,6 +1660,9 @@ fn newly_broken<'p>(prog: &'p Program, before: View, after: &Node) -> Option<&'p
 /// (appendix I.2.4): a filter that might hold applies, an `every` that might
 /// fail fails, and a `no … has` that might be present is present.
 fn broken(prog: &Program, v: View, r: &Rule) -> bool {
+    if !applies_to(r, v.root, v.version) {
+        return false;
+    }
     let strict = v.now.is_some() && !r.sources.is_empty();
     let v = View { bounds: &r.fresh, ..v };
     let may = |t: T| t == T::Yes || (strict && t == T::Unknown);
@@ -1601,6 +1677,16 @@ fn broken(prog: &Program, v: View, r: &Rule) -> bool {
                 Body::No { pred, unless } => may(eval(prog, v, at, pred)) && unless.as_ref().is_none_or(|u| eval(prog, v, at, u) != T::Yes),
             }
     })
+}
+
+/// Whether a rule holds on a unit at all: `apply rule R to Ks created from
+/// version n` leaves out the units of root kind K created before n
+/// (appendix M.2.3).
+pub fn applies_to(r: &Rule, root: &Node, version: Option<u32>) -> bool {
+    match (&r.applies, version) {
+        (Some(a), Some(v)) => root.kind != a.kind || v >= a.from,
+        _ => true,
+    }
 }
 
 /// Three-valued truth. A value not given yet makes a comparison unknown

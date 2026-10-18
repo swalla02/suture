@@ -692,6 +692,89 @@ impl Host {
         self.note(label)
     }
 
+    /// The live units, in the order they were created.
+    pub fn units(&self) -> Vec<Unit> {
+        self.machine.labels().iter().filter_map(|l| self.unit(l)).collect()
+    }
+
+    /// For each goal of the running program, by index, its index in `new`:
+    /// goals are matched by their text (appendix M.2.5).
+    fn goal_map(&self, new: &Program) -> Vec<Option<u32>> {
+        self.prog.goals.iter().map(|g| new.goals.iter().position(|n| n.source == g.source).map(|i| i as u32)).collect()
+    }
+
+    /// The deploy check (appendix M.2.4): every break that `new` would make
+    /// in the live units, each with the units it concerns and how it can be
+    /// resolved. Empty when the deploy can go ahead.
+    pub fn deploy_check(&self, new: &Program) -> Result<Vec<String>, String> {
+        if new.module != self.prog.module {
+            return Err(format!("this is module {}, not {}", new.module, self.prog.module));
+        }
+        if new.version <= self.prog.version {
+            return Err(format!("{} v{} is running, so a deploy needs a higher version than {}", self.prog.module, self.prog.version, new.version));
+        }
+        let goals = self.goal_map(new);
+        let mut breaks: Vec<(String, Vec<String>)> = vec![];
+        for u in self.units() {
+            for b in interp::upgrade_breaks(&self.prog, new, &u, &goals, self.clock()) {
+                match breaks.iter_mut().find(|(x, _)| *x == b) {
+                    Some((_, units)) => units.push(u.label.clone()),
+                    None => breaks.push((b, vec![u.label.clone()])),
+                }
+            }
+        }
+        Ok(breaks
+            .into_iter()
+            .map(|(b, units)| {
+                let shown = if units.len() > 5 { format!("{} and {} more", units[..5].join(", "), units.len() - 5) } else { units.join(", ") };
+                format!("{b}\n    live in {shown}\n    {}", resolution(new, &b, &units, self))
+            })
+            .collect())
+    }
+
+    /// Deploys `new` over the running program, once [`Host::deploy_check`]
+    /// finds nothing: the kernel takes its rules, and every live unit is
+    /// carried over and settles once under it (appendix M.2.5).
+    pub fn deploy(&mut self, new: Program) -> Result<(), String> {
+        let breaks = self.deploy_check(&new)?;
+        if !breaks.is_empty() {
+            return Err(format!("the deploy is refused: {} would break live units:\n  {}", new.version, breaks.join("\n  ")));
+        }
+        let goals = self.goal_map(&new);
+        let labels: Vec<String> = self.units().into_iter().map(|u| u.label).collect();
+        let new = Arc::new(new);
+        let (kernel, kinds) = kernel::program(new.clone());
+        self.machine.upgrade(kernel).map_err(|e| e.to_string())?;
+        let old = std::mem::replace(&mut self.prog, new);
+        self.kinds = kinds;
+        self.goal_timers = std::mem::take(&mut self.goal_timers)
+            .into_iter()
+            .filter_map(|(l, g)| goals.get(g as usize).copied().flatten().map(|g| (l, g)))
+            .collect();
+        self.timers.retain(|_, t| !matches!(t, Timer::Goal(_, g) if goals.get(*g as usize).copied().flatten().is_none()));
+        for t in self.timers.values_mut() {
+            if let Timer::Goal(_, g) = t {
+                *g = goals[*g as usize].expect("kept above");
+            }
+        }
+        self.trace.push(format!("deployed {} v{} over v{}", self.prog.module, self.prog.version, old.version));
+        let msg = Msg::Upgrade { goals };
+        let mut first_error = None;
+        for l in &labels {
+            if let Err(e) = self.tell(l, &msg) {
+                first_error.get_or_insert(e);
+            }
+        }
+        for g in self.prog.globals.clone() {
+            if self.unit(&g).is_none() {
+                if let Err(e) = self.create(&g, &g, &[]) {
+                    first_error.get_or_insert(e);
+                }
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+
     /// A unit's current state, read from the graph.
     pub fn unit(&self, label: &str) -> Option<Unit> {
         let h = self.machine.hole(label)?;
@@ -796,4 +879,25 @@ impl Host {
         }
         Ok(())
     }
+}
+
+/// How a break the deploy check found can be resolved (appendix M.2.4).
+fn resolution(new: &Program, b: &str, units: &[String], host: &Host) -> String {
+    if let Some(rest) = b.strip_prefix("rule ") {
+        let name = rest.split(' ').next().unwrap_or_default();
+        let Some(r) = new.rules.iter().find(|r| r.name == name) else { return String::new() };
+        if r.tier != "local" {
+            return format!("resolve: rule {name} is {}; change it, or the units, so that it holds", r.tier);
+        }
+        let root = units.first().and_then(|l| host.unit(l)).map_or_else(|| r.subject.clone(), |u| u.root.kind);
+        let plural = new.kind(&root).map_or(root.clone(), |k| k.plural.clone());
+        return format!("resolve: `apply rule {name} to {plural} created from version {}`, or change the rule", new.version);
+    }
+    if b.starts_with("kind ") {
+        return "resolve: keep the kind until no live unit has it".into();
+    }
+    if b.contains(" changes from ") {
+        return "resolve: keep the type, and add an attribute of the new type under another name".into();
+    }
+    "resolve: give it a default, as in `cancelled: Bool = no`".into()
 }

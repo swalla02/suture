@@ -45,11 +45,12 @@ pub(crate) fn statement(st: &Stmt, out: &mut Source) -> Result<(), Error> {
         "prefer" => prefer(st, at, out),
         "role" => role(st, at, out),
         "admit" => admit(st, at, out),
+        "apply" => apply(st, at, out),
         w if w.starts_with(char::is_uppercase) && matches!(st.lines[0].get(1), Some(Tok::Word(x)) if x == "is") => slot(st, at, out),
         w if w.starts_with(char::is_uppercase) && matches!(st.lines[0].get(1), Some(Tok::Word(x)) if x == "uses") => uses(st, at, out),
         w if w.starts_with(char::is_uppercase) => needs(st, at, out),
         _ => Err(st.error(format!(
-            "unknown statement `{first}`: expected module, kind, effect, source, decide, rule, define, desired, when, prefer, role, admit, `Kind needs …` or `Slot is …`"
+            "unknown statement `{first}`: expected module, kind, effect, source, decide, rule, define, desired, when, prefer, role, admit, apply, `Kind needs …` or `Slot is …`"
         ))),
     }
 }
@@ -653,6 +654,28 @@ fn decide(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     };
     c.expect_end()?;
     out.decides.push(DecideDecl { point, scope, cond, model, within_ms, source: text(&toks), at });
+    Ok(())
+}
+
+/// `apply rule early to Bookings created from version 2` (appendix M.2.3).
+fn apply(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
+    let toks = st.tokens();
+    let mut c = Cursor::new(&toks, &st.file, st.line);
+    c.expect_word("apply")?;
+    c.expect_word("rule")?;
+    let rule = c.word()?;
+    c.expect_word("to")?;
+    let plural = c.word()?;
+    c.expect_word("created")?;
+    c.expect_word("from")?;
+    c.expect_word("version")?;
+    let from = match c.peek() {
+        Some(Tok::Num(n)) => n.parse::<u32>().map_err(|_| c.error(format!("`{n}` is not a version number")))?,
+        _ => return Err(c.error(format!("expected a version number, as in `created from version 2`, found {}", c.found()))),
+    };
+    c.next();
+    c.expect_end()?;
+    out.applies.push(ApplyDecl { rule, plural, from, source: text(&toks), at });
     Ok(())
 }
 

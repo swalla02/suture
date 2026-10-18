@@ -461,6 +461,8 @@ pub struct Unit {
     pub facts: Facts,
     /// The running totals of what other units took from it, by name (appendix F.2.8).
     pub taken: BTreeMap<String, Val>,
+    /// The version of the program it was created under (appendix M.2.2).
+    pub version: u32,
 }
 
 impl Unit {
@@ -475,11 +477,12 @@ impl Unit {
             Value::list(self.timers.iter().map(|(id, secs)| Value::tuple([text(id), Value::from(*secs as i64)]))),
             facts_value(&self.facts),
             attrs_value(&self.taken),
+            Value::from(i64::from(self.version)),
         ])
     }
 
     pub fn from_value(v: &Value) -> Result<Unit, String> {
-        let [label, root, notes, met, matched, alerts, timers, facts, taken] = fields::<9>(v, "unit")?;
+        let [label, root, notes, met, matched, alerts, timers, facts, taken, version] = fields::<10>(v, "unit")?;
         let mut wanted = vec![];
         for t in items(timers)? {
             let [id, secs] = fields::<2>(t, "timer")?;
@@ -495,6 +498,7 @@ impl Unit {
             timers: wanted,
             facts: facts_from(facts)?,
             taken: attrs_from(taken)?,
+            version: u32::try_from(int(version)?).map_err(|e| e.to_string())?,
         })
     }
 }
@@ -531,6 +535,9 @@ pub enum Msg {
     /// A source's timer: a value's `good for` ran out, or a failed fetch
     /// may ask again (appendix I.2.5–I.2.6).
     Due { id: String },
+    /// The program was deployed in a new version: for each old goal, by
+    /// index, its index in the new one, if it is still there (appendix M.2.5).
+    Upgrade { goals: Vec<Option<u32>> },
 }
 
 impl Msg {
@@ -553,6 +560,7 @@ impl Msg {
             Msg::Change { attr, value, by } => Value::tuple([Value::from(10i64), pairs_value(&[(attr.clone(), value.clone())]), text(by)]),
             Msg::Refresh { facts } => Value::tuple([Value::from(11i64), facts_value(facts)]),
             Msg::Due { id } => Value::tuple([Value::from(12i64), text(id)]),
+            Msg::Upgrade { goals } => Value::tuple([Value::from(13i64), Value::list(goals.iter().map(|g| Value::from(g.map_or(-1, i64::from))))]),
         }
     }
 
@@ -609,6 +617,11 @@ impl Msg {
             Some(Ok(12)) => {
                 let [_, id] = fields::<2>(v, "due message")?;
                 Ok(Msg::Due { id: string(id)? })
+            }
+            Some(Ok(13)) => {
+                let [_, goals] = fields::<2>(v, "upgrade message")?;
+                let goals = items(goals)?.iter().map(|g| int(g).map(|i| u32::try_from(i).ok())).collect::<Result<_, _>>()?;
+                Ok(Msg::Upgrade { goals })
             }
             _ => Err(format!("not a message: {v}")),
         }
@@ -837,6 +850,7 @@ mod tests {
                 Fact { kind: "Country".into(), created: 0, attrs: BTreeMap::from([("countries".to_string(), Val::Set(vec!["A".into(), "B".into()]))]) },
             )]),
             taken: BTreeMap::from([("quantity".to_string(), Val::Count(3))]),
+            version: 2,
         }
     }
 

@@ -712,7 +712,42 @@ impl Checker {
                 p.rules[i].tier = format!("per-group (watches {})", w.join(", "));
             }
         }
+        // After the tiers are known: only a local rule can apply from a version.
+        self.applies(src, &mut p);
         p
+    }
+
+    /// `apply rule R to Ks created from version n` (appendix M.2.3).
+    fn applies(&mut self, src: &Source, p: &mut Program) {
+        for a in &src.applies {
+            let Some(i) = p.rules.iter().position(|r| r.name == a.rule) else {
+                self.errors.push(err(&a.at, format!("there is no rule {}", a.rule)));
+                continue;
+            };
+            let Some(kind) = p.kinds.iter().find(|k| k.plural == a.plural).map(|k| k.name.clone()) else {
+                self.errors.push(err(&a.at, format!("`{}` is not the plural of a kind", a.plural)));
+                continue;
+            };
+            let r = &p.rules[i];
+            if r.applies.is_some() {
+                self.errors.push(err(&a.at, format!("rule {} already applies from a version", r.name)));
+                continue;
+            }
+            if r.tier != "local" {
+                self.errors.push(err(&a.at, format!("rule {} is {}, and only a rule about one entity at a time (local) can apply from a version", r.name, r.tier)));
+                continue;
+            }
+            let chain = p.owner_chain(&r.subject);
+            if !chain.contains(&kind) || p.kind(&kind).is_some_and(|k| k.owner.is_some()) {
+                self.errors.push(err(&a.at, format!("rule {} is about {}; it can apply to the {} that hold them, not to {}", r.name, plural_name(p, &r.subject), plural_name(p, chain.last().expect("not empty")), a.plural)));
+                continue;
+            }
+            if a.from == 0 || a.from > p.version {
+                self.errors.push(err(&a.at, format!("version {} is not from 1 to this module's version, {}", a.from, p.version)));
+                continue;
+            }
+            p.rules[i].applies = Some(crate::ir::Applies { kind, from: a.from, source: a.source.clone() });
+        }
     }
 
     fn kinds(&mut self, src: &Source, p: &mut Program) {
@@ -1544,6 +1579,7 @@ impl Checker {
                 fixed: false,
                 sources: vec![],
                 fresh: r.fresh.clone(),
+                applies: None,
             };
             rule.formula = readback::formula(p, &rule);
             rule.paraphrase = readback::paraphrase(p, &rule);
@@ -2324,4 +2360,8 @@ impl Checker {
         self.errors.push(err(at, format!("{} has no state `{s}`; its states are {}", a(kind), states.join(", "))));
         None
     }
+}
+
+fn plural_name(p: &Program, kind: &str) -> String {
+    p.kind(kind).map_or_else(|| plural_of(kind), |k| k.plural.clone())
 }

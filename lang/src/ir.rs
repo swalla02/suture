@@ -355,6 +355,17 @@ pub struct Rule {
     pub sources: Vec<(String, String)>,
     /// `with credit at most 1 hour old`: the oldest value it accepts, in seconds.
     pub fresh: Vec<(String, u64)>,
+    /// `apply rule … to Ks created from version n`: the rule holds only on
+    /// units of root kind K created under version n or later (appendix M.2.3).
+    #[serde(default)]
+    pub applies: Option<Applies>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Applies {
+    pub kind: String,
+    pub from: u32,
+    pub source: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -46,6 +46,8 @@ pub enum Record {
     Answer { adapter: String, outcome: String, key: Option<String>, target: Option<String>, data: Vec<(String, Val)> },
     /// A model's answer to the choice with this key, given while the input before it applied.
     Model { key: String, answer: Answer },
+    /// The program was deployed in this version, kept as `program-v⟨n⟩.json` (appendix M.2.6).
+    Deploy { version: u32 },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -106,6 +108,23 @@ pub struct Service {
     /// Why the log could not be written: from then on, every input is
     /// refused, since the log no longer holds what memory does.
     broken: Option<String>,
+    /// The state directory, where each version's program is kept.
+    state: Option<PathBuf>,
+    /// The programs deployed by this process, by version.
+    programs: BTreeMap<u32, Program>,
+    /// The trace of the deploy `open` made, if it made one.
+    pub deployed: Vec<String>,
+}
+
+/// What `suture deploy` finds (appendix M.2.7).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Check {
+    /// Nothing to deploy: the state already runs this program.
+    Same,
+    /// The deploy would go ahead, with these trace lines.
+    Deploys(Vec<String>),
+    /// The deploy would be refused, for these breaks.
+    Refused(Vec<String>),
 }
 
 /// How long a failed post waits before it is tried again, in seconds.
@@ -129,7 +148,82 @@ impl Service {
             posted: BTreeSet::new(),
             retry: BTreeMap::new(),
             broken: None,
+            state: None,
+            programs: BTreeMap::new(),
+            deployed: vec![],
         }
+    }
+
+    /// The file a version's program is kept in: the first version's is
+    /// `program.json`, each deployed one's `program-v⟨n⟩.json`.
+    fn program_file(state: &Path, version: u32, first: bool) -> PathBuf {
+        if first { state.join("program.json") } else { state.join(format!("program-v{version}.json")) }
+    }
+
+    /// Replays an existing state directory into memory, under the programs
+    /// it ran (appendix M.2.6); `cut` cuts off a last line a crash left short.
+    fn load(state: &Path, now: u64, setup: impl FnOnce(&mut Host), cut: bool) -> Result<Service, String> {
+        let shown = |p: &Path| p.display().to_string();
+        let first = Self::program_file(state, 0, true);
+        let prog: Program = std::fs::read_to_string(&first)
+            .map_err(|e| format!("{}: {e}", shown(&first)))
+            .and_then(|t| serde_json::from_str(&t).map_err(|e| format!("{}: {e}", shown(&first))))?;
+        let mut svc = Service::in_memory(&prog, now);
+        svc.state = Some(state.to_path_buf());
+        setup(&mut svc.host);
+        svc.replay(&state.join("log.jsonl"), cut)?;
+        Ok(svc)
+    }
+
+    /// How `prog` compares with what the state runs: `Ok(true)` if it is the
+    /// same, `Ok(false)` if it is a later version, an error otherwise.
+    fn newer(&self, prog: &Program) -> Result<bool, String> {
+        let running = &self.host.prog;
+        let same = serde_json::to_value(&**running).map_err(|e| e.to_string())? == serde_json::to_value(prog).map_err(|e| e.to_string())?;
+        if same {
+            return Ok(true);
+        }
+        if prog.module != running.module {
+            return Err(format!("the state runs module {}, not {}", running.module, prog.module));
+        }
+        if prog.version == running.version {
+            return Err(format!("the state runs {} v{}, and this program differs under the same version; give it a new version to deploy it", running.module, running.version));
+        }
+        if prog.version < running.version {
+            return Err(format!("the state runs {} v{}; going back to v{} is not supported", running.module, running.version, prog.version));
+        }
+        Ok(false)
+    }
+
+    /// The deploy check of `prog` against the live state in `state`, which
+    /// is read and never written (appendix M.2.7).
+    pub fn check(prog: &Program, state: &Path, now: u64) -> Result<Check, String> {
+        let mut svc = Self::load(state, now, |_| {}, false)?;
+        if svc.newer(prog)? {
+            return Ok(Check::Same);
+        }
+        let breaks = svc.host.deploy_check(prog)?;
+        if !breaks.is_empty() {
+            return Ok(Check::Refused(breaks));
+        }
+        let from = svc.host.trace.len();
+        svc.deploy(prog, now)?;
+        Ok(Check::Deploys(svc.host.trace[from..].to_vec()))
+    }
+
+    /// Deploys `prog` over the running program at Unix time `now`: its file
+    /// is kept, then the deploy applies and is logged (appendix M.2.6).
+    fn deploy(&mut self, prog: &Program, now: u64) -> Result<Applied, String> {
+        let breaks = self.host.deploy_check(prog)?;
+        if !breaks.is_empty() {
+            return Err(format!("the deploy of {} v{} is refused; these breaks need a resolution:\n  {}", prog.module, prog.version, breaks.join("\n  ")));
+        }
+        if let (Some(state), Some(_)) = (&self.state, &self.log) {
+            let path = Self::program_file(state, prog.version, false);
+            synced(&path, &serde_json::to_string(prog).map_err(|e| e.to_string())?).map_err(|e| format!("{}: {e}", path.display()))?;
+        }
+        self.programs.insert(prog.version, prog.clone());
+        self.input(Record::Deploy { version: prog.version }, now)
     }
 
     /// Opens the state directory: a new one starts its log at `now`; one with a
@@ -139,23 +233,19 @@ impl Service {
         std::fs::create_dir_all(state).map_err(|e| format!("{}: {e}", shown(state)))?;
         let (prog_path, log_path) = (state.join("program.json"), state.join("log.jsonl"));
         let compiled = serde_json::to_value(prog).map_err(|e| e.to_string())?;
-        let mut svc = Service::in_memory(prog, now);
-        setup(&mut svc.host);
         if log_path.exists() {
-            let old: Value = std::fs::read_to_string(&prog_path)
-                .map_err(|e| format!("{}: {e}", shown(&prog_path)))
-                .and_then(|t| serde_json::from_str(&t).map_err(|e| format!("{}: {e}", shown(&prog_path))))?;
-            if old != compiled {
-                let was = |k: &str| old.get(k).map(Value::to_string).unwrap_or_default();
-                return Err(format!(
-                    "{}: the log was written under {} v{}, and this program differs; a deploy with live units waits for versioning, so start with a fresh state directory",
-                    shown(state),
-                    was("module").trim_matches('"'),
-                    was("version")
-                ));
+            let mut svc = Self::load(state, now, setup, true)?;
+            let same = svc.newer(prog).map_err(|e| format!("{}: {e}", shown(state)))?;
+            svc.log = Some(OpenOptions::new().append(true).open(&log_path).map_err(|e| format!("{}: {e}", shown(&log_path)))?);
+            if !same {
+                svc.deployed = svc.deploy(prog, now).map_err(|e| format!("{}: {e}", shown(state)))?.trace;
             }
-            svc.replay(&log_path)?;
-        } else {
+            return Ok(svc);
+        }
+        let mut svc = Service::in_memory(prog, now);
+        svc.state = Some(state.to_path_buf());
+        setup(&mut svc.host);
+        {
             // The program first, then the log, each synced, then the directory:
             // a log is never there without the program it was written under.
             synced(&prog_path, &serde_json::to_string(&compiled).map_err(|e| e.to_string())?).map_err(|e| format!("{}: {e}", shown(&prog_path)))?;
@@ -167,7 +257,7 @@ impl Service {
         Ok(svc)
     }
 
-    fn replay(&mut self, path: &Path) -> Result<(), String> {
+    fn replay(&mut self, path: &Path, cut: bool) -> Result<(), String> {
         let at = |n: usize| format!("{}:{}", path.display(), n + 1);
         let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
         // Each record ends with a newline. Whatever follows the last one was
@@ -192,7 +282,7 @@ impl Service {
             lines.pop();
             good = lines.last().map_or(0, |l| l.2);
         }
-        if good < bytes.len() {
+        if good < bytes.len() && cut {
             let f = OpenOptions::new().write(true).open(path).map_err(|e| format!("{}: {e}", path.display()))?;
             f.set_len(good as u64).and_then(|_| f.sync_all()).map_err(|e| format!("{}: {e}", path.display()))?;
         }
@@ -215,7 +305,13 @@ impl Service {
                 _ => unreachable!(),
             }).collect();
             let skip = self.host.replay.len();
-            let _ = self.apply(&records[i]);
+            let applied = self.apply(&records[i]);
+            if let Record::Deploy { version } = &records[i] {
+                // A deploy that cannot be made again would replay the rest under the wrong program.
+                if self.host.prog.version != *version {
+                    return Err(format!("{}: the deploy of v{version} cannot be made again: {}", path.display(), applied.err().unwrap_or_default()));
+                }
+            }
             if !self.host.replay.is_empty() {
                 self.host.trace.push(format!("replay: {} model answers in the log were not asked for again", self.host.replay.len()));
             }
@@ -308,6 +404,18 @@ impl Service {
             Record::Answer { adapter, outcome, key: Some(key), data, .. } => h.answer_key(adapter, outcome, data, key),
             Record::Answer { adapter, outcome, target, data, .. } => h.answer(adapter, outcome, data, target.as_deref()),
             Record::Model { .. } => Ok(()),
+            Record::Deploy { version } => {
+                let prog = match self.programs.get(version) {
+                    Some(p) => p.clone(),
+                    None => {
+                        let state = self.state.as_ref().ok_or("a deploy needs the state directory")?;
+                        let path = Self::program_file(state, *version, false);
+                        let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+                        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?
+                    }
+                };
+                self.host.deploy(prog)
+            }
         }
     }
 

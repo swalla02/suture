@@ -109,6 +109,13 @@ impl Graph {
         self.labels.get(label).copied()
     }
 
+    /// Every label, in the order its hole was created.
+    pub fn labels(&self) -> Vec<(HoleId, &str)> {
+        let mut v: Vec<_> = self.labels.iter().map(|(l, h)| (*h, l.as_str())).collect();
+        v.sort();
+        v
+    }
+
     /// The endpoint `e` is wired to, if `e` exists.
     pub fn peer(&self, e: Endpoint) -> Option<Endpoint> {
         match e {

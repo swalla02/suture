@@ -29,7 +29,17 @@ pub fn mini() -> Mini {
 /// `add_s_variant` 1 builds the result with an extra (wrong) successor, to
 /// simulate rule code that changed; `add_s_version` sets the rule version.
 pub fn mini_with(add_s_variant: u8, add_s_version: u32) -> Mini {
-    let mut b = SigBuilder::new("mini", 1);
+    mini_full(add_s_variant, add_s_version, 1)
+}
+
+/// `mini` as program version `version`.
+#[allow(dead_code)]
+pub fn mini_v(version: u32) -> Mini {
+    mini_full(0, 1, version)
+}
+
+fn mini_full(add_s_variant: u8, add_s_version: u32, version: u32) -> Mini {
+    let mut b = SigBuilder::new("mini", version);
     let nat = b.polarized("Nat");
     let ping = b.polarized("Ping");
     let ans = b.polarized("Ans");

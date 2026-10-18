@@ -118,7 +118,7 @@ fn a_log_written_under_another_program_is_refused() {
     let mut q = p.clone();
     q.rules.pop();
     let e = Service::open(&q, &dir, T0, |_| {}).err().unwrap();
-    assert!(e.ends_with("the log was written under tickets v1, and this program differs; a deploy with live units waits for versioning, so start with a fresh state directory"), "{e}");
+    assert!(e.ends_with("the state runs tickets v1, and this program differs under the same version; give it a new version to deploy it"), "{e}");
 }
 
 #[test]

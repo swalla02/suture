@@ -254,7 +254,13 @@ pub enum RecoveryError {
     MissingPair { step: usize },
     #[error("replaying an inject failed: {0}")]
     Inject(String),
+    #[error("journal upgrade failed: {0}")]
+    Upgrade(String),
 }
+
+#[derive(Debug, thiserror::Error)]
+#[error("cannot upgrade: {0}")]
+pub struct UpgradeError(pub String);
 
 #[cfg(test)]
 mod tests {

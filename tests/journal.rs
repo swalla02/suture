@@ -355,3 +355,27 @@ fn a_journal_from_a_newer_format_is_refused_not_modified() {
     assert!(matches!(FileJournal::open(&path), Err(JournalError::Format(_))));
     assert_eq!(std::fs::read_to_string(&path).unwrap(), text, "a newer journal's tail is not ours to repair");
 }
+
+#[test]
+fn an_upgrade_is_journaled_and_replays_with_the_later_program() {
+    let (m1, m2) = (mini(), mini_v(2));
+    let mut m = Machine::new(m1.prog.clone());
+    m.inject(sum(&m1, 2, 3, "a")).unwrap();
+    m.run(Some(1));
+    m.upgrade(m2.prog.clone()).unwrap();
+    m.run(None);
+    m.commit().unwrap();
+    let d = m.digest();
+    assert_eq!(m.program().version(), 2);
+    assert!(m.upgrade(mini_v(2).prog).unwrap_err().to_string().contains("version 2 is not after 2"));
+    let j = m.into_journal();
+    let records = j.durable().unwrap();
+    assert_eq!(records.iter().filter(|r| matches!(r, Record::Version { .. })).count(), 2);
+    let r = Machine::recover_with(m1.prog.clone(), vec![m2.prog.clone()], j).unwrap();
+    assert_eq!((r.digest(), r.program().version()), (d, 2));
+    let mut m = Machine::new(m1.prog.clone());
+    m.upgrade(m2.prog.clone()).unwrap();
+    m.commit().unwrap();
+    let err = Machine::recover(m1.prog.clone(), m.into_journal()).err().expect("v2 was not given");
+    assert!(matches!(err, RecoveryError::Version { .. }), "{err}");
+}

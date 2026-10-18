@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::check::{check_inject_static, check_patch, NetError, PatchSpec};
 use crate::graph::{Agent, Cause, Endpoint, Graph, GraphError, Hole, HoleOrigin};
 use crate::id::{AgentId, Digest, DigestBuilder, HoleId};
-use crate::journal::{Journal, JournalError, MemJournal, RecBind, Record, RecoveryError, FORMAT};
+use crate::journal::{Journal, JournalError, MemJournal, RecBind, Record, RecoveryError, UpgradeError, FORMAT};
 use crate::net::{resolve, Bind, End, ExtKind, HoleRef, Injection, NetData, Slot, Var};
 use crate::policy::{PatchView, Policy};
 use crate::rng::Rng;
@@ -341,6 +341,32 @@ impl Machine {
 
     pub fn hole(&self, label: &str) -> Option<HoleId> {
         self.graph.hole_by_label(label)
+    }
+
+    /// Every hole label, in the order the holes were created.
+    pub fn labels(&self) -> Vec<String> {
+        self.graph.labels().into_iter().map(|(_, l)| l.to_string()).collect()
+    }
+
+    /// Replaces the program with a later version of it: the same name, a
+    /// higher version and the same kinds, so the graph stays well formed.
+    /// Its rules apply from the next reduction on; the journal records the
+    /// change as a `Version` record, and `recover_with` replays across it.
+    pub fn upgrade(&mut self, prog: Program) -> Result<(), UpgradeError> {
+        if prog.name() != self.prog.name() {
+            return Err(UpgradeError(format!("{} is not {}", prog.name(), self.prog.name())));
+        }
+        if prog.version() <= self.prog.version() {
+            return Err(UpgradeError(format!("version {} is not after {}", prog.version(), self.prog.version())));
+        }
+        let kinds = |p: &Program| p.sig.kinds().map(|(_, d)| format!("{d:?}")).collect::<Vec<_>>();
+        if kinds(&prog) != kinds(&self.prog) {
+            return Err(UpgradeError("the kinds differ".into()));
+        }
+        self.prog = prog;
+        let (program, version, hash) = (self.prog.name().to_string(), self.prog.version(), self.prog.fingerprint());
+        self.record(Record::Version { program, version, hash });
+        Ok(())
     }
 
     /// The agent attached to hole `h` and the port it is attached by.
@@ -833,7 +859,14 @@ impl Machine {
     /// appending to it. Deterministic reductions are re-run and must
     /// reproduce their recorded digest; recorded (opaque) reductions apply
     /// the journaled patch without re-running the rule.
-    pub fn recover(prog: Program, mut journal: Box<dyn Journal>) -> Result<Machine, RecoveryError> {
+    pub fn recover(prog: Program, journal: Box<dyn Journal>) -> Result<Machine, RecoveryError> {
+        Self::recover_with(prog, vec![], journal)
+    }
+
+    /// [`Machine::recover`] for a journal that upgrades: `later` holds the
+    /// programs it upgrades to, and each `Version` record after the first
+    /// switches to the one it names.
+    pub fn recover_with(prog: Program, mut later: Vec<Program>, mut journal: Box<dyn Journal>) -> Result<Machine, RecoveryError> {
         journal.crash(); // only committed records survive recovery
         let records = journal.durable()?;
         let mut m = Self::fresh(prog, journal);
@@ -874,7 +907,14 @@ impl Machine {
                     let f = Fault { left: *left, right: *right, rule: rule.clone(), error: error.clone() };
                     m.faults.insert(norm(*left, *right), f);
                 }
-                Record::Version { program, version, hash } => m.check_version(program, *version, *hash)?,
+                Record::Version { program, version, hash } => {
+                    if let Err(e) = m.check_version(program, *version, *hash) {
+                        // A program it upgrades to, if given; otherwise the mismatch stands.
+                        let i = later.iter().position(|p| p.name() == program && p.version() == *version && p.fingerprint() == *hash).ok_or(e)?;
+                        let p = later.remove(i);
+                        m.upgrade(p).map_err(|e| RecoveryError::Upgrade(e.to_string()))?;
+                    }
+                }
                 Record::Commit | Record::Header { .. } => {}
             }
         }

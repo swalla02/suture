@@ -338,6 +338,17 @@ pub struct DecideDecl {
     pub at: Loc,
 }
 
+/// `apply rule early to Bookings created from version 2` (appendix M.2.3).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApplyDecl {
+    pub rule: String,
+    /// The plural, as written.
+    pub plural: String,
+    pub from: u32,
+    pub source: String,
+    pub at: Loc,
+}
+
 /// Everything parsed from a module's files.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Source {
@@ -356,4 +367,5 @@ pub struct Source {
     pub uses: Vec<UsesDecl>,
     pub roles: Vec<RoleDecl>,
     pub admits: Vec<AdmitDecl>,
+    pub applies: Vec<ApplyDecl>,
 }
