@@ -1091,3 +1091,58 @@ Slice 7 makes mistakes cheap to fix. Until now an error said where parsing stopp
 - The §3.5 example gives exactly the error shown there.
 - Golden tests (§7.5): a file of wrong sentences, each with its expected message, checked word for word.
 - No suggestion that is shown fails to compile, and a file with several bad statements reports all of them.
+
+## Appendix I. Prototype slice 8: sourcing (2026-10-18)
+
+Slice 8 lets a decision depend on facts that live outside the system. Until now every fact was given at creation, carried from a shared entity, or reported by an effect's answer. Slice 8 adds **sourced** attributes. Each one says where its value comes from, how long a value is trusted, and what to do when a fresh value cannot be had. The compiler knows exactly which rules read which sourced facts. The runtime fetches a fact only when a step held back by such a rule needs it.
+
+```text
+kind Order { customer: Customer, total: Money, credit: Money, cancelled: Bool = no }
+
+source Order's credit via bureau within 2 seconds
+  sends      the customer's name
+  reports    found | fails with unknown
+  good for   1 day
+  otherwise  use 0 EUR
+
+rule credit: no Order has a Payment that is sent unless its total is at most its credit,
+             with credit at most 1 hour old
+```
+
+### I.1 What slice 8 adds
+
+| Added in slice 8 | Still waits |
+|---|---|
+| `source K's a via ⟨adapter⟩ within ⟨duration⟩` with `sends`, `reports ⟨found⟩ [| fails with …]`, optional `good for ⟨duration⟩` and `otherwise …` | sourced attributes of shared entities (referenced, or a `uses` target) |
+| per rule: `…, with a at most ⟨duration⟩ old[ and b at most …]` | one source for several attributes; several sources for one attribute |
+| recovery: `otherwise use ⟨literal⟩`, `otherwise ask again after ⟨duration⟩`, `otherwise ⟨action⟩[ and ⟨action⟩]` | `decide sources … with model` (I.3) |
+| strict checking of the rules that read sourced facts | fetching ahead of need |
+| scenarios: `when ⟨adapter⟩ answers found with a ⟨value⟩` | |
+| `suture build` lists every source and the rules that read it; `explain` shows each sourced value's age | |
+
+### I.2 Semantics that slice 8 settles
+
+1. **A sourced attribute** is declared in its kind like any other (`credit: Money`) and named by one `source` statement. It has no default and no formula. It is never given at creation, changed by an `admit change` or set by a reaction: only its source sets it. Its kind must not be shared (referenced by another kind, or the target of a `uses`) in this slice. All of these are compile errors.
+2. **The source** is a request like an effect's: `sends` says what the adapter receives, `within` is the deadline, and requests are re-sent with the same key up to the module's `attempts` (C.3.3). The success answer carries the value as data named after the attribute, of its type (`found with credit 500 EUR`). Failure outcomes and time-outs are failures. The key is the node's key, the attribute and the fetch's number (`O1~credit#2`), so each fetch is answered once and a late answer is ignored.
+3. **Fresh.** A value is fresh while its age is within its `good for` (no `good for`: for ever) and, when a rule reads it, within that rule's `with a at most ⟨duration⟩ old`. A rule's bound only narrows; it never stretches `good for`. Freshness is read only when a step checks a rule before acting; observers (`while`, goals, `explain`, scenario checks) read the last value.
+4. **Strict rules.** A rule that reads a sourced attribute, directly or through a definition, is strict. When it guards an action (creating, finishing or requesting a part), a value that is unknown, or not fresh for the rule, counts against the action: a filter that might hold applies, an `every` that might fail is broken, and a `no … has` that might be present is present. So no step ever acts on a fact it cannot confirm. Answers, deadlines, events and changes are facts and are checked as before (B.3.4), with the last values.
+5. **When to fetch.** In each step, every part that waits on a strict rule fetches each sourced value the rule reads that is not fresh for it and has no open fetch. Nothing is fetched for a rule that holds nothing back. When a value's `good for` runs out, the unit gets a timer step, so a part that still waits fetches again. The trace says why: `credit: asking bureau` or `credit: older than 1 hour for rule credit: asking bureau again`.
+6. **Recovery.** A fetch fails after a failure outcome or after its last send times out. Then:
+   - `otherwise use ⟨literal⟩` sets the value as if fetched now, marked as a fallback in `explain`;
+   - `otherwise ask again after ⟨duration⟩` waits that long, then fetches again if a part still waits;
+   - `otherwise ⟨action⟩[ and ⟨action⟩]` applies reaction actions at the sourced node (`it is cancelled`, `its Order is held`). The cascade follows from the needs: a `while` that no longer holds withdraws every unfinished part and gives back what it took, and new needs may start;
+   - with no `otherwise`, the value stays unknown and the fetch stays failed: every step its rules guard waits, and a goal's alert says `because credit could not be sourced from bureau`.
+7. **Deterministic.** Fetches, answers, time-outs and recovery are journaled steps, so a scenario's journal replays to the same state. A sourced value never changes while nothing happens; only its freshness does, and freshness only holds steps back.
+8. **Read-backs.** A strict rule's read-back adds `sources: credit from bureau, at most 1 hour old`. `suture build` adds a `sourcing:` section listing each source with its adapter, what it sends, how long values are trusted, the recovery, and the rules that read it.
+
+### I.3 Models for sourcing and choices (next slice)
+
+The compiler lists every open choice; a model may only pick among those options (D4). The sourcing choices are which source to ask when several are declared, whether to fetch ahead of need, and whether a still-fresh value is reused. A model never adds a source, skips a fact a rule reads, or stretches a lifespan; enactment re-checks every pick.
+
+Models are named per choice point: `decide ⟨choice point⟩ [for a K | whose …] with model "name@version"`. A choice point is a slot, a `uses` binding, or a source. A scope narrows it by a condition on the entity, or by a module file. The most specific scope wins, an overlap where neither is more specific is a compile error, `prefer` is the fallback when no `decide` applies or the model does not answer in time, and `suture build` lists the handler of every choice point. The model is pinned in the manifest, and every pick is journaled with the options it had.
+
+### I.4 Acceptance
+
+- Each row of I.1 has small programs that use it, and programs that misuse it get errors with file and line.
+- **A credit check:** an order fetches its customer's credit before its payment goes out; a low credit holds the payment; a stale credit is fetched again when an approval comes late; a bureau that fails falls back to 0 EUR, which holds a large order; `otherwise it is cancelled` withdraws the shipment and gives back its stock; `otherwise ask again after 1 hour` recovers.
+- No step acts on a sourced fact that is not fresh for its rule, and every scenario replays to the same state.
