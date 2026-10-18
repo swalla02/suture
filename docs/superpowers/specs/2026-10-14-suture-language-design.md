@@ -1341,3 +1341,5 @@ D13 asks for least authority: an adapter sees only the fields its effect declare
 - A secret given at creation reaches the granted adapter, and appears nowhere else: not in the unit, the log, the trace or the explanation. A restart reads it back from `secrets.json`.
 - A personal value is masked in the trace and explanations, and sent to its granted adapter.
 - `suture build` prints and writes the manifest.
+
+**N.2.8 Review updates.** An answer with no pending request (late or stray) is sealed by attribute name, so the log never holds a secret it carries. A deploy that adds or removes a `secret` mark on an attribute live units hold is a break (appendix M.2.2).

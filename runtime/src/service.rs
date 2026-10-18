@@ -480,8 +480,20 @@ impl Service {
                 let ask = h.pending().into_iter().find(|a| {
                     a.adapter == adapter && key.as_ref().map_or_else(|| target.as_ref().is_none_or(|t| *t == a.label), |k| *k == a.key)
                 });
-                let kind = ask.map(|a| a.kind.clone()).unwrap_or_default();
-                let data = h.seal(&kind, data)?;
+                // Without a pending request (a late or a stray answer), each
+                // value is sealed if any kind marks an attribute of its name
+                // secret, so the log never holds it (appendix N.2.4).
+                let data = match ask.map(|a| a.kind.clone()) {
+                    Some(kind) => h.seal(&kind, data)?,
+                    None => {
+                        let mut out = vec![];
+                        for (a, v) in data {
+                            let kind = h.prog.kinds.iter().find(|k| k.attr(&a).is_some_and(|x| x.mark == Some(suture_lang::ir::Mark::Secret))).map(|k| k.name.clone());
+                            out.extend(h.seal(&kind.unwrap_or_default(), vec![(a, v)])?);
+                        }
+                        out
+                    }
+                };
                 Record::Answer { adapter, outcome, key, target, data }
             }
             r => r,

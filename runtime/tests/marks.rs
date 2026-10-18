@@ -16,14 +16,14 @@ role customer is a Customer
 
 kind Customer { name: Text, address: Text personal }
 kind Order    { customer: Customer, card: Text secret, total: Money }
-kind Payment  { order: Order, amount: Money = order's total }
+kind Payment  { order: Order, amount: Money = order's total, receipt: Text secret }
 kind Shipment { order: Order }
 
 Order needs Payment, Shipment
 
 effect charge Payment via payments within 30 seconds
   sends    its amount, the order's card
-  reports  charged
+  reports  charged with receipt: Text
 effect ship Shipment via carriers within 1 day
   sends    the order's customer's address
   reports  delivered
@@ -143,4 +143,27 @@ fn the_manifest_lists_what_each_adapter_receives() {
     assert!(m.contains("answers   charge Payment: charged"), "{m}");
     assert!(m.contains("marked:   Customer.address (personal), Order.card (secret)"), "{m}");
     assert!(m.contains("roles     customer (a Customer)"), "{m}");
+}
+
+#[test]
+fn a_stray_answer_keeps_its_secret_out_of_the_log() {
+    let p = vault();
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("marks").join("stray");
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut s = Service::open(&p, &dir, T0, |_| {}).unwrap();
+    let data = vec![("receipt".to_string(), text("rcpt-0042"))];
+    let _ = s.input(Record::Answer { adapter: "payments".into(), outcome: "charged".into(), key: Some("O9/Payment".into()), target: None, data }, T0);
+    let log = std::fs::read_to_string(dir.join("log.jsonl")).unwrap_or_default();
+    assert!(!log.contains("rcpt-0042"), "{log}");
+}
+
+#[test]
+fn a_changed_secret_mark_is_a_deploy_break() {
+    let h = live();
+    let v2 = compile(&VAULT.replace("version 1", "version 2").replace("name: Text,", "name: Text secret,")).unwrap();
+    let breaks = h.deploy_check(&v2).unwrap();
+    assert!(breaks.iter().any(|b| b.contains("Customer's name becomes secret")), "{breaks:?}");
+    let v2 = compile(&VAULT.replace("version 1", "version 2").replace("card: Text secret", "card: Text").replace("allow payments to receive Order's card\n", "")).unwrap();
+    let breaks = h.deploy_check(&v2).unwrap();
+    assert!(breaks.iter().any(|b| b.contains("Order's card stops being secret")), "{breaks:?}");
 }

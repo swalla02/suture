@@ -2,6 +2,7 @@
 //! It is a pure function of the program, the unit and the message, so
 //! replaying the journal reproduces every step.
 
+use suture_lang::ir::Mark;
 use std::collections::BTreeMap;
 
 use suture_lang::ir::{Action, Arith, Body, Cond, Criterion, Decision, Effect, Num, Op, Otherwise, Path, Program, Rule, Slot, Source, Step, Ty, CREATED, TIMED_OUT};
@@ -299,6 +300,10 @@ pub fn upgrade_breaks(old: &Program, prog: &Program, unit: &Unit, goals: &[Optio
                 (Some(w), Some(_)) if w.ty != a.ty || w.of != a.of => {
                     let ty = |t: Ty, of: &Option<String>| of.clone().unwrap_or_else(|| format!("{t:?}"));
                     out.push(format!("{}'s {} changes from {} to {}", k.name, a.name, ty(w.ty, &w.of), ty(a.ty, &a.of)))
+                }
+                (Some(w), Some(_)) if (w.mark == Some(Mark::Secret)) != (a.mark == Some(Mark::Secret)) => {
+                    let how = if a.mark == Some(Mark::Secret) { "becomes secret" } else { "stops being secret" };
+                    out.push(format!("{}'s {} {how}, and live values are held as they were", k.name, a.name))
                 }
                 (None, None) if a.default.is_none() && a.formula.is_none() && !is_answered(prog, &k.name, &a.name) => {
                     out.push(format!("{}'s {} is added without a default", k.name, a.name))

@@ -86,6 +86,8 @@ A served program logs the reference, `{"Secret": 1}`, and keeps the values in `s
 
 Back up `secrets.json` with the log, and protect it like a password file. The log on its own holds no secret.
 
+A new version that marks an attribute secret, or drops its `secret` mark, is refused at the deploy check while live units hold values of it (chapter 18): the values already held would be kept the old way.
+
 ## The manifest
 
 `suture build` writes `⟨module⟩-v⟨n⟩.manifest` next to the compiled program, and prints its adapters part:
