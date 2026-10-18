@@ -108,6 +108,8 @@ scenario "⟨title⟩":
 ```text
 suture build   ⟨dir⟩                               compile, write ⟨module⟩-v⟨n⟩.sut, print read-backs
 suture run     ⟨dir⟩ --scenario ⟨file⟩             run scenarios and print their traces
+suture serve   ⟨dir⟩ [--state ⟨dir⟩] [--listen ⟨addr⟩] [--models]
+                                                   serve the program over HTTP, with its log (chapter 17)
 suture explain ⟨dir⟩ --scenario ⟨file⟩ ⟨name⟩      … and explain one entity at the end of each
 ```
 

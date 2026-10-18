@@ -4,14 +4,17 @@ Suture v0 is a prototype. Everything earlier in this guide runs and is tested. T
 
 ## Running for real
 
-- **Scenarios only.** `suture run` runs scenarios, with the outside services played by the scenario. There are no real adapters yet, `suture run` cannot read inputs from a file, and the clock moves only when a scenario says so.
-- **No resuming.** Every step is journaled and every scenario's journal replays to the same state, but nothing yet resumes a host from a journal after a crash, and there is no database backend.
+- **One process.** `suture serve` (chapter 17) runs a program as one process, applying one input at a time. Several runtime pods sharing the work, with failover between them, are a later slice.
+- **The log only grows.** It is never compacted or snapshotted, so a restart replays every input since the start.
+- **No versioning yet.** A log written under another program is refused; a deploy that resolves live units under a changed program is designed but not built.
+- **Whole seconds.** The clock and every timer count whole seconds.
+- **HTTP only.** The service speaks plain HTTP and leaves TLS to the gateway in front of it. Adapters are reached over HTTP through `curl`.
 - **No `suture test` or `suture deploy`.** Tests run through `cargo test` and `suture run`. Deploy checks against live state (refusing a new version until every rule that live entities would break has a resolution) are designed for a later sub-project.
 - **Alerts** appear only in the trace and in `suture explain`; they are not sent anywhere.
 
 ## Security
 
-- **Callers are named, not authenticated.** The gate checks roles and conditions, but in v0 the scenario says who the caller is. Real authentication is a later sub-project.
+- **Callers are named, not authenticated.** The gate checks roles and conditions. A scenario says who the caller is, and a served program trusts the `Suture-Caller` header, which the gateway must set after it has authenticated the caller. Operator requests need one shared token.
 - **`secret` and `personal` attributes,** the secret store and masking in explanations are designed, not built.
 - **The adapter manifest** (the fields each adapter receives and the outcomes it may report) is enforced by the language (`sends`, `reports`), but not yet written out as a separate file.
 

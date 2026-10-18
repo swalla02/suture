@@ -2,11 +2,11 @@
 
 Suture is a language for writing systems as statements, not steps. You write what exists, what each thing needs, the rules that must always hold, the goals to reach and by when, what the outside world does, and who may do what. You never write the order of steps, status machines, retries, locks, compensations or crash recovery. The runtime does that work, and it can say at any moment why something is not done yet.
 
-This guide teaches the language as it runs today (prototype v0, slices 1 to 9). Every `suture` program block and every scenario in it is compiled and run by the test suite (`runtime/tests/guide.rs`), so if an example here stops working, the build fails.
+This guide teaches the language as it runs today (prototype v0, slices 1 to 11). Every `suture` program block and every scenario in it is compiled and run by the test suite (`runtime/tests/guide.rs`), so if an example here stops working, the build fails.
 
 ## How to read it
 
-If you are new, read chapters 1 and 2 in order: they build a small working system and explain the ideas behind it. Chapters 3 to 12 cover one construct each and can be read in any order. Chapter 13 collects modelling advice, chapter 14 covers facts fetched from outside, chapter 15 decision models, and chapter 16 says what v0 does not do yet.
+If you are new, read chapters 1 and 2 in order: they build a small working system and explain the ideas behind it. Chapters 3 to 12 cover one construct each and can be read in any order. Chapter 13 collects modelling advice, chapter 14 covers facts fetched from outside, chapter 15 decision models, chapter 16 says what v0 does not do yet, and chapter 17 runs a program as a service.
 
 | | Chapter | What you learn |
 |---|---|---|
@@ -26,6 +26,7 @@ If you are new, read chapters 1 and 2 in order: they build a small working syste
 | 14 | [Sourcing](14-sourcing.md) | `source … via …`, lifespans, `with … at most … old`, recovery |
 | 15 | [Decision models](15-decision-models.md) | `decide … with model`: the levels, slots and sources, deadlines, Jev and custom backends |
 | 16 | [Limits of v0](16-limits-of-v0.md) | what is designed but not built yet |
+| 17 | [Serving a program](17-serving.md) | `suture serve`: inputs over HTTP, adapters, the log and restarting, the real clock |
 | | [Quick reference](reference.md) | every form on one page |
 
 ## Three promises

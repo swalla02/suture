@@ -38,8 +38,8 @@ pub enum Record {
     /// The clock moved on by this many seconds.
     Pass(u64),
     /// An entity of the world, which does not pass the gate.
-    World { kind: String, label: String, attrs: Vec<(String, Val)>, items: Vec<(String, Vec<(String, Val)>)> },
-    New { by: Who, verb: String, kind: String, label: String, attrs: Vec<(String, Val)>, items: Vec<(String, Vec<(String, Val)>)> },
+    World { kind: String, label: String, attrs: Vec<(String, Val)>, items: Items },
+    New { by: Who, verb: String, kind: String, label: String, attrs: Vec<(String, Val)>, items: Items },
     Event { by: Who, verb: String, target: String },
     Change { by: Who, target: String, attr: String, value: Val },
     /// An adapter's answer: to the request with `key`, or the oldest for `target`.
@@ -372,8 +372,11 @@ pub fn attrs_json(prog: &Program, kind: &str, v: Option<&Value>) -> Result<Vec<(
         .collect()
 }
 
+/// List elements, by list name.
+pub type Items = Vec<(String, Vec<(String, Val)>)>;
+
 /// List elements from a JSON object of lists by name.
-pub fn items_json(prog: &Program, kind: &str, v: Option<&Value>) -> Result<Vec<(String, Vec<(String, Val)>)>, String> {
+pub fn items_json(prog: &Program, kind: &str, v: Option<&Value>) -> Result<Items, String> {
     let Some(v) = v else { return Ok(vec![]) };
     let obj = v.as_object().ok_or("items are an object of lists by name")?;
     let mut out = vec![];

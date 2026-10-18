@@ -23,7 +23,7 @@ Everything stands on the same base: Terraform provisions the cluster and its CPU
 
 Suture links services; it does not prompt a model. There are no prompts and no generated code. A model only ever picks among options the rules already allow, every pick is checked and journaled, and with every model off, `prefer` decides and the system still runs. The compute engines are the motor for those picks, not the logic.
 
-In v0, adapters and models are played by scenarios (or registered in Rust), and model backends can call a real API. A long-running host with a durable journal, an input API and real adapters is the next slice.
+In v0, `suture serve` runs a program as one process: inputs over HTTP, requests posted to adapters, the real clock, and a log on disk that a restart replays. Several runtime pods sharing the work, as drawn, come later.
 
 ## A program
 
@@ -171,7 +171,10 @@ cargo build --release -p suture-cli
 target/release/suture build   examples/tickets
 target/release/suture run     examples/tickets --scenario examples/tickets/tickets.scenario
 target/release/suture explain examples/shop --scenario examples/shop/orders.scenario O1
+target/release/suture serve   examples/tickets --listen 127.0.0.1:7878
 ```
+
+`suture serve` takes inputs over HTTP and keeps its log in `examples/tickets/.suture`; [chapter 17](docs/guide/17-serving.md) walks through a session with `curl`.
 
 | Example | Shows |
 |---|---|
@@ -193,8 +196,9 @@ The design is in the [language spec](docs/superpowers/specs/2026-10-14-suture-la
 src/        the kernel: an interaction-net machine with a journal, replay and explanations
 lang/       the compiler: lexer, controlled-English parser, checker, read-backs, suggestions
 runtime/    the interpreter and host: units, needs, rules, deadlines, shared entities,
-            sources, choice points and model backends, on top of the kernel
-cli/        the `suture` command: build, run, explain
+            sources, choice points, model backends, and the service (log, HTTP API,
+            adapters, clock), on top of the kernel
+cli/        the `suture` command: build, run, explain, serve
 docs/       the guide, the spec, the kernel IR (ir-spec.md), and research notes
 examples/   the example systems above
 ```
