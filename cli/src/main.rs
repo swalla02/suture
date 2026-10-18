@@ -209,8 +209,14 @@ fn serve(dir: &Path, flags: &[&str]) -> Result<bool, String> {
     svc.connect(adapters, Box::new(suture_runtime::backend::Curl));
     let listener = std::net::TcpListener::bind(&listen).map_err(|e| format!("{listen}: {e}"))?;
     let operator = std::env::var("SUTURE_OPERATOR_TOKEN").ok();
+    if operator.as_deref().is_some_and(|t| t.trim().is_empty()) {
+        return Err("SUTURE_OPERATOR_TOKEN is empty; set a token, or unset it to refuse operator requests".into());
+    }
     let bound = listener.local_addr().map_err(|e| e.to_string())?;
     println!("{} v{} on http://{bound}, state in {}", prog.module, prog.version, state.display());
+    if !bound.ip().is_loopback() {
+        println!("  warning: listening beyond this machine; only the gateway may reach this port, since it trusts the Suture-Caller header");
+    }
     println!("  replayed {replayed} trace lines; operator requests {}", if operator.is_some() { "need the token" } else { "refused: SUTURE_OPERATOR_TOKEN is not set" });
     // Requests that were waiting when the service stopped are posted again.
     svc.post_new(unix_now())?;

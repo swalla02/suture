@@ -5,16 +5,18 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
 use crate::explain::explain_at;
 use crate::service::{self, Record, Service, Who};
 
-/// The most a request's headers and body may hold.
+/// The most a request's headers and body may hold, and how long it may take
+/// to arrive: the service answers one request at a time.
 const MAX_HEADERS: usize = 16 * 1024;
-const MAX_BODY: usize = 1024 * 1024;
+const MAX_BODY: usize = 256 * 1024;
+const DEADLINE: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, Default)]
 pub struct Request {
@@ -31,6 +33,32 @@ impl Request {
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str())
     }
+}
+
+/// Compares in time that does not depend on where the texts differ.
+fn same(a: &str, b: &str) -> bool {
+    a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// `%20` and the like, decoded; a bad escape is kept as written.
+fn decoded(path: &str) -> String {
+    let b = path.as_bytes();
+    let mut out = vec![];
+    let mut i = 0;
+    while i < b.len() {
+        let hex = |c: u8| (c as char).to_digit(16);
+        match (b[i], b.get(i + 1).and_then(|c| hex(*c)), b.get(i + 2).and_then(|c| hex(*c))) {
+            (b'%', Some(h), Some(l)) => {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+            }
+            (c, _, _) => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Answers one request at Unix time `now`. `operator` is the token operator
@@ -50,11 +78,13 @@ pub fn handle(svc: &mut Service, req: &Request, operator: Option<&str>, now: u64
             (200, json!({ "from": from, "next": svc.host.trace.len().max(from), "lines": lines }))
         }
         ("GET", p) if p.starts_with("/units/") => {
-            let label = &p["/units/".len()..];
-            let Some(unit) = svc.host.unit(label) else { return error(404, format!("there is no unit {label}")) };
+            let label = decoded(&p["/units/".len()..]);
+            let Some(unit) = svc.host.unit(&label) else { return error(404, format!("there is no unit {label}")) };
+            // Read at the current time, which the runtime clock may not have reached.
+            let at = svc.elapsed(now).max(svc.host.now);
             let host = &svc.host;
-            let explain = explain_at(&host.prog, &unit, Some(host.now as i64), |k| host.deadline(k).map(|d| d - host.now));
-            let gate: Vec<&String> = host.gate_for(label);
+            let explain = explain_at(&host.prog, &unit, Some(at as i64), |k| host.deadline(k).map(|d| d.saturating_sub(at)));
+            let gate: Vec<&String> = host.gate_for(&label);
             (200, json!({ "label": label, "kind": unit.root.kind, "explain": explain, "gate": gate }))
         }
         ("POST", "/inputs") => {
@@ -70,7 +100,7 @@ pub fn handle(svc: &mut Service, req: &Request, operator: Option<&str>, now: u64
         ("POST", "/world" | "/answers") => {
             match (operator, req.header("authorization").and_then(|a| a.strip_prefix("Bearer "))) {
                 (None, _) => return error(403, "operator requests are refused: SUTURE_OPERATOR_TOKEN is not set".into()),
-                (Some(t), Some(given)) if t == given => {}
+                (Some(t), Some(given)) if same(t, given) => {}
                 _ => return error(401, "an operator request needs `Authorization: Bearer <SUTURE_OPERATOR_TOKEN>`".into()),
             }
             let r = body(req).and_then(|b| if req.path == "/world" { world(svc, &b) } else { answer(svc, &b) });
@@ -150,19 +180,25 @@ fn answer(svc: &Service, b: &Value) -> Result<Record, String> {
 
 /// Reads one request, within the size limits.
 pub fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
-    let mut r = BufReader::new(stream);
-    let mut head = String::new();
-    let mut line = String::new();
+    let start = Instant::now();
+    let left = |s: &TcpStream| -> Result<(), String> {
+        let rest = DEADLINE.checked_sub(start.elapsed()).filter(|d| !d.is_zero()).ok_or("the request took too long to arrive")?;
+        s.set_read_timeout(Some(rest)).map_err(|e| e.to_string())
+    };
+    let mut r = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?.take((MAX_HEADERS + MAX_BODY) as u64));
+    let mut head = 0;
+    let mut line = vec![];
     let mut req = Request::default();
     loop {
         line.clear();
-        if r.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
-            return Err("the connection closed".into());
+        left(stream)?;
+        // At most what is left of the headers' allowance, so a line with no end stops there.
+        let n = (&mut r).take((MAX_HEADERS - head) as u64).read_until(b'\n', &mut line).map_err(|e| e.to_string())?;
+        head += n;
+        if !line.ends_with(b"\n") {
+            return Err(if head >= MAX_HEADERS { "the headers are too large".into() } else { "the connection closed".into() });
         }
-        head.push_str(&line);
-        if head.len() > MAX_HEADERS {
-            return Err("the headers are too large".into());
-        }
+        let line = std::str::from_utf8(&line).map_err(|_| "a header that is not UTF-8")?;
         let l = line.trim_end();
         if req.method.is_empty() {
             let mut parts = l.split(' ');
@@ -173,15 +209,34 @@ pub fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
         } else if l.is_empty() {
             break;
         } else if let Some((k, v)) = l.split_once(':') {
-            req.headers.push((k.trim().to_ascii_lowercase(), v.trim().to_string()));
+            let k = k.trim().to_ascii_lowercase();
+            // A gateway that adds a header rather than replacing it must not let
+            // the client's own win.
+            if ["suture-caller", "content-length", "authorization"].contains(&k.as_str()) && req.header(&k).is_some() {
+                return Err(format!("more than one `{k}` header"));
+            }
+            req.headers.push((k, v.trim().to_string()));
         }
+    }
+    if !req.method.chars().all(|c| c.is_ascii_uppercase()) || req.method.is_empty() || !req.path.starts_with('/') {
+        return Err("not an HTTP request".into());
+    }
+    if req.header("transfer-encoding").is_some() {
+        return Err("a body must be sent with a Content-Length, not a Transfer-Encoding".into());
     }
     let len = req.header("content-length").map_or(Ok(0), |n| n.parse::<usize>().map_err(|_| "a bad Content-Length"))?;
     if len > MAX_BODY {
         return Err("the body is too large".into());
     }
     req.body = vec![0; len];
-    r.read_exact(&mut req.body).map_err(|e| e.to_string())?;
+    let mut got = 0;
+    while got < len {
+        left(stream)?;
+        match r.read(&mut req.body[got..]).map_err(|e| e.to_string())? {
+            0 => return Err("the connection closed".into()),
+            n => got += n,
+        }
+    }
     Ok(req)
 }
 
@@ -217,12 +272,22 @@ pub fn serve(svc: &mut Service, listener: TcpListener, operator: Option<&str>, s
             Ok((mut stream, _)) => {
                 stream.set_nonblocking(false)?;
                 stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-                let (status, body) = match read_request(&mut stream) {
-                    Ok(req) => handle(svc, &req, operator, clock()),
-                    Err(e) => (400, json!({ "error": e })),
+                let (status, body, unread) = match read_request(&mut stream) {
+                    Ok(req) => {
+                        let (status, body) = handle(svc, &req, operator, clock());
+                        (status, body, false)
+                    }
+                    Err(e) => (400, json!({ "error": e }), true),
                 };
                 // A caller that has gone away does not stop the service.
                 let _ = write_response(&mut stream, status, &body);
+                if unread {
+                    // Closing with unread bytes would reset the connection before
+                    // the caller reads why; so read a little of the rest, briefly.
+                    let _ = stream.shutdown(std::net::Shutdown::Write);
+                    let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
+                    let _ = std::io::copy(&mut (&stream).take(MAX_BODY as u64), &mut std::io::sink());
+                }
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(20)),
             Err(e) => writeln!(out, "accept: {e}")?,

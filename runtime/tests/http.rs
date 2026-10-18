@@ -131,6 +131,15 @@ fn the_server_answers_over_tcp() {
     let (status, body) = send(&addr, "POST", "/inputs", &[("Suture-Caller", "fan Ada")], "not json");
     assert_eq!(status, 400);
     assert!(body["error"].as_str().unwrap().starts_with("the body is not JSON"), "{body}");
+    let (status, body) = send(&addr, "POST", "/inputs", &[("Suture-Caller", "fan Ada"), ("Suture-Caller", "box Sam")], "{}");
+    assert_eq!((status, body["error"].as_str().unwrap()), (400, "more than one `suture-caller` header"));
+    let (status, body) = send(&addr, "POST", "/inputs", &[("Transfer-Encoding", "chunked")], "");
+    assert_eq!((status, body["error"].as_str().unwrap()), (400, "a body must be sent with a Content-Length, not a Transfer-Encoding"));
+    let long = "x".repeat(20_000);
+    let (status, body) = send(&addr, "GET", "/health", &[("X-Long", &long)], "");
+    assert_eq!((status, body["error"].as_str().unwrap()), (400, "the headers are too large"));
+    let (status, body) = send(&addr, "GET", "/units/No%20one", &[], "");
+    assert_eq!((status, body["error"].as_str().unwrap()), (404, "there is no unit No one"));
     stop.store(true, Ordering::Relaxed);
     let out = server.join().unwrap();
     assert!(out.contains("Ada placed: name \"Ada\""), "{out}");

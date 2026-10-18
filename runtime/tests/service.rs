@@ -132,8 +132,52 @@ fn a_last_line_cut_short_is_dropped() {
     let mut text = std::fs::read_to_string(&log).unwrap();
     text.push_str("{\"new\": {\"by\": ");
     std::fs::write(&log, text).unwrap();
-    let s = Service::open(&p, &dir, T0, |_| {}).unwrap();
+    let mut s = Service::open(&p, &dir, T0, |_| {}).unwrap();
     assert!(s.host.unit("Fri").is_some());
+    assert!(std::fs::read_to_string(&log).unwrap().ends_with("}\n"), "the cut line is cut off the file");
+    // The next record starts on a line of its own, so a second restart reads it.
+    s.input(booking(&p, "B1", "Ada", 2), T0 + 1).unwrap();
+    drop(s);
+    let s = Service::open(&p, &dir, T0, |_| {}).unwrap();
+    assert!(s.host.unit("B1").is_some());
+}
+
+#[test]
+fn a_model_asked_while_the_clock_catches_up_is_logged_too() {
+    let p = suture_lang::compile_dir(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../examples/returns")).unwrap_or_else(|e| panic!("{e:?}"));
+    let dir = state("catch-up");
+    let asked = Rc::new(RefCell::new(vec![]));
+    let model = |asked: Rc<RefCell<Vec<String>>>, picks: Vec<&'static str>| {
+        move |h: &mut suture_runtime::host::Host| {
+            let mut picks = picks.into_iter();
+            h.models.register("routing@1", Box::new(move |c| {
+                asked.borrow_mut().push(c.key.clone());
+                picks.next().map(String::from)
+            }))
+        }
+    };
+    let mut s = Service::open(&p, &dir, T0, model(asked.clone(), vec!["Courier", "Locker"])).unwrap();
+    s.input(world(&p, "Applicant", "Ada", json!({ "name": "Ada" })), T0).unwrap();
+    s.input(world(&p, "Application", "A1", json!({ "applicant": "Ada" })), T0).unwrap();
+    // Three days on, the courier's patience runs out as the clock catches up
+    // before this input, and the model picks the slot's next alternative.
+    s.input(world(&p, "Applicant", "Bo", json!({ "name": "Bo" })), T0 + 3 * 86_400).unwrap();
+    assert_eq!(asked.borrow().len(), 2);
+    let unit = s.host.unit("A1");
+    drop(s);
+    let s = Service::open(&p, &dir, T0, model(asked.clone(), vec!["Collection", "Collection"])).unwrap();
+    assert_eq!(asked.borrow().len(), 2, "replay does not ask the model again");
+    assert_eq!(s.host.unit("A1"), unit);
+}
+
+#[test]
+fn a_clock_that_steps_back_waits() {
+    let p = tickets();
+    let mut s = Service::in_memory(&p, T0);
+    setup(&p, &mut s);
+    s.input(booking(&p, "B1", "Ada", 2), T0 + 40).unwrap();
+    assert_eq!(s.tick(T0 + 10).unwrap(), Vec::<String>::new());
+    assert_eq!(s.host.now, 40);
 }
 
 const SHOP: &str = "module shop version 1, currency EUR
@@ -248,6 +292,22 @@ fn a_later_answer_arrives_by_key_and_a_restart_posts_again() {
     let a = s.input(r, T0 + 3).unwrap();
     assert_eq!(a.refused, None);
     assert!(a.trace.iter().any(|l| l.contains("B1  Payment charged")), "{:?}", a.trace);
+}
+
+#[test]
+fn a_failed_post_is_tried_again() {
+    let p = tickets();
+    let fake = Fake { reply: Rc::new(RefCell::new(Err("connection refused".into()))), sent: Rc::default() };
+    let mut s = Service::in_memory(&p, T0);
+    s.connect(adapters(), Box::new(fake.clone()));
+    setup(&p, &mut s);
+    let a = s.input(booking(&p, "B1", "Ada", 2), T0).unwrap();
+    assert!(a.trace.iter().any(|l| l.contains("payments: could not be posted: connection refused; trying again in 5 seconds   (B1/Payment#1)")), "{:?}", a.trace);
+    *fake.reply.borrow_mut() = Ok(json!({ "outcome": "charged" }));
+    s.tick(T0 + 4).unwrap();
+    assert_eq!(fake.sent.borrow().len(), 1, "not before 5 seconds");
+    let t = s.tick(T0 + 5).unwrap();
+    assert!(t.iter().any(|l| l.contains("B1  Payment charged")), "{t:?}");
 }
 
 #[test]

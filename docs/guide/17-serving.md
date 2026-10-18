@@ -107,7 +107,9 @@ curl -s localhost:7878/answers -H "Authorization: Bearer $SUTURE_OPERATOR_TOKEN"
   -d '{"adapter": "payments", "outcome": "charged", "key": "B1/Payment#1"}'
 ```
 
-An adapter that `adapters.json` does not name can poll `GET /pending` for its requests, and answer the same way. If a post fails, the request keeps waiting, and its effect's deadline decides what happens, exactly as in a scenario: it is sent again, then times out. The `key` stays the same across those sends and across restarts, so an adapter that remembers the keys it has done does each piece of work once.
+An adapter that `adapters.json` does not name can poll `GET /pending` for its requests, and answer the same way. If a post fails, it is tried again every 5 seconds while the request waits, and the effect's deadline decides what happens, exactly as in a scenario: after the deadline, the effect sends again, and after its last send it times out. A request's `key` stays the same across those posts and across restarts, so an adapter that remembers the keys it has done does each piece of work once.
+
+Posts are made one at a time, and the service waits for each, for up to the effect's deadline and never more than 10 seconds. An adapter should therefore answer at once, or reply that it will answer later, rather than do slow work before it replies.
 
 ## Reading
 
@@ -118,9 +120,11 @@ An adapter that `adapters.json` does not name can poll `GET /pending` for its re
 | `GET /trace?from=40` | the trace from line 40, and the number to ask from next |
 | `GET /health` | the module and its version |
 
+Reads need no token. They show units and the requests' data, so, like inputs, they must only be reachable through the gateway.
+
 ## The log, and restarting
 
-The state directory holds the compiled program and `log.jsonl`. Every input is a line of the log, and so is every move of the clock and every answer a model gave. An input is written after it is applied and before its caller is answered, so whatever a caller was told is in the log.
+The state directory holds the compiled program and `log.jsonl`. Every input is a line of the log, and so is every move of the clock and every answer a model gave. An input is written, and synced to disk, after it is applied and before its caller is answered, so whatever a caller was told was accepted or refused is in the log. If the log cannot be written, for instance because the disk is full, the caller gets a 500 and the service takes no more inputs until it restarts, since memory would no longer match the log. A line cut short by a crash was never answered; the restart cuts it off.
 
 On start, the service replays the log. It gives the same units, the same trace and the same waiting requests, and no model is asked again, because the log holds what each one answered. Then it posts the waiting requests again, with their keys. Time that passed while the service was down passes at the first tick, so a deadline that ran out meanwhile fires then.
 

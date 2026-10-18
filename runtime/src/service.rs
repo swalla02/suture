@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -101,12 +101,35 @@ pub struct Service {
     transport: Box<dyn Transport>,
     /// The requests already posted by this process, by key.
     posted: BTreeSet<String>,
+    /// Requests whose post failed, by key, with when to try again.
+    retry: BTreeMap<String, u64>,
+    /// Why the log could not be written: from then on, every input is
+    /// refused, since the log no longer holds what memory does.
+    broken: Option<String>,
+}
+
+/// How long a failed post waits before it is tried again, in seconds.
+const RETRY_SECS: u64 = 5;
+
+fn synced(path: &Path, text: &str) -> std::io::Result<()> {
+    let mut f = File::create(path)?;
+    f.write_all(text.as_bytes())?;
+    f.sync_all()
 }
 
 impl Service {
     /// A service with no log: for tests, and for trying a program out.
     pub fn in_memory(prog: &Program, now: u64) -> Service {
-        Service { host: Host::new(prog.clone()), started: now, log: None, adapters: BTreeMap::new(), transport: Box::new(backend::Curl), posted: BTreeSet::new() }
+        Service {
+            host: Host::new(prog.clone()),
+            started: now,
+            log: None,
+            adapters: BTreeMap::new(),
+            transport: Box::new(backend::Curl),
+            posted: BTreeSet::new(),
+            retry: BTreeMap::new(),
+            broken: None,
+        }
     }
 
     /// Opens the state directory: a new one starts its log at `now`; one with a
@@ -133,9 +156,12 @@ impl Service {
             }
             svc.replay(&log_path)?;
         } else {
-            std::fs::write(&prog_path, serde_json::to_string(&compiled).map_err(|e| e.to_string())?).map_err(|e| format!("{}: {e}", shown(&prog_path)))?;
+            // The program first, then the log, each synced, then the directory:
+            // a log is never there without the program it was written under.
+            synced(&prog_path, &serde_json::to_string(&compiled).map_err(|e| e.to_string())?).map_err(|e| format!("{}: {e}", shown(&prog_path)))?;
             let header = Header { suture: LOG_FORMAT, module: prog.module.clone(), version: prog.version, started: now };
-            std::fs::write(&log_path, serde_json::to_string(&header).map_err(|e| e.to_string())? + "\n").map_err(|e| format!("{}: {e}", shown(&log_path)))?;
+            synced(&log_path, &(serde_json::to_string(&header).map_err(|e| e.to_string())? + "\n")).map_err(|e| format!("{}: {e}", shown(&log_path)))?;
+            File::open(state).and_then(|d| d.sync_all()).map_err(|e| format!("{}: {e}", shown(state)))?;
         }
         svc.log = Some(OpenOptions::new().append(true).open(&log_path).map_err(|e| format!("{}: {e}", shown(&log_path)))?);
         Ok(svc)
@@ -143,28 +169,42 @@ impl Service {
 
     fn replay(&mut self, path: &Path) -> Result<(), String> {
         let at = |n: usize| format!("{}:{}", path.display(), n + 1);
-        let file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        // Each record ends with a newline. Whatever follows the last one was
+        // cut short by a crash, and never answered: it is cut off the file, so
+        // the next record starts on a line of its own.
         let mut lines = vec![];
-        for (n, line) in BufReader::new(file).lines().enumerate() {
-            let line = line.map_err(|e| format!("{}: {e}", at(n)))?;
-            if !line.trim().is_empty() {
-                lines.push((n, line));
+        let mut start = 0;
+        let mut good = 0;
+        for (n, line) in bytes.split_inclusive(|b| *b == b'\n').enumerate() {
+            let end = start + line.len();
+            if line.ends_with(b"\n") {
+                let text = std::str::from_utf8(line).map_err(|e| format!("{}: {e}", at(n)))?;
+                if !text.trim().is_empty() {
+                    lines.push((n, text.trim_end().to_string(), end));
+                }
+                good = end;
             }
+            start = end;
         }
-        let Some(((_, first), rest)) = lines.split_first() else { return Err(format!("{}: the log has no header", path.display())) };
+        // A last record that does not parse was cut short too (appendix L.2.2).
+        if lines.len() > 1 && lines.last().is_some_and(|(_, l, _)| serde_json::from_str::<Record>(l).is_err()) {
+            lines.pop();
+            good = lines.last().map_or(0, |l| l.2);
+        }
+        if good < bytes.len() {
+            let f = OpenOptions::new().write(true).open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+            f.set_len(good as u64).and_then(|_| f.sync_all()).map_err(|e| format!("{}: {e}", path.display()))?;
+        }
+        let Some(((_, first, _), rest)) = lines.split_first() else { return Err(format!("{}: the log has no header", path.display())) };
         let header: Header = serde_json::from_str(first).map_err(|e| format!("{}: not a log header: {e}", at(0)))?;
         if header.suture != LOG_FORMAT {
             return Err(format!("{}: log format {} is not {LOG_FORMAT}", at(0), header.suture));
         }
         self.started = header.started;
         let mut records = vec![];
-        for (n, line) in rest {
-            // A last line cut short by a crash was never answered: it is dropped.
-            match serde_json::from_str::<Record>(line) {
-                Ok(r) => records.push(r),
-                Err(_) if *n == lines.last().map_or(0, |l| l.0) => {}
-                Err(e) => return Err(format!("{}: {e}", at(*n))),
-            }
+        for (n, line, _) in rest {
+            records.push(serde_json::from_str::<Record>(line).map_err(|e| format!("{}: {e}", at(*n)))?);
         }
         let mut i = 0;
         while i < records.len() {
@@ -176,6 +216,9 @@ impl Service {
             }).collect();
             let skip = self.host.replay.len();
             let _ = self.apply(&records[i]);
+            if !self.host.replay.is_empty() {
+                self.host.trace.push(format!("replay: {} model answers in the log were not asked for again", self.host.replay.len()));
+            }
             self.host.replay.clear();
             i += 1 + skip;
         }
@@ -196,30 +239,42 @@ impl Service {
     /// Fires the timers that fell due by Unix time `now`, as one `pass` (appendix L.2.4).
     pub fn tick(&mut self, now: u64) -> Result<Vec<String>, String> {
         let elapsed = self.elapsed(now);
-        match self.host.next_due() {
-            Some(due) if due <= elapsed => self.input(Record::Pass(elapsed - self.host.now), now).map(|a| a.trace),
-            _ => Ok(vec![]),
-        }
+        // A clock that stepped back waits until it is past the runtime clock again.
+        let fired = match self.host.next_due() {
+            Some(due) if due <= elapsed && elapsed > self.host.now => self.input(Record::Pass(elapsed - self.host.now), now)?.trace,
+            _ => vec![],
+        };
+        // Posts that failed are tried again.
+        let from = self.host.trace.len();
+        self.post_new(now)?;
+        Ok([fired, self.host.trace[from..].to_vec()].concat())
     }
 
     /// Applies an input at Unix time `now`: the clock moves on first; then
     /// the input and the model answers it caused are logged, and only then
     /// are new requests posted (appendix L.2.2). The error is the log's.
     pub fn input(&mut self, r: Record, now: u64) -> Result<Applied, String> {
+        if let Some(why) = &self.broken {
+            return Err(format!("the log could not be written ({why}), so no input is taken until the service restarts"));
+        }
         let from = self.host.trace.len();
         let elapsed = self.elapsed(now);
         if !matches!(r, Record::Pass(_)) && elapsed > self.host.now {
-            let pass = Record::Pass(elapsed - self.host.now);
-            let _ = self.apply(&pass);
-            self.write(&[pass])?;
+            self.applied(Record::Pass(elapsed - self.host.now))?;
         }
+        let refused = self.applied(r)?;
+        self.post_new(now)?;
+        Ok(Applied { trace: self.host.trace[from..].to_vec(), refused })
+    }
+
+    /// Applies one record and logs it with the model answers it caused.
+    fn applied(&mut self, r: Record) -> Result<Option<String>, String> {
         let asked = self.host.model_answers.len();
         let refused = self.apply(&r).err();
         let mut lines = vec![r];
         lines.extend(self.host.model_answers[asked..].iter().map(|(key, answer)| Record::Model { key: key.clone(), answer: answer.clone() }));
         self.write(&lines)?;
-        self.post_new(now)?;
-        Ok(Applied { trace: self.host.trace[from..].to_vec(), refused })
+        Ok(refused)
     }
 
     fn write(&mut self, records: &[Record]) -> Result<(), String> {
@@ -229,7 +284,16 @@ impl Service {
             text.push_str(&serde_json::to_string(r).map_err(|e| e.to_string())?);
             text.push('\n');
         }
-        log.write_all(text.as_bytes()).and_then(|_| log.sync_data()).map_err(|e| format!("the log: {e}"))
+        if let Err(e) = log.write_all(text.as_bytes()).and_then(|_| log.sync_data()) {
+            self.broken = Some(e.to_string());
+            return Err(format!("the log could not be written ({e}), so no input is taken until the service restarts"));
+        }
+        Ok(())
+    }
+
+    /// Why the log could not be written, if it could not.
+    pub fn broken(&self) -> Option<&str> {
+        self.broken.as_deref()
     }
 
     fn apply(&mut self, r: &Record) -> Result<(), String> {
@@ -252,13 +316,20 @@ impl Service {
     /// answer; anything else leaves the request waiting (appendix L.2.8).
     pub fn post_new(&mut self, now: u64) -> Result<(), String> {
         loop {
-            let next = self.host.pending().into_iter().find(|a| self.adapters.contains_key(&a.adapter) && !self.posted.contains(&a.key)).cloned();
+            let due = |k: &String| self.retry.get(k).is_none_or(|at| *at <= now);
+            let next = self.host.pending().into_iter().find(|a| self.adapters.contains_key(&a.adapter) && !self.posted.contains(&a.key) && due(&a.key)).cloned();
             let Some(ask) = next else { return Ok(()) };
             self.posted.insert(ask.key.clone());
+            self.retry.remove(&ask.key);
+            let failed = |s: &mut Service, why: String| {
+                s.host.trace.push(format!("      {}: {why}; trying again in {RETRY_SECS} seconds   ({})", ask.adapter, ask.key));
+                s.posted.remove(&ask.key);
+                s.retry.insert(ask.key.clone(), now + RETRY_SECS);
+            };
             let adapter = self.adapters[&ask.adapter].clone();
             let key = match adapter.key_env.as_deref().map(|e| std::env::var(e).map_err(|_| format!("{e} is not set"))) {
                 Some(Err(e)) => {
-                    self.host.trace.push(format!("      {}: not posted: {e}   ({})", ask.adapter, ask.key));
+                    failed(self, format!("not posted: {e}"));
                     continue;
                 }
                 Some(Ok(k)) => Some(k),
@@ -280,7 +351,7 @@ impl Service {
                     }
                     None => self.host.trace.push(format!("      {}: posted; it answers later   ({})", ask.adapter, ask.key)),
                 },
-                Err(e) => self.host.trace.push(format!("      {}: could not be posted: {e}   ({})", ask.adapter, ask.key)),
+                Err(e) => failed(self, format!("could not be posted: {e}")),
             }
         }
     }

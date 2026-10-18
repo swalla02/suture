@@ -8,7 +8,8 @@ Suture v0 is a prototype. Everything earlier in this guide runs and is tested. T
 - **The log only grows.** It is never compacted or snapshotted, so a restart replays every input since the start.
 - **No versioning yet.** A log written under another program is refused; a deploy that resolves live units under a changed program is designed but not built.
 - **Whole seconds.** The clock and every timer count whole seconds.
-- **HTTP only.** The service speaks plain HTTP and leaves TLS to the gateway in front of it. Adapters are reached over HTTP through `curl`.
+- **HTTP only.** The service speaks plain HTTP/1.1, one request per connection, with a `Content-Length` body, and leaves TLS to the gateway in front of it. Adapters are reached over HTTP through `curl`.
+- **One request at a time.** Inputs, reads, timers and adapter posts take turns, so a slow adapter holds up the service for as long as its post takes (at most 10 seconds).
 - **No `suture test` or `suture deploy`.** Tests run through `cargo test` and `suture run`. Deploy checks against live state (refusing a new version until every rule that live entities would break has a resolution) are designed for a later sub-project.
 - **Alerts** appear only in the trace and in `suture explain`; they are not sent anywhere.
 
