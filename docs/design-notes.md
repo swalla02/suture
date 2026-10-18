@@ -1,22 +1,10 @@
-# Learned Interaction Machine
+# Learned Interaction Machine: design notes
 
-> **Status:** architecture and research notes, plus a **v0 kernel** (Rust, `src/`) that implements the typed IR, `INTERACT`, journaling and replay, and the two minimal experiments of §7 ([`docs/ir-spec.md`](docs/ir-spec.md), [`docs/experiments.md`](docs/experiments.md)). The thesis has since been clarified as **Decision-Native Computing** (§0.1); its operational model is [`docs/dnc.md`](docs/dnc.md) and its first experiment is [`docs/dnc-experiment-1.md`](docs/dnc-experiment-1.md). Still **not validated as a product**.  
+> These are the original research notes that Suture grew from (2026-10-12 to 2026-10-14), kept as a record. For the language itself, start with the [README](../README.md) and the [guide](guide/README.md).
+
+> **Status:** architecture and research notes, plus a **v0 kernel** (Rust, `src/`) that implements the typed IR, `INTERACT`, journaling and replay, and the two minimal experiments of §7 ([`docs/ir-spec.md`](ir-spec.md), [`docs/experiments.md`](experiments.md)). The thesis has since been clarified as **Decision-Native Computing** (§0.1); its operational model is [`docs/dnc.md`](dnc.md) and its first experiment is [`docs/dnc-experiment-1.md`](dnc-experiment-1.md). Still **not validated as a product**.  
 > **Purpose:** capture the concrete design direction developed in our discussion, including its motivation, proposed primitives, service lifecycle, deployment model, learning hypothesis, and unresolved questions.  
 > **Last updated:** 2026-10-14.
-
-## Try the language prototype
-
-Suture is becoming a language. You declare what exists, what each thing needs, the rules that must always hold and the goals to reach, and the runtime does the rest. To learn it, read **[the Suture guide](docs/guide/README.md)**: a tutorial, a chapter per construct, modelling patterns and a quick reference, all tested by the build. The design is in the [language spec](docs/superpowers/specs/2026-10-14-suture-language-design.md); its appendices B to J describe each prototype slice.
-
-```
-cargo run --release -p suture-cli -- build examples/tickets
-cargo run --release -p suture-cli -- run examples/tickets --scenario examples/tickets/tickets.scenario
-cargo run --release -p suture-cli -- build examples/shop
-cargo run --release -p suture-cli -- run examples/shop --scenario examples/shop/orders.scenario
-cargo run --release -p suture-cli -- explain examples/shop --scenario examples/shop/orders.scenario O1
-```
-
-`examples/shop/france.st` shows conditional depth. Only orders to France grow a customs form, and only alcohol grows an excise section with its own rules. Nothing in `shop.st` mentions France.
 
 ## 0. The thesis
 
