@@ -37,9 +37,12 @@ admit ⟨verb⟩ a new ⟨Kind⟩[, ⟨Kind⟩… or ⟨Kind⟩] by ⟨role⟩[,
 admit ⟨verb⟩ ⟨Kind⟩ by ⟨role⟩[, ⟨role⟩] [where ⟨cond⟩]
 admit change ⟨Kind⟩'s ⟨attr⟩ by ⟨role⟩[, ⟨role⟩] [where ⟨cond⟩]
 apply rule ⟨name⟩ to ⟨Kinds⟩ created from version ⟨n⟩
+allow ⟨adapter⟩ to receive ⟨Kind⟩'s ⟨attr⟩[, ⟨Kind⟩'s ⟨attr⟩…]
 ```
 
 **Types:** `Text`, `Bool`, `Count`, `Money`, `Duration`, `Time`, `⟨Kind⟩`, `list of ⟨Kind⟩`, `set of ⟨Kind⟩`. Built-in: `created: Time`.
+
+**Marks:** after the type, `secret` (Text only, no default) or `personal`: `card: Text secret` (chapter 19).
 
 **Literals:** `"text"`, `yes`/`no`, `3`, `9.99 EUR`, `30 seconds` (also minutes, hours, days, weeks).
 
@@ -107,7 +110,7 @@ scenario "⟨title⟩":
 ## The command
 
 ```text
-suture build   ⟨dir⟩                               compile, write ⟨module⟩-v⟨n⟩.sut, print read-backs
+suture build   ⟨dir⟩                               compile, write ⟨module⟩-v⟨n⟩.sut and .manifest, print read-backs
 suture run     ⟨dir⟩ --scenario ⟨file⟩             run scenarios and print their traces
 suture serve   ⟨dir⟩ [--state ⟨dir⟩] [--listen ⟨addr⟩] [--models]
                                                    serve the program over HTTP, with its log (chapter 17)
