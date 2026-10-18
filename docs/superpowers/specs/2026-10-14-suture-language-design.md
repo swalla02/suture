@@ -1188,3 +1188,44 @@ decide Carrier for Orders whose country is local with prefer          -- back to
 - Each level (app, workflow, step, decision, condition) has a program in which it handles a choice, and a scenario in which a nearer level overrides a further one.
 - Overlaps, unknown choice points, slots named in a `decide` and duplicate `decide`s are compile errors with file and line.
 - A pick outside the options, a decline, an unknown model and a refused take each fall back as J.2.4–J.2.5 say, and every scenario replays to the same state.
+
+## Appendix K. Prototype slice 10: every choice, deadlines and real backends (2026-10-18)
+
+Slice 10 finishes the model story of appendix J. Models may also pick a slot's alternative and, when an attribute has several sources, which source to ask. Every model answer has a deadline. A real backend speaks the Jev decision API by default, and other APIs through a custom format. Correctness still never depends on a model: `prefer` stands behind every pick, and every pick is checked and journaled.
+
+```text
+Delivery is Shipment or Refund
+prefer Delivery: Shipment, then Refund after 2 days
+decide Delivery with model "routing@1" within 300 milliseconds
+
+source Order's credit via bureau within 5 seconds ...
+source Order's credit via backup within 2 seconds ...
+decide Order's credit with model "sources@1"
+```
+
+### K.1 What slice 10 adds
+
+| Added in slice 10 | Still waits |
+|---|---|
+| `decide ⟨Slot⟩ …`: a model picks a slot's alternative | fetching ahead of need |
+| several `source`s for one attribute, tried in turn; `decide K's a …` picks which | a model choosing to reuse a value or to fetch early |
+| `decide … within ⟨n⟩ milliseconds` or `seconds` (default 1 second) | asynchronous model calls (a model is called in the step that needs it) |
+| scenarios: `when model "m@1" declines`, `when model "m@1" is late` | |
+| backends: Jev (default), a custom JSON format, or any Rust backend; `models.json` beside the module, read by `suture run --models` | secrets beyond an environment variable |
+
+### K.2 Semantics that slice 10 settles
+
+1. **Choice points** are now: a `uses` binding with a pool key (named by its target), a slot (named by its name), and a sourced attribute with more than one source (named `K's a`). A `decide` that names none covers them all in its scope. The chooser is the part that needs the binding, the owner of the slot, or the entity that holds the sourced attribute; scopes and ranking are those of J.2.2–J.2.3, along the chooser's chain of owners.
+2. **A model is asked only when there is a choice:** with one option left, that option is taken and no model is asked.
+3. **A slot.** Its options are its alternatives not yet tried since the slot was last filled afresh, in `prefer` order. A slot is filled when its need becomes active, and moves on when its part fails for good, is refused on fixed facts, or runs out of patience (D.3). Each fill and move asks the slot's handler. While a model's pick is awaited, the slot is empty and nothing is created for it; the pick arrives as a journaled message to the unit, which checks it against the options (or takes `prefer`'s first) and fills the slot. Patience stays per alternative.
+4. **Several sources.** All sources of one attribute give its type, and their order of declaration is the `prefer` order. A fetch asks one source. When it fails (a failure outcome, or its last time-out), the next is chosen by the handler among those not yet tried in this fetch; when every source has failed, the `otherwise` applies. Only one source of an attribute may have an `otherwise`, and the value's `good for` is that of the source that answered.
+5. **Deadlines.** `within ⟨duration⟩` on a `decide` bounds each answer of its model; without it, 1 second. A model that does not answer in time, like one that declines, fails or is unsure (its confidence is below the backend's `min_confidence`), leaves the pick to `prefer`, and the trace says why. The answer, or its absence, is what the journal holds, so replay never waits or calls again.
+6. **Backends.** The host maps each `name@version` to a backend. The default backend speaks Jev's decision API (`POST https://api.typesafe.ai/v1/systemone`): it sends `{"model", "state", "questions": {"pick": {"type": "choice", "instructions", "criteria"}}}`, where the state is the chooser with its facts and the criteria name each option with its facts, in `prefer` order; it reads `answers.pick.choice` and `answers.pick.confidence`. A custom format sends the same state with the options as a list, and reads the pick (and, optionally, the confidence) at JSON pointers it names. Rust callers may register any backend. A backend's transport is replaceable, so tests never reach the network.
+7. **Configuration.** `models.json` in the module's directory maps model names to backends, for example `{"routing@1": {"backend": "jev", "model": "jev-latest", "key_env": "JEV_API_KEY", "min_confidence": 0.6}, "sources@1": {"backend": "custom", "url": "…", "key_env": "…", "pick": "/result/pick", "confidence": "/result/p"}}`. It is read only with `suture run --models`; without it, a model that the scenario does not script is not available. Endpoints and keys are host configuration, not program text: changing them does not change the program, while changing a model's name or version does.
+
+### K.3 Acceptance
+
+- A model picks a slot's first alternative, and the next after a failure and after patience; a decline, a late answer and an unknown model each fall back to `prefer`.
+- An attribute with two sources asks the one a model picks, moves to the other when it fails, and applies its `otherwise` when both fail.
+- The Jev backend builds the documented request and reads the documented response through a fake transport; low confidence and transport errors fall back. A custom format reads the pick at its pointer.
+- Every scenario replays to the same state.
