@@ -1221,25 +1221,17 @@ impl Checker {
 
     /// Which model handles which choices (appendix J.2.1–J.2.3).
     fn decides(&mut self, src: &Source, p: &mut Program) {
-        let chain = |p: &Program, k: &str| {
-            let mut out = vec![k.to_string()];
-            while let Some(o) = p.kind(out.last().expect("not empty")).and_then(|x| x.owner.as_ref()) {
-                if out.contains(&o.kind) {
-                    break;
-                }
-                out.push(o.kind.clone());
-            }
-            out
-        };
+        let points = p.choice_points();
         let mut kept: Vec<(usize, &ast::DecideDecl)> = vec![];
         for d in &src.decides {
             if let Some(point) = &d.point {
-                if p.slot(point).is_some() {
-                    self.errors.push(err(&d.at, format!("{point} is a slot; v0 picks a slot's alternative by `prefer` and patience, not by a model")));
-                    continue;
-                }
-                if !p.bindings.iter().any(|b| b.target == *point && !b.key_attr.is_empty()) {
-                    self.errors.push(err(&d.at, format!("no `uses` picks {}, so there is no choice to decide", a(point))));
+                if !points.iter().any(|c| c.name == *point) {
+                    let msg = match point.split_once("'s ") {
+                        Some((k, x)) if p.source_of(k, x).is_some() => format!("{point} has one source, so there is no choice to decide"),
+                        Some(_) => format!("{point} has no sources, so there is no choice to decide"),
+                        None => format!("no `uses`, slot or source picks {}, so there is no choice to decide", a(point)),
+                    };
+                    self.errors.push(err(&d.at, msg));
                     continue;
                 }
             }
@@ -1254,11 +1246,7 @@ impl Checker {
                 },
             };
             if let Some(k) = &scope {
-                let inside = p
-                    .bindings
-                    .iter()
-                    .filter(|b| !b.key_attr.is_empty())
-                    .any(|b| d.point.as_ref().is_none_or(|x| *x == b.target) && chain(p, &b.subject).contains(k));
+                let inside = points.iter().any(|c| d.point.as_ref().is_none_or(|x| *x == c.name) && p.owner_chain(&c.chooser).contains(k));
                 if !inside {
                     let what = d.point.as_deref().map_or_else(|| "choice is made".to_string(), |x| format!("{x} is chosen"));
                     self.errors.push(err(&d.at, format!("no {what} inside {}", a(k))));
@@ -1285,19 +1273,19 @@ impl Checker {
                 format!("{w}{}", whose.unwrap_or_default())
             });
             kept.push((p.decisions.len(), d));
-            p.decisions.push(Decision { point: d.point.clone(), scope, cond, model: d.model.clone(), scope_text, source: d.source.clone() });
+            let within_ms = d.within_ms.unwrap_or(1000);
+            p.decisions.push(Decision { point: d.point.clone(), scope, cond, model: d.model.clone(), scope_text, within_ms, source: d.source.clone() });
         }
         // Two that can both decide one choice, at the same rank (J.2.3).
         let mut seen = vec![];
-        // A binding with no pool key adds to a total and chooses nothing (F.2.11).
-        for b in p.bindings.iter().filter(|b| !b.key_attr.is_empty()) {
-            let chain = chain(p, &b.subject);
+        for c in &points {
+            let chain = p.owner_chain(&c.chooser);
             let rank = |x: &Decision| -> Option<(bool, usize, bool)> {
                 let near = match &x.scope {
                     None => 0,
                     Some(k) => chain.len() - chain.iter().position(|c| c == k)?,
                 };
-                x.point.as_ref().is_none_or(|q| *q == b.target).then_some((x.point.is_some(), near, x.cond.is_some()))
+                x.point.as_ref().is_none_or(|q| *q == c.name).then_some((x.point.is_some(), near, x.cond.is_some()))
             };
             for (i, (di, ai)) in kept.iter().enumerate() {
                 for (dj, aj) in &kept[i + 1..] {
@@ -1307,8 +1295,14 @@ impl Checker {
                         self.errors.push(err(
                             &aj.at,
                             format!(
-                                "`{}` and `{}` (line {}) can both decide {}'s {}, and neither is more specific",
-                                y.source, x.source, ai.at.line, a(&b.subject), b.target
+                                "`{}` and `{}` (line {}) can both decide {}, and neither is more specific",
+                                y.source,
+                                x.source,
+                                ai.at.line,
+                                match c.name.split_once("'s ") {
+                                    Some((k, attr)) => format!("the source of {}'s {attr}", a(k)),
+                                    None => format!("{}'s {}", a(&c.chooser), c.name),
+                                }
                             ),
                         ));
                     }
@@ -1345,8 +1339,12 @@ impl Checker {
                 self.errors.push(err(&s.at, format!("{}.{} is a state; v0 sources values, not states: source a Text or Count and compare it", s.kind, s.attr)));
                 continue;
             }
-            if p.source_of(&s.kind, &s.attr).is_some() {
-                self.errors.push(err(&s.at, format!("{}.{} already has a source", s.kind, s.attr)));
+            if p.sources_of(&s.kind, &s.attr).into_iter().any(|x| x.adapter == s.adapter) {
+                self.errors.push(err(&s.at, format!("{}.{} already has a source via {}", s.kind, s.attr, s.adapter)));
+                continue;
+            }
+            if s.otherwise.is_some() && *p.otherwise_of(&s.kind, &s.attr) != Otherwise::Hold {
+                self.errors.push(err(&s.at, format!("{}.{} already has an `otherwise`; it applies when every source has failed, so give it once", s.kind, s.attr)));
                 continue;
             }
             if p.effects.iter().any(|e| e.kind == s.kind && e.data.iter().any(|(n, _)| *n == s.attr)) {

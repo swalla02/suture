@@ -116,7 +116,7 @@ fn a_model_that_declines_strays_or_is_missing_falls_back_to_prefer() {
 }
 
 #[test]
-fn a_pick_that_breaks_a_rule_is_refused_and_the_model_asked_again() {
+fn a_pick_that_breaks_a_rule_is_refused_and_the_rest_offered_again() {
     let p = prog("decide Stock with model \"stock@4\"\n");
     let t = trace(
         &p,
@@ -127,7 +127,8 @@ fn a_pick_that_breaks_a_rule_is_refused_and_the_model_asked_again() {
 ",
     );
     assert!(t.contains("choice: Small for O1/Shipment#1@Stock by model \"stock@4\" (of Big, Small)"), "{t}");
-    assert!(t.contains("choice: Big for O1/Shipment#1@Stock by model \"stock@4\" (of Big)"), "{t}");
+    // One option left is no choice: the model is not asked (appendix K.2.2).
+    assert!(t.contains("choice: Big for O1/Shipment#1@Stock\n"), "{t}");
 }
 
 #[test]
@@ -217,7 +218,7 @@ fn a_total_across_units_is_not_a_choice_and_never_asks_a_model() {
     assert_eq!(carrier(&t), "choice: Fast for O1/Shipment#1@Carrier by model \"planner@3\" (of Cheap, Fast)", "{t}");
     assert!(!t.contains("Customer by model"), "{t}");
     let errors = suture_lang::compile(&[("shop.st".to_string(), format!("{src}decide Customer with model \"m@1\"\n"))]).err().unwrap();
-    assert!(errors.iter().any(|e| e.to_string().contains("no `uses` picks a Customer")), "{errors:?}");
+    assert!(errors.iter().any(|e| e.to_string().contains("no `uses`, slot or source picks a Customer")), "{errors:?}");
 }
 
 #[test]

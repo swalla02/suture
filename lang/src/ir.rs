@@ -74,6 +74,14 @@ impl List {
     }
 }
 
+/// A choice a model may make (appendix K.2.1): `Carrier`, `Delivery` or
+/// `Order's credit`, and the kind that makes it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChoicePoint {
+    pub name: String,
+    pub chooser: String,
+}
+
 /// `decide [Carrier] [for Orders [whose …]] with model "…"` (appendix J).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Decision {
@@ -87,6 +95,8 @@ pub struct Decision {
     pub model: Option<String>,
     /// `Orders whose total is at least 1000 EUR`, as written.
     pub scope_text: Option<String>,
+    /// How long its model may take to answer (appendix K.2.5).
+    pub within_ms: u64,
     pub source: String,
 }
 
@@ -94,6 +104,7 @@ impl Decision {
     /// How it reads in `suture build`: `for Orders whose …: model "careful@1"`.
     pub fn handler(&self) -> String {
         match &self.model {
+            Some(m) if self.within_ms != 1000 => format!("model \"{m}\" within {} ms", self.within_ms),
             Some(m) => format!("model \"{m}\""),
             None => "`prefer`".to_string(),
         }
@@ -304,9 +315,9 @@ pub struct Source {
 }
 
 impl Source {
-    /// How requests name it: `Order~credit`.
+    /// How requests name it: `Order~credit@bureau`.
     pub fn request_kind(&self) -> String {
-        format!("{}~{}", self.kind, self.attr)
+        format!("{}~{}@{}", self.kind, self.attr, self.adapter)
     }
 }
 
@@ -497,11 +508,57 @@ impl Program {
         self.sources.iter().find(|s| s.kind == kind && s.attr == attr)
     }
 
+    /// Every source of an attribute, in `prefer` order: as declared (appendix K.2.4).
+    pub fn sources_of(&self, kind: &str, attr: &str) -> Vec<&Source> {
+        self.sources.iter().filter(|s| s.kind == kind && s.attr == attr).collect()
+    }
+
+    /// What happens when every source of an attribute has failed: the one
+    /// `otherwise` among them, or none.
+    pub fn otherwise_of(&self, kind: &str, attr: &str) -> &Otherwise {
+        static HOLD: Otherwise = Otherwise::Hold;
+        self.sources.iter().filter(|s| s.kind == kind && s.attr == attr).map(|s| &s.otherwise).find(|o| **o != Otherwise::Hold).unwrap_or(&HOLD)
+    }
+
+    /// A kind, its owner, its owner's owner, … (appendix J.2.3).
+    pub fn owner_chain(&self, kind: &str) -> Vec<String> {
+        let mut out = vec![kind.to_string()];
+        while let Some(o) = self.kind(out.last().expect("not empty")).and_then(|x| x.owner.as_ref()) {
+            if out.contains(&o.kind) {
+                break;
+            }
+            out.push(o.kind.clone());
+        }
+        out
+    }
+
+    /// Every choice a model may make (appendix K.2.1): a `uses` with a pool
+    /// key, a slot, and a sourced attribute with more than one source.
+    pub fn choice_points(&self) -> Vec<ChoicePoint> {
+        let mut out = vec![];
+        for b in self.bindings.iter().filter(|b| !b.key_attr.is_empty()) {
+            out.push(ChoicePoint { name: b.target.clone(), chooser: b.subject.clone() });
+        }
+        for s in &self.slots {
+            out.push(ChoicePoint { name: s.name.clone(), chooser: s.owner.clone() });
+        }
+        for s in &self.sources {
+            let name = format!("{}'s {}", s.kind, s.attr);
+            if self.sources_of(&s.kind, &s.attr).len() > 1 && !out.iter().any(|c: &ChoicePoint| c.name == name) {
+                out.push(ChoicePoint { name, chooser: s.kind.clone() });
+            }
+        }
+        out
+    }
+
     /// The deadline of a request, by the kind it names: a part kind with an
     /// effect, or a source's `Order~credit`.
     pub fn request_within(&self, kind: &str) -> u64 {
         match kind.split_once('~') {
-            Some((k, a)) => self.source_of(k, a).map_or(0, |s| s.within_secs),
+            Some((k, a)) => match a.split_once('@') {
+                Some((a, via)) => self.sources_of(k, a).into_iter().find(|s| s.adapter == via).map_or(0, |s| s.within_secs),
+                None => self.source_of(k, a).map_or(0, |s| s.within_secs),
+            },
             None => self.effect_of(kind).map_or(0, |e| e.within_secs),
         }
     }

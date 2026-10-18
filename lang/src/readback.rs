@@ -293,17 +293,18 @@ fn a_kind(k: &str) -> String {
 /// most specific first, down to the first that always applies, then the
 /// `prefer` ranking every model falls back to.
 pub fn handlers(p: &Program, b: &crate::ir::Binding) -> Vec<String> {
-    let mut chain = vec![b.subject.clone()];
-    while let Some(o) = p.kind(chain.last().expect("not empty")).and_then(|x| x.owner.as_ref()) {
-        if chain.contains(&o.kind) {
-            break;
-        }
-        chain.push(o.kind.clone());
-    }
+    let fallback = if b.prefer.is_empty() { "otherwise the order they were created".to_string() } else { format!("otherwise `prefer {}`", b.target) };
+    handlers_for(p, &b.target, &b.subject, fallback)
+}
+
+/// Who decides the choice point `point`, made by a `chooser`, most specific
+/// first, ending with `fallback` (appendix K.2.1).
+pub fn handlers_for(p: &Program, point: &str, chooser: &str, fallback: String) -> Vec<String> {
+    let chain = p.owner_chain(chooser);
     let mut ranked: Vec<((bool, usize, bool), &crate::ir::Decision)> = p
         .decisions
         .iter()
-        .filter(|d| d.point.as_ref().is_none_or(|x| *x == b.target))
+        .filter(|d| d.point.as_ref().is_none_or(|x| x == point))
         .filter_map(|d| {
             let near = match &d.scope {
                 None => 0,
@@ -323,7 +324,7 @@ pub fn handlers(p: &Program, b: &crate::ir::Binding) -> Vec<String> {
             break;
         }
     }
-    out.push(if b.prefer.is_empty() { "otherwise the order they were created".to_string() } else { format!("otherwise `prefer {}`", b.target) });
+    out.push(fallback);
     out
 }
 
@@ -380,12 +381,14 @@ pub fn rule_sources(p: &Program, r: &Rule) -> Option<String> {
     let parts: Vec<String> = r
         .sources
         .iter()
-        .filter_map(|(k, a)| p.source_of(k, a))
-        .map(|s| {
+        .filter_map(|(k, a)| p.source_of(k, a).map(|s| (s, p.sources_of(k, a))))
+        .map(|(s, all)| {
+            let from: Vec<&str> = all.iter().map(|x| x.adapter.as_str()).collect();
+            let from = from.join(" or ");
             let bound = r.fresh.iter().find(|(a, _)| *a == s.attr).map(|(_, secs)| *secs).into_iter().chain(s.good_for).min();
             match bound {
-                Some(secs) => format!("{} from {}, at most {} old", s.attr, s.adapter, duration_text(secs as i64)),
-                None => format!("{} from {}, fetched once", s.attr, s.adapter),
+                Some(secs) => format!("{} from {from}, at most {} old", s.attr, duration_text(secs as i64)),
+                None => format!("{} from {from}, fetched once", s.attr),
             }
         })
         .collect();
@@ -396,15 +399,19 @@ pub fn rule_sources(p: &Program, r: &Rule) -> Option<String> {
 pub fn source_line(p: &Program, s: &crate::ir::Source) -> String {
     let sends: Vec<&str> = s.sends.iter().map(|(n, _)| n.as_str()).collect();
     let trusted = s.good_for.map_or_else(|| "trusted until the unit ends".to_string(), |secs| format!("trusted for {}", duration_text(secs as i64)));
-    let otherwise = match &s.otherwise {
-        crate::ir::Otherwise::Hold => "if it fails, the steps its rules guard wait".to_string(),
-        crate::ir::Otherwise::Use(l) => format!("if it fails, use {}", lit_text(p, l)),
-        crate::ir::Otherwise::Again(secs) => format!("if it fails, ask again after {}", duration_text(*secs as i64)),
+    // With several sources, a failure moves on, and the `otherwise` waits for the last (appendix K.2.4).
+    let several = p.sources_of(&s.kind, &s.attr).len() > 1;
+    let fails = if several { "if every source fails" } else { "if it fails" };
+    let otherwise = match p.otherwise_of(&s.kind, &s.attr) {
+        crate::ir::Otherwise::Hold => format!("{fails}, the steps its rules guard wait"),
+        crate::ir::Otherwise::Use(l) => format!("{fails}, use {}", lit_text(p, l)),
+        crate::ir::Otherwise::Again(secs) => format!("{fails}, ask again after {}", duration_text(*secs as i64)),
         crate::ir::Otherwise::Act(actions) => {
             let acts: Vec<String> = actions.iter().map(|a| format!("{} is {}{}", target_text(&a.target), if a.value { "" } else { "not " }, a.attr)).collect();
-            format!("if it fails, {}", acts.join(" and "))
+            format!("{fails}, {}", acts.join(" and "))
         }
     };
+    let otherwise = if several { format!("if it fails, the next source is asked; {otherwise}") } else { otherwise };
     let readers: Vec<&str> = p.rules.iter().filter(|r| r.sources.iter().any(|(k, a)| *k == s.kind && *a == s.attr)).map(|r| r.name.as_str()).collect();
     let read = if readers.is_empty() { "no rule reads it, so it is never fetched".to_string() } else { format!("read by rule{} {}", if readers.len() == 1 { "" } else { "s" }, readers.join(", ")) };
     format!(

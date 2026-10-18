@@ -13,6 +13,14 @@ pub struct Scenario {
     pub line: usize,
 }
 
+/// A scripted model's answer in a scenario.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ModelAnswer {
+    Pick(String),
+    Decline,
+    Late,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ScenarioStep {
     /// `when a new Order O1 with country France and total 120 EUR`, or
@@ -37,9 +45,9 @@ pub enum ScenarioStep {
     Change { by: Caller, target: String, attr: String, value: Literal, refused: Option<Refused> },
     /// `and forms answers filled with licence "L-77" [for O1]`
     Answer { adapter: String, outcome: String, data: Vec<(String, Literal)>, target: Option<String> },
-    /// `when model "carriers@1" picks Hermes[, then DHL]`: the stand-in's
-    /// next picks (appendix J.2.7).
-    Model { model: String, picks: Vec<String> },
+    /// `when model "carriers@1" picks Hermes[, then DHL]`, `… declines`,
+    /// `… is late`: the stand-in's next answers (appendix J.2.7, K.1).
+    Model { model: String, answers: Vec<ModelAnswer> },
     /// `expect O1 is [not] settled`
     Expect { name: String, state: String, negated: bool },
     /// `expect O1's Payment is [not] timed out`: the unit's current part of that kind.
@@ -148,14 +156,22 @@ fn step(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {
             let model = model.clone();
             c.next();
             c.next();
-            c.expect_word("picks")?;
-            let mut picks = vec![c.word()?];
-            while c.eat_sym(',') {
-                c.expect_word("then")?;
-                picks.push(c.word()?);
-            }
+            let answers = if c.eat_word("declines") {
+                vec![ModelAnswer::Decline]
+            } else if c.eat_word("is") {
+                c.expect_word("late")?;
+                vec![ModelAnswer::Late]
+            } else {
+                c.expect_word("picks")?;
+                let mut picks = vec![ModelAnswer::Pick(c.word()?)];
+                while c.eat_sym(',') {
+                    c.expect_word("then")?;
+                    picks.push(ModelAnswer::Pick(c.word()?));
+                }
+                picks
+            };
             c.expect_end()?;
-            return Ok(ScenarioStep::Model { model, picks });
+            return Ok(ScenarioStep::Model { model, answers });
         }
     }
     let by = if c.is_word("a") || c.is_word("an") || matches!(c.peek_at(1), Some(Tok::Word(w)) if w == "answers") {

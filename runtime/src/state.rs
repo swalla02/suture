@@ -278,6 +278,10 @@ pub struct Fetch {
     pub failed: bool,
     /// The value is the source's `otherwise use`.
     pub fallback: bool,
+    /// The adapter of the source the open or last fetch asked (appendix K.2.4).
+    pub via: String,
+    /// The sources this fetch has asked and that failed, in order.
+    pub tried: Vec<String>,
 }
 
 impl Fetch {
@@ -297,15 +301,26 @@ impl Fetch {
             opt(self.until),
             Value::from(self.failed),
             Value::from(self.fallback),
+            text(&self.via),
+            Value::list(self.tried.iter().map(|t| text(t))),
         ])
     }
 
     fn from_value(v: &Value) -> Result<Fetch, String> {
-        let [n, sends, at, until, failed, fallback] = fields::<6>(v, "fetch")?;
+        let [n, sends, at, until, failed, fallback, via, tried] = fields::<8>(v, "fetch")?;
         let opt = |x: &Value| items(x)?.first().map(int).transpose();
         let small = |x: &Value| int(x).and_then(|i| u32::try_from(i).map_err(|e| e.to_string()));
         let flag = |x: &Value| x.as_bool().ok_or_else(|| format!("not a yes or no: {x}"));
-        Ok(Fetch { n: small(n)?, sends: small(sends)?, at: opt(at)?, until: opt(until)?, failed: flag(failed)?, fallback: flag(fallback)? })
+        Ok(Fetch {
+            n: small(n)?,
+            sends: small(sends)?,
+            at: opt(at)?,
+            until: opt(until)?,
+            failed: flag(failed)?,
+            fallback: flag(fallback)?,
+            via: string(via)?,
+            tried: items(tried)?.iter().map(string).collect::<Result<_, _>>()?,
+        })
     }
 }
 
@@ -338,6 +353,12 @@ pub struct Node {
     pub parts: Vec<Node>,
     /// Its sourced attributes' fetches, by attribute (appendix I.2).
     pub fetched: BTreeMap<String, Fetch>,
+    /// For each slot, the alternatives tried since it was last filled afresh
+    /// (appendix K.2.3), the one it is on last.
+    pub tried: BTreeMap<String, Vec<String>>,
+    /// The choices put to a model and not yet answered, by request key:
+    /// the options, in `prefer` order (appendix K.2.3).
+    pub choosing: BTreeMap<String, Vec<String>>,
 }
 
 impl Node {
@@ -356,11 +377,14 @@ impl Node {
             Value::list(self.binds.iter().map(|(id, b)| Value::tuple([text(id), b.to_value()]))),
             Value::list(self.parts.iter().map(Node::to_value)),
             Value::list(self.fetched.iter().map(|(a, f)| Value::tuple([text(a), f.to_value()]))),
+            lists_value(&self.tried),
+            lists_value(&self.choosing),
         ])
     }
 
     fn from_value(v: &Value) -> Result<Node, String> {
-        let [kind, attrs, created, status, outcome, attempt, sends, waiting, held, slots, binds, parts, fetched] = fields::<13>(v, "node")?;
+        let [kind, attrs, created, status, outcome, attempt, sends, waiting, held, slots, binds, parts, fetched, tried, choosing] =
+            fields::<15>(v, "node")?;
         let mut fetches = BTreeMap::new();
         for f in items(fetched)? {
             let [a, f] = fields::<2>(f, "fetched attribute")?;
@@ -396,8 +420,23 @@ impl Node {
             binds: bound,
             parts: items(parts)?.iter().map(Node::from_value).collect::<Result<_, _>>()?,
             fetched: fetches,
+            tried: lists_from(tried)?,
+            choosing: lists_from(choosing)?,
         })
     }
+}
+
+fn lists_value(m: &BTreeMap<String, Vec<String>>) -> Value {
+    Value::list(m.iter().map(|(k, xs)| Value::tuple([text(k), Value::list(xs.iter().map(|x| text(x)))])))
+}
+
+fn lists_from(v: &Value) -> Result<BTreeMap<String, Vec<String>>, String> {
+    let mut out = BTreeMap::new();
+    for x in items(v)? {
+        let [k, xs] = fields::<2>(x, "named list")?;
+        out.insert(string(k)?, items(xs)?.iter().map(string).collect::<Result<_, _>>()?);
+    }
+    Ok(out)
 }
 
 /// A root entity and everything it owns: one kernel agent (appendix B.3.1).
@@ -761,7 +800,12 @@ mod tests {
                 ("Stock.1".to_string(), Bind::Granted { to: "S2".into(), taken: Some(("quantity".into(), Val::Count(2))) }),
             ]),
             parts: vec![],
-            fetched: BTreeMap::from([("credit".to_string(), Fetch { n: 2, sends: 1, at: Some(10), until: None, failed: false, fallback: true })]),
+            fetched: BTreeMap::from([(
+                "credit".to_string(),
+                Fetch { n: 2, sends: 1, at: Some(10), until: None, failed: false, fallback: true, via: "bureau".into(), tried: vec!["backup".into()] },
+            )]),
+            tried: BTreeMap::from([("Delivery".to_string(), vec!["Shipment".to_string()])]),
+            choosing: BTreeMap::from([("O1?Delivery#2".to_string(), vec!["Refund".to_string()])]),
         };
         let root = Node {
             kind: "Order".into(),
@@ -777,6 +821,8 @@ mod tests {
             binds: BTreeMap::new(),
             parts: vec![part],
             fetched: BTreeMap::new(),
+            tried: BTreeMap::new(),
+            choosing: BTreeMap::new(),
         };
         Unit {
             label: "O1".into(),

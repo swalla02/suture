@@ -80,7 +80,7 @@ fn misuses_are_errors() {
         (CREDIT.replace("otherwise  use 0 EUR", "otherwise  use \"none\""), "t.st:10: Order.credit is Money, but `otherwise use` gives Text"),
         (CREDIT.replace("credit: Money, cancelled", "credit: Money = total, cancelled"), "t.st:10: Order.credit is calculated by its formula, so it cannot be sourced"),
         (CREDIT.replace("credit: Money, cancelled", "credit: Money = 5 EUR, cancelled"), "t.st:10: Order.credit has a default, so it cannot be sourced"),
-        (format!("{CREDIT}source Order's credit via other within 1 second\n  sends its total\n  reports found\n"), "t.st:19: Order.credit already has a source"),
+        (format!("{CREDIT}source Order's credit via bureau within 1 second\n  sends its total\n  reports found\n"), "t.st:19: Order.credit already has a source via bureau"),
         (CREDIT.replace("  reports    found | fails with unknown\n", ""), "t.st:10: a source needs a `reports` line"),
         (CREDIT.replace("  reports    found | fails with unknown", "  reports    found with x: Text"), "t.st:10: a source's answer carries only credit; drop `with x`"),
         (CREDIT.replace("with credit at most 1 hour old", "with total at most 1 hour old"), "t.st:16: rule credit: `with total at most 1 hour old`: the rule reads no sourced `total`"),

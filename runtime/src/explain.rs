@@ -40,12 +40,21 @@ pub fn explain_at(prog: &Program, unit: &Unit, now: Option<i64>, due: impl Fn(&s
 /// One line per sourced attribute of the node (appendix I.2): where its
 /// value came from, how old it is, or where its fetch stands.
 fn sourced(prog: &Program, n: &Node, now: Option<i64>, depth: usize, out: &mut Vec<String>) {
-    for src in prog.sources.iter().filter(|s| s.kind == n.kind) {
-        let f = n.fetched.get(&src.attr).cloned().unwrap_or_default();
+    let mut seen: Vec<&str> = vec![];
+    for first in prog.sources.iter().filter(|s| s.kind == n.kind) {
+        if seen.contains(&first.attr.as_str()) {
+            continue;
+        }
+        seen.push(&first.attr);
+        let f = n.fetched.get(&first.attr).cloned().unwrap_or_default();
+        // The source the open or last fetch asked (appendix K.2.4).
+        let src = prog.sources_of(&n.kind, &first.attr).into_iter().find(|s| s.adapter == f.via).unwrap_or(first);
         let value = n.attrs.get(&src.attr).map(|v| v.show(&prog.currency));
+        let picking = n.choosing.iter().find(|(k, _)| k.ends_with("?source") && k.contains(&format!("~{}#", src.attr)));
         let what = match (&f, value) {
+            _ if picking.is_some() => format!("a model is picking its source among {}", picking.expect("checked").1.join(", ")),
             (f, _) if f.sends > 0 => format!("asking {}, send {} of {}", src.adapter, f.sends, prog.attempts),
-            (f, _) if f.failed => match &src.otherwise {
+            (f, _) if f.failed => match prog.otherwise_of(&n.kind, &src.attr) {
                 Otherwise::Again(secs) => format!("{} failed; asking again {} after the failure", src.adapter, duration(*secs)),
                 Otherwise::Act(_) => format!("{} failed, and its `otherwise` was applied", src.adapter),
                 _ => format!("{} failed; the steps its rules guard wait", src.adapter),
@@ -69,6 +78,10 @@ fn sourced(prog: &Program, n: &Node, now: Option<i64>, depth: usize, out: &mut V
 /// One line per slot the node fills: its current alternative, and which of
 /// its alternatives that is.
 fn slots(prog: &Program, n: &Node, depth: usize, out: &mut Vec<String>) {
+    for (key, options) in n.choosing.iter().filter(|(k, _)| !k.ends_with("?source")) {
+        let slot = key.rsplit_once('?').and_then(|(_, r)| r.rsplit_once('#')).map_or("", |(s, _)| s);
+        out.push(format!("{}{slot}: a model is choosing among {}", "  ".repeat(depth), options.join(", ")));
+    }
     for (slot, alt) in &n.slots {
         let (i, of) = prog.slot(slot).map_or((0, 0), |s| (s.alternatives.iter().position(|a| a == alt).map_or(0, |i| i + 1), s.alternatives.len()));
         out.push(format!("{}{slot}: {alt} ({i} of {of})", "  ".repeat(depth)));

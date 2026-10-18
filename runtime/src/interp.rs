@@ -4,9 +4,9 @@
 
 use std::collections::BTreeMap;
 
-use suture_lang::ir::{Action, Arith, Body, Cond, Criterion, Decision, Effect, Num, Op, Otherwise, Path, Program, Rule, Source, Step, Ty, CREATED, TIMED_OUT};
+use suture_lang::ir::{Action, Arith, Body, Cond, Criterion, Decision, Effect, Num, Op, Otherwise, Path, Program, Rule, Slot, Source, Step, Ty, CREATED, TIMED_OUT};
 
-use crate::choice::{choose, order};
+use crate::choice::order;
 use crate::state::{period_key, Ask, Bind, Decide, Fact, Facts, Fetch, Msg, Node, Status, Unit, Val};
 
 static NO_TOTALS: BTreeMap<String, Val> = BTreeMap::new();
@@ -246,6 +246,8 @@ fn blank(prog: &Program, kind: &str, attempt: u32, now: i64) -> Node {
         binds: Default::default(),
         parts: vec![],
         fetched: Default::default(),
+        tried: Default::default(),
+        choosing: Default::default(),
     }
 }
 
@@ -274,6 +276,11 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
         Msg::Patience { id } => {
             if !patience(prog, &mut u, id, &mut out) {
                 return Outcome::new(u, out);
+            }
+        }
+        Msg::Answer { key, data, .. } if is_choice(key) => {
+            if let Err(note) = chosen(prog, &mut u, key, data, &mut out) {
+                return Outcome::kept(unit, note, Out::default());
             }
         }
         Msg::Answer { key, outcome, .. } if is_fetch(key) && outcome == TIMED_OUT => {
@@ -581,6 +588,13 @@ pub fn decide_key(prog: &Program, u: &Unit, d: &Decide) -> Option<Val> {
     num(prog, v, &at, &prog.bindings.get(d.binding as usize)?.key)
 }
 
+/// The kind of the part that makes a binding's choice, and its attributes.
+pub fn chooser(prog: &Program, u: &Unit, d: &Decide) -> Option<(String, Vec<(String, Val)>)> {
+    let (at, _) = decide_place(prog, u, d)?;
+    let n = node_at(&u.root, &at);
+    Some((n.kind.clone(), n.attrs.clone().into_iter().collect()))
+}
+
 fn decide_place(prog: &Program, u: &Unit, d: &Decide) -> Option<(Vec<usize>, Option<Vec<usize>>)> {
     let at = positions(&u.root).into_iter().find(|at| request_key(&u.label, &u.root, at) == d.node)?;
     let (_, _, elem) = bind_slots(prog, &u.root, &at).into_iter().find(|(id, ..)| *id == d.bind)?;
@@ -625,12 +639,18 @@ pub fn options(prog: &Program, u: &Unit, d: &Decide, candidates: impl Iterator<I
 pub fn handler<'p>(prog: &'p Program, u: &Unit, d: &Decide) -> Option<&'p Decision> {
     let b = prog.bindings.get(d.binding as usize).filter(|b| !b.key_attr.is_empty())?;
     let (at, _) = decide_place(prog, u, d)?;
+    handler_at(prog, u, &at, &b.target)
+}
+
+/// The `decide` that handles the choice point `point` (a binding's target, a
+/// slot, or `Order's credit`) made by the node at `at` (appendix K.2.1).
+pub fn handler_at<'p>(prog: &'p Program, u: &Unit, at: &[usize], point: &str) -> Option<&'p Decision> {
     // The choosing part, its owner, …, the root.
     let chain: Vec<Vec<usize>> = (0..=at.len()).rev().map(|n| at[..n].to_vec()).collect();
     let v = View::of(u);
     prog.decisions
         .iter()
-        .filter(|x| x.point.as_ref().is_none_or(|p| *p == b.target))
+        .filter(|x| x.point.as_ref().is_none_or(|p| p == point))
         .filter_map(|x| {
             let (near, pos) = match &x.scope {
                 None => (0, vec![]),
@@ -877,11 +897,11 @@ fn settle(prog: &Program, u: &mut Unit, out: &mut Out, now: i64) {
 /// change.
 fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut Out) -> bool {
     enum Change {
-        Add(Node, String),
+        Add(Box<Node>, String),
         Remove(usize, String),
         Hold(String, String),
         Release(String),
-        Fill(String, String, String),
+        Move(String, String),
         Unfill(String),
     }
     let key = node_key(&u.label, &u.root, at);
@@ -898,9 +918,11 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut Ou
                 None => need.part.clone(),
                 Some(s) => match n.slots.get(&s.name) {
                     Some(alt) => alt.clone(),
+                    // A model is choosing its alternative: nothing is created meanwhile.
+                    None if active && choosing(n, &key, &s.name) => continue,
                     None if active => {
-                        change = choose(s, None).map(|first| Change::Fill(s.name.clone(), first.clone(), format!("{}: trying {first}", s.name)));
-                        if change.is_some() {
+                        if !options_of(n, s).is_empty() {
+                            change = Some(Change::Move(s.name.clone(), String::new()));
                             break;
                         }
                         continue;
@@ -918,8 +940,8 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut Ou
                 }
                 Some((_, p)) if active && p.status == Status::Failed => {
                     // Failed for good: a slot moves on to its next alternative.
-                    if let Some((s, next)) = slot.and_then(|s| choose(s, Some(&want)).map(|next| (s, next))) {
-                        change = Some(Change::Fill(s.name.clone(), next.clone(), format!("{}: {want} failed, trying {next}", s.name)));
+                    if let Some(s) = slot.filter(|s| !options_of(n, s).is_empty()) {
+                        change = Some(Change::Move(s.name.clone(), format!("{want} failed, ")));
                     }
                     None
                 }
@@ -937,16 +959,16 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut Ou
                 let pos = child(at, node_at(&t, at).parts.len() - 1);
                 while formulas(prog, &mut t, &u.facts, &pos) {}
                 let part = node_at(&t, &pos).clone();
-                let next = slot.and_then(|s| choose(s, Some(&want)).map(|next| (s, next)));
+                let next = slot.filter(|s| !options_of(n, s).is_empty());
                 change = match newly_broken(prog, View::of(u).acting(now), &t) {
                     // Refused on facts that never change: move on at once (appendix F.2.15).
                     Some(r) if r.fixed && next.is_some() => {
-                        let (s, next) = next.expect("checked above");
-                        Some(Change::Fill(s.name.clone(), next.clone(), format!("{}: {want} refused by rule {}, trying {next}", s.name, r.name)))
+                        let s = next.expect("checked above");
+                        Some(Change::Move(s.name.clone(), format!("{want} refused by rule {}, ", r.name)))
                     }
                     Some(r) if n.held.get(&want) == Some(&r.name) => None,
                     Some(r) => Some(Change::Hold(want.clone(), r.name.clone())),
-                    None => Some(Change::Add(part, note)),
+                    None => Some(Change::Add(Box::new(part), note)),
                 };
             } else if change.is_none() && !active && n.held.contains_key(&want) {
                 change = Some(Change::Release(want.clone()));
@@ -965,7 +987,7 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut Ou
     match change {
         Some(Change::Add(part, note)) => {
             n.held.remove(&part.kind);
-            n.parts.push(part);
+            n.parts.push(*part);
             u.notes.push(note);
             true
         }
@@ -978,14 +1000,12 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut Ou
             n.held.remove(&part);
             true
         }
-        Some(Change::Fill(slot, alt, note)) => {
-            n.slots.insert(slot.clone(), alt.clone());
-            u.notes.push(note);
-            ask_patience(prog, u, &key, &slot, &alt);
-            true
-        }
+        Some(Change::Move(slot, why)) => move_slot(prog, u, at, &slot, &why, out),
         Some(Change::Unfill(slot)) => {
             n.slots.remove(&slot);
+            n.tried.remove(&slot);
+            let open = format!("{key}?{slot}#");
+            n.choosing.retain(|k, _| !k.starts_with(&open));
             true
         }
         Some(Change::Remove(i, note)) => {
@@ -1013,7 +1033,7 @@ fn ask_patience(prog: &Program, u: &mut Unit, owner_key: &str, slot: &str, alt: 
 /// position, the slot, the alternative it waited on and the next one. It
 /// moves on only while that alternative is still current and its part has
 /// not reached the outside world (appendix D.3.3).
-pub fn patience_due<'p>(prog: &'p Program, unit: &Unit, id: &str) -> Option<(Vec<usize>, &'p str, String, String)> {
+pub fn patience_due<'p>(prog: &'p Program, unit: &Unit, id: &str) -> Option<(Vec<usize>, &'p str, String)> {
     let (base, _) = id.rsplit_once('#')?;
     let (left, alt) = base.rsplit_once(':')?;
     let (owner_key, slot) = left.rsplit_once('/')?;
@@ -1031,15 +1051,14 @@ pub fn patience_due<'p>(prog: &'p Program, unit: &Unit, id: &str) -> Option<(Vec
         return None;
     }
     let s = prog.slot(slot)?;
-    let next = choose(s, Some(alt))?;
-    Some((at, s.name.as_str(), alt.to_string(), next))
+    options_of(n, s).first()?;
+    Some((at, s.name.as_str(), alt.to_string()))
 }
 
 /// Moves a slot on when its patience ran out: an untouched part is withdrawn.
 fn patience(prog: &Program, u: &mut Unit, id: &str, out: &mut Out) -> bool {
-    let Some((at, slot, alt, next)) = patience_due(prog, u, id) else { return false };
+    let Some((at, slot, alt)) = patience_due(prog, u, id) else { return false };
     let secs = prog.slot(slot).and_then(|s| s.patience[s.alternatives.iter().position(|a| *a == alt)?]).unwrap_or(0);
-    let key = node_key(&u.label, &u.root, &at);
     if let Some(i) = current(node_at(&u.root, &at), &alt) {
         give_back(&u.label, &u.root, &child(&at, i), out);
     }
@@ -1048,10 +1067,108 @@ fn patience(prog: &Program, u: &mut Unit, id: &str, out: &mut Out) -> bool {
         n.parts.remove(i);
     }
     n.held.remove(&alt);
-    n.slots.insert(slot.to_string(), next.clone());
-    u.notes.push(format!("{slot}: no {alt} after {}, trying {next}", duration(secs)));
-    ask_patience(prog, u, &key, slot, &next);
+    move_slot(prog, u, &at, slot, &format!("no {alt} after {}, ", duration(secs)), out)
+}
+
+/// The alternatives a slot may still move to, in `prefer` order: those not
+/// tried since it was last filled afresh (appendix K.2.3).
+fn options_of(n: &Node, s: &Slot) -> Vec<String> {
+    let tried = n.tried.get(&s.name).map(Vec::as_slice).unwrap_or_default();
+    s.alternatives.iter().filter(|a| !tried.contains(a)).cloned().collect()
+}
+
+/// Whether a model is choosing the slot of the node keyed `key`.
+fn choosing(n: &Node, key: &str, slot: &str) -> bool {
+    let open = format!("{key}?{slot}#");
+    n.choosing.keys().any(|k| k.starts_with(&open))
+}
+
+/// Fills a slot of the node at `at` with its next alternative, or puts the
+/// choice to the model that handles it when there is more than one
+/// (appendix K.2.2–K.2.3). `why` starts its note.
+fn move_slot(prog: &Program, u: &mut Unit, at: &[usize], slot: &str, why: &str, out: &mut Out) -> bool {
+    let Some(s) = prog.slot(slot) else { return false };
+    let options = options_of(node_at(&u.root, at), s);
+    if options.is_empty() {
+        return false;
+    }
+    let model = handler_at(prog, u, at, slot).and_then(|h| Some((h.model.clone()?, h.within_ms)));
+    match model {
+        Some((model, within)) if options.len() > 1 => {
+            let key = node_key(&u.label, &u.root, at);
+            let n = node_at_mut(&mut u.root, at);
+            let ask_key = format!("{key}?{slot}#{}", n.tried.get(slot).map_or(0, Vec::len) + 1);
+            n.slots.remove(slot);
+            n.choosing.insert(ask_key.clone(), options);
+            u.notes.push(format!("{slot}: {why}asking model \"{model}\""));
+            out.asks.push(model_ask(&u.label, &model, slot, ask_key, within));
+        }
+        _ => fill(prog, u, at, slot, &options[0], why),
+    }
     true
+}
+
+fn fill(prog: &Program, u: &mut Unit, at: &[usize], slot: &str, alt: &str, why: &str) {
+    let key = node_key(&u.label, &u.root, at);
+    let n = node_at_mut(&mut u.root, at);
+    n.slots.insert(slot.to_string(), alt.to_string());
+    n.tried.entry(slot.to_string()).or_default().push(alt.to_string());
+    u.notes.push(format!("{slot}: {why}trying {alt}"));
+    ask_patience(prog, u, &key, slot, alt);
+}
+
+/// A choice put to a model (appendix K.2.3): the host asks it at once, within
+/// its deadline, and answers with the pick, or with `prefer`'s.
+fn model_ask(label: &str, model: &str, point: &str, key: String, within_ms: u64) -> Ask {
+    Ask {
+        adapter: model.to_string(),
+        verb: MODEL_VERB.into(),
+        kind: point.to_string(),
+        label: label.to_string(),
+        key,
+        sends: vec![("within".into(), Val::Count(within_ms as i64))],
+    }
+}
+
+/// The verb of a request to a model.
+pub const MODEL_VERB: &str = "decide";
+
+/// Whether a request key is a choice put to a model: `O1?Delivery#1`, `O1~credit#2?source`.
+pub fn is_choice(key: &str) -> bool {
+    key.contains('?')
+}
+
+/// A choice put to a model, as its unit holds it: the kind of the node that
+/// chooses, its attributes, and the options in `prefer` order.
+pub type Pending = (String, Vec<(String, Val)>, Vec<String>);
+
+/// The choice put to a model under `key`; see [`Pending`].
+pub fn choice_of(u: &Unit, key: &str) -> Option<Pending> {
+    let at = positions(&u.root).into_iter().find(|at| node_at(&u.root, at).choosing.contains_key(key))?;
+    let n = node_at(&u.root, &at);
+    Some((n.kind.clone(), n.attrs.clone().into_iter().collect(), n.choosing[key].clone()))
+}
+
+/// A model's answer, or `prefer`'s in its place, as the host injected it:
+/// the pick fills the slot, or names the source to ask. A pick that is not
+/// among the options takes the first.
+fn chosen(prog: &Program, u: &mut Unit, key: &str, data: &[(String, Val)], out: &mut Out) -> Result<(), String> {
+    let Some(at) = positions(&u.root).into_iter().find(|at| node_at(&u.root, at).choosing.contains_key(key)) else {
+        return Err(format!("ignored a pick for {key}: nothing is being chosen"));
+    };
+    let options = node_at_mut(&mut u.root, &at).choosing.remove(key).expect("found above");
+    let pick = match data {
+        [(name, Val::Text(p))] if name == "pick" && options.contains(p) => p.clone(),
+        _ => options[0].clone(),
+    };
+    if let Some(fetch) = key.strip_suffix("?source") {
+        let attr = fetch.rsplit_once('~').and_then(|(_, r)| r.rsplit_once('#')).map(|(a, _)| a.to_string()).unwrap_or_default();
+        ask_source(prog, u, &at, &attr, &pick, "", out);
+        return Ok(());
+    }
+    let slot = key.rsplit_once('?').and_then(|(_, r)| r.rsplit_once('#')).map(|(s, _)| s.to_string()).unwrap_or_default();
+    fill(prog, u, &at, &slot, &pick, "");
+    Ok(())
 }
 
 /// A part with no effect of its own is done once every active need of it is
@@ -1134,6 +1251,52 @@ fn fetch_key(label: &str, root: &Node, at: &[usize], attr: &str, n: u32) -> Stri
     format!("{}~{attr}#{n}", node_key(label, root, at))
 }
 
+/// The source the open or last fetch of `attr` asked: the first, before any.
+fn via<'p>(prog: &'p Program, kind: &str, attr: &str, f: &Fetch) -> &'p Source {
+    let all = prog.sources_of(kind, attr);
+    let first = prog.source_of(kind, attr).expect("a sourced attribute has a source");
+    all.into_iter().find(|s| s.adapter == f.via).unwrap_or(first)
+}
+
+/// Starts the fetch of `attr` at `at` with a source not yet tried in it
+/// (appendix K.2.4): the only one left, the first under `prefer`, or the
+/// one its model picks. `why` starts its note. False if none is left.
+fn pick_source(prog: &Program, u: &mut Unit, at: &[usize], attr: &str, why: &str, out: &mut Out) -> bool {
+    let n = node_at(&u.root, at);
+    let kind = n.kind.clone();
+    let f = n.fetched.get(attr).cloned().unwrap_or_default();
+    let options: Vec<String> = prog.sources_of(&kind, attr).into_iter().map(|s| s.adapter.clone()).filter(|a| !f.tried.contains(a)).collect();
+    if options.is_empty() {
+        return false;
+    }
+    let point = format!("{kind}'s {attr}");
+    let model = handler_at(prog, u, at, &point).and_then(|h| Some((h.model.clone()?, h.within_ms)));
+    match model {
+        Some((model, within)) if options.len() > 1 => {
+            let key = format!("{}?source", fetch_key(&u.label, &u.root, at, attr, f.n));
+            node_at_mut(&mut u.root, at).choosing.insert(key.clone(), options);
+            u.notes.push(format!("{attr}: {why}asking model \"{model}\" for a source"));
+            out.asks.push(model_ask(&u.label, &model, &point, key, within));
+        }
+        _ => ask_source(prog, u, at, attr, &options[0], why, out),
+    }
+    true
+}
+
+/// Sends the open fetch of `attr` at `at` to the source `adapter`.
+fn ask_source(prog: &Program, u: &mut Unit, at: &[usize], attr: &str, adapter: &str, why: &str, out: &mut Out) {
+    let kind = node_at(&u.root, at).kind.clone();
+    let Some(src) = prog.sources_of(&kind, attr).into_iter().find(|s| s.adapter == adapter) else { return };
+    let f = node_at_mut(&mut u.root, at).fetched.entry(attr.to_string()).or_default();
+    let again = if f.at.is_some() && f.tried.is_empty() { " again" } else { "" };
+    f.via = adapter.to_string();
+    f.sends = 1;
+    let a = fetch_ask(&u.label, View::of(u), at, src);
+    let sends: Vec<String> = a.sends.iter().map(|(k, v)| format!("{k} {}", v.show(&prog.currency))).collect();
+    u.notes.push(format!("{attr}: {why}asking {adapter}{again} ({})", sends.join(", ")));
+    out.asks.push(a);
+}
+
 fn fetch_ask(label: &str, v: View, at: &[usize], src: &Source) -> Ask {
     let n = node_at(v.root, at).fetched.get(&src.attr).map_or(0, |f| f.n);
     let sends = src.sends.iter().filter_map(|(name, path)| value(v, at, path).map(|x| (name.clone(), x))).collect();
@@ -1168,7 +1331,9 @@ fn sources_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut 
     for name in waits {
         let Some(r) = prog.rules.iter().find(|r| r.name == name) else { continue };
         for (kind, attr) in &r.sources {
-            let Some(src) = prog.source_of(kind, attr) else { continue };
+            if prog.source_of(kind, attr).is_none() {
+                continue;
+            }
             let bound = r.fresh.iter().find(|(a, _)| a == attr).map(|(_, secs)| *secs);
             for pos in positions(&u.root) {
                 let node = node_at(&u.root, &pos);
@@ -1177,23 +1342,20 @@ fn sources_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut 
                     continue;
                 }
                 let f = node.fetched.get(attr).cloned().unwrap_or_default();
-                if f.sends > 0 || f.failed || f.fresh(now, bound) {
+                let picking = format!("{}?source", fetch_key(&u.label, &u.root, &pos, attr, f.n));
+                if f.sends > 0 || f.failed || f.fresh(now, bound) || node.choosing.contains_key(&picking) {
                     continue;
                 }
+                let last = via(prog, kind, attr, &f);
                 let why = match (f.at, bound) {
-                    (None, _) => format!("asking {}", src.adapter),
-                    (Some(_), Some(b)) if f.until.is_none_or(|until| now < until) => {
-                        format!("older than {} for rule {}: asking {} again", duration(b), r.name, src.adapter)
-                    }
-                    (Some(_), _) => format!("older than {}: asking {} again", duration(src.good_for.unwrap_or(0)), src.adapter),
+                    (None, _) => String::new(),
+                    (Some(_), Some(b)) if f.until.is_none_or(|until| now < until) => format!("older than {} for rule {}: ", duration(b), r.name),
+                    (Some(_), _) => format!("older than {}: ", duration(last.good_for.unwrap_or(0))),
                 };
                 let fetch = node_at_mut(&mut u.root, &pos).fetched.entry(attr.clone()).or_default();
                 fetch.n += 1;
-                fetch.sends = 1;
-                let a = fetch_ask(&u.label, View::of(u), &pos, src);
-                let sends: Vec<String> = a.sends.iter().map(|(k, v)| format!("{k} {}", v.show(&prog.currency))).collect();
-                u.notes.push(format!("{attr}: {why} ({})", sends.join(", ")));
-                out.asks.push(a);
+                fetch.tried.clear();
+                pick_source(prog, u, &pos, attr, &why, out);
                 return true;
             }
         }
@@ -1205,15 +1367,15 @@ fn sources_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut 
 /// or the fetch fails. A malformed answer is refused and asked again.
 fn fetch_answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[(String, Val)], now: i64, out: &mut Out) -> Result<(), String> {
     let Some((at, attr)) = find_fetch(u, key, true) else { return Err(format!("ignored an answer for {key}: no open fetch")) };
-    let kind = node_at(&u.root, &at).kind.clone();
-    let src = prog.source_of(&kind, &attr).expect("a fetch has a source");
+    let n = node_at(&u.root, &at);
+    let src = via(prog, &n.kind, &attr, &n.fetched[&attr]);
     let mut refuse = |why: String| {
         out.asks.push(fetch_ask(&u.label, View::of(u), &at, src));
         Err(format!("refused an answer for {key}: {why}"))
     };
     if outcome != src.success {
         if src.failures.iter().any(|f| f == outcome) {
-            fail(prog, u, &at, src, key, outcome, now);
+            fail(prog, u, &at, src, key, outcome, now, out);
             return Ok(());
         }
         return refuse(format!("a source of {attr} reports `{}` or fails with {}, not `{outcome}`", src.success, src.failures.join(", ")));
@@ -1227,7 +1389,7 @@ fn fetch_answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[
     let n = node_at_mut(&mut u.root, &at);
     n.attrs.insert(attr.clone(), value);
     let f = n.fetched.entry(attr.clone()).or_default();
-    *f = Fetch { n: f.n, sends: 0, at: Some(now), until: src.good_for.map(|g| now + g as i64), failed: false, fallback: false };
+    *f = Fetch { sends: 0, at: Some(now), until: src.good_for.map(|g| now + g as i64), failed: false, fallback: false, tried: vec![], ..f.clone() };
     match src.good_for {
         Some(g) => {
             u.notes.push(format!("{attr}: {shown} from {}, trusted for {}", src.adapter, duration(g)));
@@ -1242,8 +1404,8 @@ fn fetch_answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[
 /// last send it fails.
 fn fetch_deadline(prog: &Program, u: &mut Unit, key: &str, now: i64, out: &mut Out) -> Result<(), String> {
     let Some((at, attr)) = find_fetch(u, key, true) else { return Err(format!("ignored a deadline for {key}: no open fetch")) };
-    let kind = node_at(&u.root, &at).kind.clone();
-    let src = prog.source_of(&kind, &attr).expect("a fetch has a source");
+    let n = node_at(&u.root, &at);
+    let src = via(prog, &n.kind, &attr, &n.fetched[&attr]);
     let f = node_at_mut(&mut u.root, &at).fetched.entry(attr.clone()).or_default();
     if f.sends < prog.attempts {
         f.sends += 1;
@@ -1252,18 +1414,31 @@ fn fetch_deadline(prog: &Program, u: &mut Unit, key: &str, now: i64, out: &mut O
         out.asks.push(fetch_ask(&u.label, View::of(u), &at, src));
         return Ok(());
     }
-    fail(prog, u, &at, src, key, &format!("timed out after {} sends", prog.attempts), now);
+    fail(prog, u, &at, src, key, &format!("timed out after {} sends", prog.attempts), now, out);
     Ok(())
 }
 
-/// A fetch failed: the source's `otherwise` applies (appendix I.2.6).
-fn fail(prog: &Program, u: &mut Unit, at: &[usize], src: &Source, key: &str, why: &str, now: i64) {
+/// A fetch failed: it moves on to a source not yet tried (appendix K.2.4),
+/// or, with none left, the attribute's `otherwise` applies (appendix I.2.6).
+#[allow(clippy::too_many_arguments)]
+fn fail(prog: &Program, u: &mut Unit, at: &[usize], src: &Source, key: &str, why: &str, now: i64, out: &mut Out) {
     let attr = &src.attr;
     let f = node_at_mut(&mut u.root, at).fetched.entry(attr.clone()).or_default();
     f.sends = 0;
+    f.tried.push(src.adapter.clone());
+    let tried = f.tried.clone();
+    if prog.sources_of(&src.kind, attr).into_iter().any(|s| !tried.contains(&s.adapter)) {
+        // A new fetch number, so a late answer from this source is ignored.
+        f.n += 1;
+        pick_source(prog, u, at, attr, &format!("{} failed ({why}), ", src.adapter), out);
+        return;
+    }
     f.failed = true;
     let failed = format!("{attr}: {} failed ({why})", src.adapter);
-    match &src.otherwise {
+    // The `otherwise`, and the `good for` of the source that gives it.
+    let otherwise = prog.otherwise_of(&src.kind, attr);
+    let src = prog.sources_of(&src.kind, attr).into_iter().find(|s| s.otherwise == *otherwise).unwrap_or(src);
+    match otherwise {
         Otherwise::Hold => u.notes.push(format!("{failed}; the steps its rules guard wait")),
         Otherwise::Use(l) => {
             let v = Val::from_lit(l);
@@ -1271,7 +1446,7 @@ fn fail(prog: &Program, u: &mut Unit, at: &[usize], src: &Source, key: &str, why
             let n = node_at_mut(&mut u.root, at);
             n.attrs.insert(attr.clone(), v);
             let f = n.fetched.entry(attr.clone()).or_default();
-            *f = Fetch { n: f.n, sends: 0, at: Some(now), until: src.good_for.map(|g| now + g as i64), failed: false, fallback: true };
+            *f = Fetch { sends: 0, at: Some(now), until: src.good_for.map(|g| now + g as i64), failed: false, fallback: true, tried: vec![], ..f.clone() };
             if let Some(g) = src.good_for {
                 u.timers.push((format!("{key}:stale"), g));
             }

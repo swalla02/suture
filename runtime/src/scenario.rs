@@ -2,8 +2,9 @@
 
 use suture_lang::ast::Literal;
 use suture_lang::ir::Program;
-use suture_lang::scenario::{Caller, Refused, Scenario, ScenarioStep};
+use suture_lang::scenario::{Caller, ModelAnswer, Refused, Scenario, ScenarioStep};
 
+use crate::choice::Scripted;
 use crate::host::Host;
 use crate::interp::{duration, holds, in_state};
 use crate::state::Val;
@@ -24,7 +25,14 @@ impl Report {
 /// Runs every step in order. A step that cannot apply fails the report, and
 /// the run continues with the next step.
 pub fn run(prog: &Program, sc: &Scenario) -> Report {
+    run_with(prog, sc, |_| {})
+}
+
+/// Like [`run`], with the host first prepared by `setup`: to register
+/// model backends, for instance.
+pub fn run_with(prog: &Program, sc: &Scenario, setup: impl FnOnce(&mut Host)) -> Report {
     let mut host = Host::new(prog.clone());
+    setup(&mut host);
     let mut failures = vec![];
     for (i, step) in sc.steps.iter().enumerate() {
         let result = match step {
@@ -43,9 +51,26 @@ pub fn run(prog: &Program, sc: &Scenario) -> Report {
             ScenarioStep::Model { model, .. } if !prog.decisions.iter().any(|d| d.model.as_ref() == Some(model)) => {
                 Err(format!("no `decide` names model \"{model}\""))
             }
-            ScenarioStep::Model { model, picks } => {
-                host.trace.push(format!("      model \"{model}\" will pick {}", picks.join(", then ")));
-                host.models.script(model, picks.iter().cloned());
+            ScenarioStep::Model { model, answers } => {
+                let shown: Vec<String> = answers
+                    .iter()
+                    .map(|a| match a {
+                        ModelAnswer::Pick(p) => format!("pick {p}"),
+                        ModelAnswer::Decline => "decline".into(),
+                        ModelAnswer::Late => "be late".into(),
+                    })
+                    .collect();
+                // `will pick Fast, then Small`
+                let shown = shown.join(", then ").replace(", then pick ", ", then ");
+                host.trace.push(format!("      model \"{model}\" will {shown}"));
+                host.models.answers(
+                    model,
+                    answers.iter().map(|a| match a {
+                        ModelAnswer::Pick(p) => Scripted::Pick(p.clone()),
+                        ModelAnswer::Decline => Scripted::Decline,
+                        ModelAnswer::Late => Scripted::Late,
+                    }),
+                );
                 Ok(())
             }
             ScenarioStep::Answer { adapter, outcome, data, target } => {

@@ -82,8 +82,11 @@ decide Carrier for Orders whose total is at least 1000 EUR with model \"careful@
 fn misuses_are_errors() {
     let slot = SHOP.replace("Order needs Shipment", "Order needs Delivery\nDelivery is Shipment or Refund\nkind Refund { order: Order }");
     let cases = [
-        (format!("{SHOP}decide Product with model \"m@1\"\n"), "t.st:15: no `uses` picks a Product, so there is no choice to decide"),
-        (format!("{slot}decide Delivery with model \"m@1\"\n"), "t.st:17: Delivery is a slot; v0 picks a slot's alternative by `prefer` and patience, not by a model"),
+        (format!("{SHOP}decide Product with model \"m@1\"\n"), "t.st:15: no `uses`, slot or source picks a Product, so there is no choice to decide"),
+        (
+            format!("{slot}decide Delivery with model \"a@1\"\ndecide Delivery with model \"b@1\"\n"),
+            "t.st:18: `decide Delivery with model \"b@1\"` and `decide Delivery with model \"a@1\"` (line 17) can both decide an Order's Delivery, and neither is more specific",
+        ),
         (format!("{SHOP}decide for Parcels with model \"m@1\"\n"), "t.st:15: unknown kind `Parcels`"),
         (format!("{SHOP}decide Stock for Carriers with model \"m@1\"\n"), "t.st:15: no Stock is chosen inside a Carrier"),
         (format!("{SHOP}decide Carrier with model \"carriers\"\n"), "t.st:15: a model is named `name@version`, as in \"carriers@1\""),
@@ -107,4 +110,70 @@ fn a_model_is_part_of_the_program() {
     let a = prog(&format!("{SHOP}decide Carrier with model \"carriers@1\"\n"));
     let b = prog(&format!("{SHOP}decide Carrier with model \"carriers@2\"\n"));
     assert_ne!(serde_json::to_string(&a).unwrap(), serde_json::to_string(&b).unwrap());
+}
+
+const CREDIT: &str = "kind Customer { name: Text }
+kind Order   { customer: Customer, total: Money, credit: Money }
+kind Payment { order: Order }
+Order needs Payment
+effect capture Payment via payments within 30 seconds
+  sends    the order's total
+  marks    sent
+  reports  captured
+rule credit: no Order has a Payment that is sent unless its total is at most its credit
+";
+
+#[test]
+fn slots_and_sources_are_choice_points() {
+    let slot = SHOP.replace("Order needs Shipment", "Order needs Delivery\nDelivery is Shipment or Refund\nkind Refund { order: Order }");
+    let p = prog(&format!("{slot}decide Delivery with model \"routing@1\" within 300 milliseconds\n"));
+    assert_eq!(p.decisions[0].point.as_deref(), Some("Delivery"));
+    assert_eq!(p.decisions[0].within_ms, 300);
+    let p = prog(&format!(
+        "{CREDIT}source Order's credit via bureau within 5 seconds
+  sends    the customer's name
+  reports  found
+source Order's credit via backup within 2 seconds
+  sends    the customer's name
+  reports  found
+  otherwise  use 0 EUR
+decide Order's credit with model \"sources@1\" within 2 seconds
+"
+    ));
+    assert_eq!(p.sources_of("Order", "credit").len(), 2);
+    assert_eq!(p.decisions[0].point.as_deref(), Some("Order's credit"));
+    assert_eq!(p.decisions[0].within_ms, 2000);
+    assert!(p.choice_points().iter().any(|c| c.name == "Order's credit" && c.chooser == "Order"));
+    let p = prog(&format!("{SHOP}decide Carrier with model \"carriers@1\"\n"));
+    assert_eq!(p.decisions[0].within_ms, 1000, "a model has 1 second by default");
+}
+
+#[test]
+fn source_choice_misuses_are_errors() {
+    let src = |extra: &str| {
+        format!(
+            "{CREDIT}source Order's credit via bureau within 5 seconds
+  sends    the customer's name
+  reports  found
+  otherwise  use 0 EUR
+{extra}"
+        )
+    };
+    let cases = [
+        (src("decide Order's credit with model \"m@1\"\n"), "t.st:15: Order's credit has one source, so there is no choice to decide"),
+        (src("decide Order's total with model \"m@1\"\n"), "t.st:15: Order's total has no sources, so there is no choice to decide"),
+        (
+            src("source Order's credit via bureau within 1 second\n  sends the customer's name\n  reports found\n"),
+            "t.st:15: Order.credit already has a source via bureau",
+        ),
+        (
+            src("source Order's credit via backup within 1 second\n  sends the customer's name\n  reports found\n  otherwise use 1 EUR\n"),
+            "t.st:15: Order.credit already has an `otherwise`; it applies when every source has failed, so give it once",
+        ),
+        (src("decide Order's credit with prefer within 1 second\n"), "t.st:15:"),
+    ];
+    for (src, want) in cases {
+        let e = errors(&src);
+        assert!(e.iter().any(|x| x.starts_with(want)), "want {want}\ngot {e:#?}");
+    }
 }

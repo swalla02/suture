@@ -332,6 +332,8 @@ pub struct DecideDecl {
     pub cond: Option<Cond>,
     /// `None`: `with prefer`.
     pub model: Option<String>,
+    /// `within 300 milliseconds`.
+    pub within_ms: Option<u64>,
     pub source: String,
     pub at: Loc,
 }

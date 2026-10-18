@@ -322,21 +322,68 @@ impl Host {
         let candidates = labels.iter().filter(|l| !d.skip.contains(l)).filter_map(|l| self.unit(l)).collect::<Vec<_>>();
         let options = interp::options(&prog, u, d, candidates.into_iter());
         let first = options.first()?.label.clone();
-        let Some(model) = interp::handler(&prog, u, d).and_then(|h| h.model.clone()) else { return Some((first, String::new())) };
-        let names: Vec<&str> = options.iter().map(|o| o.label.as_str()).collect();
+        // With one option there is no choice, and no model is asked (appendix K.2.2).
+        let model = interp::handler(&prog, u, d).and_then(|h| Some((h.model.clone()?, h.within_ms))).filter(|_| options.len() > 1);
+        let Some((model, within)) = model else { return Some((first, String::new())) };
+        let (chooser, facts) = interp::chooser(&prog, u, d).unwrap_or_default();
         let choice = Choice {
             point: b.target.clone(),
             unit: u.label.clone(),
             key: d.key(),
+            chooser,
+            facts,
             options: options.iter().map(|o| Option_ { label: o.label.clone(), attrs: o.root.attrs.clone().into_iter().collect() }).collect(),
+            currency: prog.currency.clone(),
         };
-        let how = match self.models.ask(&model, &choice) {
-            Answer::Picked(p) if names.contains(&p.as_str()) => return Some((p, format!(" by model \"{model}\" (of {})", names.join(", ")))),
+        Some(self.consult(&model, &choice, within))
+    }
+
+    /// The model's pick among the choice's options, which come best first, and
+    /// how it was made. Whatever goes wrong leaves the pick to `prefer`, and
+    /// says why (appendix K.2.5).
+    fn consult(&mut self, model: &str, c: &Choice, within: u64) -> (String, String) {
+        let names: Vec<&str> = c.options.iter().map(|o| o.label.as_str()).collect();
+        let how = match self.models.ask(model, c, within) {
+            Answer::Picked(p) if names.contains(&p.as_str()) => return (p, format!(" by model \"{model}\" (of {})", names.join(", "))),
             Answer::Picked(p) => format!("model \"{model}\" picked {p}, which it was not offered"),
             Answer::Declined => format!("model \"{model}\" declined"),
             Answer::Unknown => format!("model \"{model}\" is not available"),
+            Answer::Late => format!("model \"{model}\" did not answer within {within} ms"),
+            Answer::Unsure(x) => format!("model \"{model}\" was unsure, at {x:.2}"),
+            Answer::Failed(e) => format!("model \"{model}\" failed: {e}"),
         };
-        Some((first, format!(" by prefer ({how})")))
+        (names[0].to_string(), format!(" by prefer ({how})"))
+    }
+
+    /// A slot's or a source's choice put to a model (appendix K.2.3–K.2.4):
+    /// asked at once, and its pick, or `prefer`'s, injected as the answer, so
+    /// the journal holds it.
+    fn ask_model(&mut self, ask: &Ask, hole: HoleId) -> Result<(), String> {
+        let u = self.unit(&ask.label).ok_or_else(|| format!("{}: a choice for a unit that is gone", ask.label))?;
+        let (chooser, facts, options) = interp::choice_of(&u, &ask.key).ok_or_else(|| format!("{}: nothing is being chosen", ask.key))?;
+        let within = match ask.sends.as_slice() {
+            [(_, Val::Count(ms))] => u64::try_from(*ms).unwrap_or(0),
+            _ => 0,
+        };
+        let c = Choice {
+            point: ask.kind.clone(),
+            unit: ask.label.clone(),
+            key: ask.key.clone(),
+            chooser,
+            facts,
+            options: options.iter().map(|o| Option_ { label: o.clone(), attrs: vec![] }).collect(),
+            currency: self.prog.currency.clone(),
+        };
+        let (pick, how) = self.consult(&ask.adapter, &c, within);
+        let sig = self.machine.program().sig.clone();
+        let mut b = NetBuilder::new(&sig);
+        let meet = b.var();
+        b.agent(self.kinds.answer, answer_value("picked", &[("pick".into(), Val::Text(pick.clone()))]), meet, &[]);
+        let net = b.finish().map_err(|e| e.to_string())?;
+        let inj = Injection::new(net).at_hole(meet, hole).key(format!("model:{:032x}", hole.0));
+        self.machine.inject(inj).map_err(|e| e.to_string())?;
+        self.trace.push(format!("      choice: {pick} for {}{how}", ask.key));
+        Ok(())
     }
 
     fn pick(&mut self, hole: HoleId, label: &str, d: &Decide, how: &str) -> Result<(), String> {
@@ -654,6 +701,12 @@ impl Host {
             }
             self.machine.commit().map_err(|e| e.to_string())?;
             for (ask, hole) in outside {
+                if ask.verb == interp::MODEL_VERB {
+                    if let Err(x) = self.ask_model(&ask, hole) {
+                        first_error.get_or_insert(x);
+                    }
+                    continue;
+                }
                 let within = self.prog.request_within(&ask.kind);
                 self.expired.retain(|a| a.key != ask.key);
                 self.schedule(self.now + within, Timer::Deadline(hole));

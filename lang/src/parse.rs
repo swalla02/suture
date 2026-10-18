@@ -599,7 +599,13 @@ fn decide(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     let toks = st.tokens();
     let mut c = Cursor::new(&toks, &st.file, st.line);
     c.expect_word("decide")?;
-    let point = if c.is_word("for") || c.is_word("with") { None } else { Some(c.kind_name()?) };
+    let point = if c.is_word("for") || c.is_word("with") {
+        None
+    } else {
+        let k = c.kind_name()?;
+        // `decide Order's credit`: the source of a sourced attribute.
+        if c.eat_poss() { Some(format!("{k}'s {}", c.word()?)) } else { Some(k) }
+    };
     let (scope, cond) = if c.eat_word("for") {
         let scope = c.kind_name()?;
         let cond = if c.eat_word("whose") {
@@ -627,8 +633,26 @@ fn decide(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
         c.next();
         Some(m)
     };
+    let within_ms = if c.eat_word("within") {
+        if model.is_none() {
+            return Err(c.error("`with prefer` answers at once; `within` bounds a model's answer"));
+        }
+        let n = match c.peek() {
+            Some(Tok::Num(n)) => n.clone(),
+            _ => return Err(c.error(format!("expected a duration, as in `within 300 milliseconds`, found {}", c.found()))),
+        };
+        if c.peek_at(1).is_some_and(|t| matches!(t, Tok::Word(w) if w == "millisecond" || w == "milliseconds")) {
+            c.next();
+            c.next();
+            Some(n.parse::<u64>().map_err(|_| c.error(format!("`{n}` is not a whole number")))?)
+        } else {
+            Some(duration(&mut c)? * 1000)
+        }
+    } else {
+        None
+    };
     c.expect_end()?;
-    out.decides.push(DecideDecl { point, scope, cond, model, source: text(&toks), at });
+    out.decides.push(DecideDecl { point, scope, cond, model, within_ms, source: text(&toks), at });
     Ok(())
 }
 
