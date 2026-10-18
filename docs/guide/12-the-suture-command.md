@@ -66,7 +66,7 @@ It shows the entity's values, each goal and whether it is met, each part with it
 suture serve examples/tickets --listen 127.0.0.1:7878
 ```
 
-runs the program as a service: inputs over HTTP, requests posted to the adapters in `adapters.json`, the real clock, and a log in the state directory (`⟨dir⟩/.suture` by default) that a restart replays. Chapter 17 covers it.
+runs the program as a service: inputs over HTTP, requests posted to the adapters in `adapters.json`, the real clock, and a log in the state directory (`⟨dir⟩/.suture` by default) that a restart replays. Chapter 17 covers it. With `--pod ⟨name⟩`, several processes serve one state directory together (chapter 20).
 
 ## `suture deploy`
 

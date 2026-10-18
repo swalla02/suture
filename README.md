@@ -23,7 +23,7 @@ Everything stands on the same base: Terraform provisions the cluster and its CPU
 
 Suture links services; it does not prompt a model. There are no prompts and no generated code. A model only ever picks among options the rules already allow, every pick is checked and journaled, and with every model off, `prefer` decides and the system still runs. The compute engines are the motor for those picks, not the logic.
 
-In v0, `suture serve` runs a program as one process: inputs over HTTP, requests posted to adapters, the real clock, and a log on disk that a restart replays; `suture deploy` checks a new version against the live units before it is started; `secret` and `personal` fields reach only the adapters granted them, and `suture build` writes a manifest of what each adapter receives. Several runtime pods sharing the work, as drawn, come later.
+In v0, `suture serve` runs a program as one process: inputs over HTTP, requests posted to adapters, the real clock, and a log on disk that a restart replays; `suture deploy` checks a new version against the live units before it is started; `secret` and `personal` fields reach only the adapters granted them, and `suture build` writes a manifest of what each adapter receives. Several pods can serve one state directory, taking turns on its log, each posting the requests of the units it owns, and taking over those of a pod that stops (guide chapter 20).
 
 ## A program
 
@@ -188,7 +188,7 @@ target/release/suture serve   examples/tickets --listen 127.0.0.1:7878
 
 **[The Suture guide](docs/guide/README.md)** is the place to start: a tutorial, one chapter per construct, modelling patterns, the limits of v0, and a quick reference. Every program, error and scenario in it is compiled and run by the test suite.
 
-The design is in the [language spec](docs/superpowers/specs/2026-10-14-suture-language-design.md). Its appendices B to N describe each prototype slice.
+The design is in the [language spec](docs/superpowers/specs/2026-10-14-suture-language-design.md). Its appendices B to O describe each prototype slice.
 
 ## Inside
 

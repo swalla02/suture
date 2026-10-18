@@ -4,8 +4,8 @@ Suture v0 is a prototype. Everything earlier in this guide runs and is tested. T
 
 ## Running for real
 
-- **One process.** `suture serve` (chapter 17) runs a program as one process, applying one input at a time. Several runtime pods sharing the work, with failover between them, are a later slice.
-- **The log only grows.** It is never compacted or snapshotted, so a restart replays every input since the start.
+- **Pods copy the state.** Several pods (chapter 20) share one log on one volume, and each applies every input: they keep the service up and share out the adapter traffic, but do not split the work of applying inputs. A log replicated over the network, without a shared volume, is a later slice.
+- **The log only grows.** It is never compacted or snapshotted, so a restart, or a new pod, replays every input since the start.
 - **Deploys happen at start.** A new version is deployed when `suture serve` starts it (chapter 18), not while the service runs. Going back to an older version is not supported.
 - **Resolutions are few.** A rule over totals (`per-group` or `global`) cannot apply from a version, and a value cannot be migrated by a formula; change the rule, or give the attribute a default. A changed formula keeps the values it gave on live units.
 - **Totals are not checked at a deploy.** A new or tighter total (`per-group` or `global`) is checked from the next take on; a renamed `checked globally` total starts again from zero.

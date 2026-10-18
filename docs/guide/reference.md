@@ -112,8 +112,8 @@ scenario "⟨title⟩":
 ```text
 suture build   ⟨dir⟩                               compile, write ⟨module⟩-v⟨n⟩.sut and .manifest, print read-backs
 suture run     ⟨dir⟩ --scenario ⟨file⟩             run scenarios and print their traces
-suture serve   ⟨dir⟩ [--state ⟨dir⟩] [--listen ⟨addr⟩] [--models]
-                                                   serve the program over HTTP, with its log (chapter 17)
+suture serve   ⟨dir⟩ [--state ⟨dir⟩] [--listen ⟨addr⟩] [--pod ⟨name⟩] [--models]
+                                                   serve the program over HTTP, with its log (chapters 17, 20)
 suture deploy  ⟨dir⟩ [--state ⟨dir⟩]               check a new version against the live state (chapter 18)
 suture explain ⟨dir⟩ --scenario ⟨file⟩ ⟨name⟩      … and explain one entity at the end of each
 ```

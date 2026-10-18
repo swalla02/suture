@@ -2,11 +2,11 @@
 
 Suture is a language for writing systems as statements, not steps. You write what exists, what each thing needs, the rules that must always hold, the goals to reach and by when, what the outside world does, and who may do what. You never write the order of steps, status machines, retries, locks, compensations or crash recovery. The runtime does that work, and it can say at any moment why something is not done yet.
 
-This guide teaches the language as it runs today (prototype v0, slices 1 to 13). Every `suture` program block and every scenario in it is compiled and run by the test suite (`runtime/tests/guide.rs`), so if an example here stops working, the build fails.
+This guide teaches the language as it runs today (prototype v0, slices 1 to 14). Every `suture` program block and every scenario in it is compiled and run by the test suite (`runtime/tests/guide.rs`), so if an example here stops working, the build fails.
 
 ## How to read it
 
-If you are new, read chapters 1 and 2 in order: they build a small working system and explain the ideas behind it. Chapters 3 to 12 cover one construct each and can be read in any order. Chapter 13 collects modelling advice, chapter 14 covers facts fetched from outside, chapter 15 decision models, chapter 16 says what v0 does not do yet, chapter 17 runs a program as a service, chapter 18 deploys a new version of it, and chapter 19 marks secret and personal data.
+If you are new, read chapters 1 and 2 in order: they build a small working system and explain the ideas behind it. Chapters 3 to 12 cover one construct each and can be read in any order. Chapter 13 collects modelling advice, chapter 14 covers facts fetched from outside, chapter 15 decision models, chapter 16 says what v0 does not do yet, chapter 17 runs a program as a service, chapter 18 deploys a new version of it, chapter 19 marks secret and personal data, and chapter 20 runs it as several pods.
 
 | | Chapter | What you learn |
 |---|---|---|
@@ -29,6 +29,7 @@ If you are new, read chapters 1 and 2 in order: they build a small working syste
 | 17 | [Serving a program](17-serving.md) | `suture serve`: inputs over HTTP, adapters, the log and restarting, the real clock |
 | 18 | [Versions and deploys](18-versions-and-deploys.md) | the deploy check against live units, `apply rule … created from version …`, replay across versions |
 | 19 | [Data marks and the manifest](19-data-marks.md) | `secret` and `personal`, `allow … to receive …`, the secret store, masking, the manifest |
+| 20 | [Pods](20-pods.md) | `serve --pod`, one log under a lock, owners by hash, beats and failover |
 | | [Quick reference](reference.md) | every form on one page |
 
 ## Three promises
