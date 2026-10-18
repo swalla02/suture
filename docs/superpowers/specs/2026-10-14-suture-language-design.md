@@ -1135,7 +1135,7 @@ rule credit: no Order has a Payment that is sent unless its total is at most its
 7. **Deterministic.** Fetches, answers, time-outs and recovery are journaled steps, so a scenario's journal replays to the same state. A sourced value never changes while nothing happens; only its freshness does, and freshness only holds steps back.
 8. **Read-backs.** A strict rule's read-back adds `sources: credit from bureau, at most 1 hour old`. `suture build` adds a `sourcing:` section listing each source with its adapter, what it sends, how long values are trusted, the recovery, and the rules that read it.
 
-### I.3 Models for sourcing and choices (next slice)
+### I.3 Models for sourcing and choices (slice 9, appendix J)
 
 The compiler lists every open choice; a model may only pick among those options (D4). The sourcing choices are which source to ask when several are declared, whether to fetch ahead of need, and whether a still-fresh value is reused. A model never adds a source, skips a fact a rule reads, or stretches a lifespan; enactment re-checks every pick.
 
@@ -1146,3 +1146,45 @@ Models are named per choice point: `decide ⟨choice point⟩ [for a K | whose �
 - Each row of I.1 has small programs that use it, and programs that misuse it get errors with file and line.
 - **A credit check:** an order fetches its customer's credit before its payment goes out; a low credit holds the payment; a stale credit is fetched again when an approval comes late; a bureau that fails falls back to 0 EUR, which holds a large order; `otherwise it is cancelled` withdraws the shipment and gives back its stock; `otherwise ask again after 1 hour` recovers.
 - No step acts on a sourced fact that is not fresh for its rule, and every scenario replays to the same state.
+
+## Appendix J. Prototype slice 9: models at choice points (2026-10-18)
+
+Slice 9 lets a program say which decision model handles which choices, at any level: the whole app, one workflow, one step of a workflow, one decision, or any of these under a condition. A model only picks among the options the compiler and the runtime list; `prefer` ranks those options, and remains the answer whenever no model applies, the model declines, or it picks something it was not offered (D4). Models are decision models only: they choose, never generate (spec §1).
+
+```text
+decide with model "planner@3"                                         -- app: every choice in the module
+decide for Orders with model "orders@2"                               -- workflow: choices in units whose root is an Order
+decide for Shipments with model "shipping@1"                          -- step: choices a Shipment, or a part of it, makes
+decide Carrier with model "carriers@1"                                -- decision: one choice point, wherever it is made
+decide Stock for Shipments with model "stock@4"                       -- a decision within a step
+decide Carrier for Orders whose total is at least 1000 EUR with model "careful@1"
+decide Carrier for Orders whose country is local with prefer          -- back to `prefer` for this scope
+```
+
+### J.1 What slice 9 adds
+
+| Added in slice 9 | Still waits |
+|---|---|
+| `decide [⟨choice point⟩] [for ⟨Kinds⟩ [whose ⟨cond⟩]] with model "name@version"` | models choosing a slot's alternative (slots keep `prefer` and patience) |
+| `… with prefer`, to take a scope back from a model | models for sourcing (which source, fetching ahead); slice 8 has one source per attribute |
+| the most specific `decide` wins; an overlap neither side wins is a compile error | a deadline for a model's answer (the v0 stand-in answers at once) |
+| a host registry of models by name and version; a scripted stand-in for scenarios | real model backends |
+| scenarios: `when model "name@version" picks K2[, then K3…]` | |
+| `suture build` lists the handler of every choice point; the trace names the model of every pick | |
+
+### J.2 Semantics that slice 9 settles
+
+1. **A choice point** is a `uses` binding, named by its target kind (`Carrier`, `Stock`). A `decide` that names none applies to every choice point in its scope. Naming a kind that no `uses` picks, or a slot, is a compile error.
+2. **Scopes.** With no `for`, a `decide` covers the module: the app level. `for Ks` covers the choices made inside every K: by a K itself or by any part under it. When K is a root kind, this is a whole workflow; when K is a part kind, one step of it. `whose ⟨cond⟩` narrows the scope to the Ks for which the condition holds when the choice is made. The condition reads the K like any `define` (its own facts, its parts, its owners); a condition that is unknown does not hold.
+3. **Specificity.** For one choice, every `decide` that applies is ranked, in this order: naming the choice point beats not naming it; then a scope on a kind nearer the choosing part beats one further up (the part itself, then its owner, …, then the root, then the module); then a `whose` beats no condition. The highest-ranked one handles the choice. The compiler checks every choice point against every chain of owners that can make it: two `decide`s of the same rank that can both apply are an error (two with `whose` at the same rank always count as overlapping in v0). Two `decide`s that are the same apart from their model are an error too.
+4. **What a model sees and does.** The runtime gathers the options exactly as before (F.2.7): candidates that meet the binding's condition, up to `candidates`, in `prefer` order. The model is given the choice point, the unit, the choosing part's key, and the options with their attributes and their rank under `prefer`. It answers with one option's name or declines. A pick that is not among the options, an unknown model, and a decline all fall back to `prefer`'s first, and the trace says why.
+5. **Enactment re-checks every pick.** A picked candidate is still asked to grant the take (F.2.8); if it refuses, the option is dropped and the same handler is asked again among the rest, as `prefer` would be.
+6. **Pinned and journaled.** Every `decide`, with its model's name and version, is part of the compiled program, so a journal does not replay under a program with another model (§5.4). The pick is injected into the journal as before, so replay never calls the model again.
+7. **The stand-in.** In v0 the host holds a registry of models by `name@version`. Scenarios play them as they play adapters: `when model "carriers@1" picks Hermes[, then DHL]` queues picks, and each choice that model handles takes the next one; with none queued, it declines. Rust callers may register any function from the options to a pick.
+8. **Read-backs.** `suture build` lists each choice point with its handlers, most specific first, ending in `prefer`. A pick in the trace reads `choice: K2 for O1/Shipment#1@Stock by model "stock@4" (of K1, K2)`; a fallback reads `choice: K1 for … by prefer (model "stock@4" declined)`.
+
+### J.3 Acceptance
+
+- Each level (app, workflow, step, decision, condition) has a program in which it handles a choice, and a scenario in which a nearer level overrides a further one.
+- Overlaps, unknown choice points, slots named in a `decide` and duplicate `decide`s are compile errors with file and line.
+- A pick outside the options, a decline, an unknown model and a refused take each fall back as J.2.4–J.2.5 say, and every scenario replays to the same state.
