@@ -1229,6 +1229,8 @@ impl Checker {
 
     /// Which model handles which choices (appendix J.2.1–J.2.3).
     fn decides(&mut self, src: &Source, p: &mut Program) {
+        // A step waits for its model, so the wait is bounded (appendix K.2.5).
+        const MAX_WITHIN_MS: u64 = 10 * 60_000;
         let points = p.choice_points();
         let mut kept: Vec<(usize, &ast::DecideDecl)> = vec![];
         for d in &src.decides {
@@ -1282,6 +1284,10 @@ impl Checker {
             });
             kept.push((p.decisions.len(), d));
             let within_ms = d.within_ms.unwrap_or(1000);
+            if !(1..=MAX_WITHIN_MS).contains(&within_ms) {
+                self.errors.push(err(&d.at, format!("a model's `within` is from 1 millisecond to {} minutes", MAX_WITHIN_MS / 60_000)));
+                continue;
+            }
             p.decisions.push(Decision { point: d.point.clone(), scope, cond, model: d.model.clone(), scope_text, within_ms, source: d.source.clone() });
         }
         // Two that can both decide one choice, at the same rank (J.2.3).

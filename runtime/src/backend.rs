@@ -16,9 +16,13 @@ pub const JEV_URL: &str = "https://api.typesafe.ai/v1/systemone";
 pub const JEV_MODEL: &str = "jev-latest";
 pub const JEV_KEY_ENV: &str = "JEV_API_KEY";
 
+/// The error a transport gives when its timeout ran out: the model is late.
+pub const TIMED_OUT: &str = "timed out";
+
 /// Posts a JSON body and returns the JSON answer, within `timeout`.
 pub trait Transport {
-    /// `key`: the bearer token, if any. An HTTP error status is an error.
+    /// `key`: the bearer token, if any. An HTTP error status is an error,
+    /// and a timeout is the error [`TIMED_OUT`].
     fn post(&mut self, url: &str, key: Option<&str>, body: &Value, timeout: Duration) -> Result<Value, String>;
 }
 
@@ -35,7 +39,8 @@ impl Transport for Curl {
         }
         config.push_str(&format!("data-binary = {}\n", quote(&body.to_string())));
         let mut child = Command::new("curl")
-            .args(["-sS", "-K", "-", "-m", &format!("{:.3}", timeout.as_secs_f64()), "-w", "\n%{http_code}"])
+            // curl reads `-m 0` as no limit, so never less than a millisecond.
+            .args(["-sS", "-K", "-", "-m", &format!("{:.3}", timeout.max(Duration::from_millis(1)).as_secs_f64()), "-w", "\n%{http_code}"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -43,6 +48,10 @@ impl Transport for Curl {
             .map_err(|e| format!("cannot run curl: {e}"))?;
         child.stdin.take().expect("piped").write_all(config.as_bytes()).map_err(|e| e.to_string())?;
         let out = child.wait_with_output().map_err(|e| e.to_string())?;
+        // curl's exit code 28: the operation timed out.
+        if out.status.code() == Some(28) {
+            return Err(TIMED_OUT.into());
+        }
         if !out.status.success() {
             return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
         }
@@ -162,6 +171,7 @@ impl Backend for Jev {
         let body = self.request(c);
         match self.transport.post(&self.url, key.as_deref(), &body, within) {
             Ok(v) => self.read(&v),
+            Err(e) if e == TIMED_OUT => Answer::Late,
             Err(e) => Answer::Failed(e),
         }
     }
@@ -203,6 +213,7 @@ impl Backend for Custom {
         let body = self.request(c);
         match self.transport.post(&self.url, key.as_deref(), &body, within) {
             Ok(v) => self.read(&v),
+            Err(e) if e == TIMED_OUT => Answer::Late,
             Err(e) => Answer::Failed(e),
         }
     }

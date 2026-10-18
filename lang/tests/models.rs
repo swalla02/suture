@@ -146,6 +146,10 @@ decide Order's credit with model \"sources@1\" within 2 seconds
     assert!(p.choice_points().iter().any(|c| c.name == "Order's credit" && c.chooser == "Order"));
     let p = prog(&format!("{SHOP}decide Carrier with model \"carriers@1\"\n"));
     assert_eq!(p.decisions[0].within_ms, 1000, "a model has 1 second by default");
+    for within in ["0 milliseconds", "11 minutes"] {
+        let e = errors(&format!("{SHOP}decide Carrier with model \"carriers@1\" within {within}\n"));
+        assert_eq!(e, ["t.st:15: a model's `within` is from 1 millisecond to 10 minutes"], "{within}");
+    }
 }
 
 #[test]
@@ -191,7 +195,7 @@ source Order's credit via backup within 2 seconds
     ));
     let r = p.rules.iter().find(|r| r.name == "credit").unwrap();
     assert_eq!(r.sources, [("Order".to_string(), "credit".to_string())]);
-    assert_eq!(suture_lang::readback::rule_sources(&p, r).as_deref(), Some("credit from bureau or backup, fetched once"));
+    assert_eq!(suture_lang::readback::rule_sources(&p, r).as_deref(), Some("credit from bureau (fetched once) or backup (fetched once)"));
     let line = suture_lang::readback::source_line(&p, &p.sources[0]);
     assert!(line.contains("if it fails, the next source is asked; if every source fails, the steps its rules guard wait"), "{line}");
 }

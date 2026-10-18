@@ -383,12 +383,17 @@ pub fn rule_sources(p: &Program, r: &Rule) -> Option<String> {
         .iter()
         .filter_map(|(k, a)| p.source_of(k, a).map(|s| (s, p.sources_of(k, a))))
         .map(|(s, all)| {
-            let from: Vec<&str> = all.iter().map(|x| x.adapter.as_str()).collect();
-            let from = from.join(" or ");
-            let bound = r.fresh.iter().find(|(a, _)| *a == s.attr).map(|(_, secs)| *secs).into_iter().chain(s.good_for).min();
-            match bound {
-                Some(secs) => format!("{} from {from}, at most {} old", s.attr, duration_text(secs as i64)),
-                None => format!("{} from {from}, fetched once", s.attr),
+            // Each source's own `good for` bounds the values it gives (appendix K.2.4).
+            let one = |x: &crate::ir::Source| match r.fresh.iter().find(|(a, _)| *a == x.attr).map(|(_, secs)| *secs).into_iter().chain(x.good_for).min() {
+                Some(secs) => format!("at most {} old", duration_text(secs as i64)),
+                None => "fetched once".to_string(),
+            };
+            match all.as_slice() {
+                [only] => format!("{} from {}, {}", s.attr, only.adapter, one(only)),
+                _ => {
+                    let each: Vec<String> = all.iter().map(|x| format!("{} ({})", x.adapter, one(x))).collect();
+                    format!("{} from {}", s.attr, each.join(" or "))
+                }
             }
         })
         .collect();

@@ -218,10 +218,45 @@ fn a_model_picks_the_source_and_the_otherwise_applies_when_all_fail() {
 #[test]
 fn a_late_answer_from_a_source_that_was_left_is_ignored() {
     let p = prog(CREDIT, "");
-    let r = scenario(&p, &format!("{ORDER}  and    3 seconds pass\n  and    3 seconds pass\n  and    3 seconds pass\n  and    backup answers found with credit 70 EUR\n  expect O1's credit is 70 EUR\n"));
+    let r = scenario(
+        &p,
+        &format!("{ORDER}  and    3 seconds pass\n  and    3 seconds pass\n  and    3 seconds pass\n  and    bureau answers found with credit 999 EUR\n  and    backup answers found with credit 70 EUR\n  expect O1's credit is 70 EUR\n"),
+    );
     let t = r.host.trace.join("\n");
     assert!(r.passed(), "{:?}\n{t}", r.failures);
     assert!(t.contains("credit: bureau failed (timed out after 3 sends), asking backup"), "{t}");
+    assert!(t.contains("ignored a late answer for O1~credit#1"), "{t}");
+    assert!(!t.contains("999 EUR from"), "{t}");
+}
+
+#[test]
+fn a_declining_or_late_model_leaves_the_source_to_prefer() {
+    let p = prog(CREDIT, SOURCES);
+    let t = trace(&p, &format!("  when   model \"sources@1\" declines\n{ORDER}"));
+    assert!(t.contains("choice: bureau for O1~credit#1?source by prefer (model \"sources@1\" declined)"), "{t}");
+    assert!(t.contains("O1  credit: asking bureau (name \"Bo\")"), "{t}");
+    let t = trace(&p, &format!("  when   model \"sources@1\" is late\n{ORDER}"));
+    assert!(t.contains("choice: bureau for O1~credit#1?source by prefer (model \"sources@1\" did not answer within 1000 ms)"), "{t}");
+}
+
+#[test]
+fn a_value_is_trusted_for_the_good_for_of_the_source_that_gave_it() {
+    let src = CREDIT
+        .replace("  reports    found | fails with unknown\nsource", "  reports    found | fails with unknown\n  good for   1 day\nsource")
+        .replace("  otherwise  use 0 EUR", "  good for   1 hour\n  otherwise  use 0 EUR");
+    let p = prog(&src, "");
+    let t = trace(&p, &format!("{ORDER}  and    bureau answers unknown\n  and    backup answers found with credit 80 EUR\n"));
+    assert!(t.contains("O1  credit: 80 EUR from backup, trusted for 1 hour"), "{t}");
+    let t = trace(&p, &format!("{ORDER}  and    bureau answers found with credit 80 EUR\n"));
+    assert!(t.contains("O1  credit: 80 EUR from bureau, trusted for 1 day"), "{t}");
+}
+
+#[test]
+fn each_source_has_its_own_deadline() {
+    let p = prog(&CREDIT.replace("source Order's credit via backup within 2 seconds", "source Order's credit via backup within 10 seconds"), "");
+    let t = trace(&p, &format!("{ORDER}  and    6 seconds pass\n  and    9 seconds pass\n"));
+    assert!(t.contains("asking backup"), "{t}");
+    assert!(!t.contains("backup: no answer"), "backup has 10 seconds: {t}");
 }
 
 #[test]

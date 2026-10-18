@@ -187,7 +187,7 @@ main.st:31: `decide Carrier with model "fleet@1"` and `decide Carrier with model
 
 In v0, two `decide`s with a `whose` at the same rank always count as a tie, even when their conditions could never both hold.
 
-The other errors: naming something that no `uses`, slot or source picks, naming a sourced attribute with only one source, a scope in which the choice is never made, a model name without `@version`, and a `within` on `with prefer`.
+The other errors: naming something that no `uses`, slot or source picks, naming a sourced attribute with only one source, a scope in which the choice is never made, a model name without `@version`, a `within` on `with prefer`, and a `within` outside 1 millisecond to 10 minutes.
 
 ## When the model is no help
 

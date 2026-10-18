@@ -793,7 +793,8 @@ fn goal_due(prog: &Program, u: &mut Unit, goal: u32) {
     for at in positions(&u.root) {
         let n = node_at(&u.root, &at);
         for attr in n.fetched.iter().filter(|(_, f)| f.failed).map(|(a, _)| a) {
-            let adapter = prog.source_of(&n.kind, attr).map_or("its source", |s| s.adapter.as_str());
+            let adapters: Vec<&str> = prog.sources_of(&n.kind, attr).iter().map(|s| s.adapter.as_str()).collect();
+            let adapter = if adapters.is_empty() { "its source".to_string() } else { adapters.join(" or ") };
             u.notes.push(format!("  because {attr} could not be sourced from {adapter}"));
         }
         for (part, rule) in &n.held {

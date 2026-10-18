@@ -360,7 +360,10 @@ impl Host {
     /// the journal holds it.
     fn ask_model(&mut self, ask: &Ask, hole: HoleId) -> Result<(), String> {
         let u = self.unit(&ask.label).ok_or_else(|| format!("{}: a choice for a unit that is gone", ask.label))?;
-        let (chooser, facts, options) = interp::choice_of(&u, &ask.key).ok_or_else(|| format!("{}: nothing is being chosen", ask.key))?;
+        let Some((chooser, facts, options)) = interp::choice_of(&u, &ask.key) else {
+            // Nothing is being chosen any more: an empty answer, which the unit ignores.
+            return self.answer_model(hole, &[]);
+        };
         let within = match ask.sends.as_slice() {
             [(_, Val::Count(ms))] => u64::try_from(*ms).unwrap_or(0),
             _ => 0,
@@ -375,15 +378,19 @@ impl Host {
             currency: self.prog.currency.clone(),
         };
         let (pick, how) = self.consult(&ask.adapter, &c, within);
+        self.answer_model(hole, &[("pick".into(), Val::Text(pick.clone()))])?;
+        self.trace.push(format!("      choice: {pick} for {}{how}", ask.key));
+        Ok(())
+    }
+
+    fn answer_model(&mut self, hole: HoleId, data: &[(String, Val)]) -> Result<(), String> {
         let sig = self.machine.program().sig.clone();
         let mut b = NetBuilder::new(&sig);
         let meet = b.var();
-        b.agent(self.kinds.answer, answer_value("picked", &[("pick".into(), Val::Text(pick.clone()))]), meet, &[]);
+        b.agent(self.kinds.answer, answer_value("picked", data), meet, &[]);
         let net = b.finish().map_err(|e| e.to_string())?;
         let inj = Injection::new(net).at_hole(meet, hole).key(format!("model:{:032x}", hole.0));
-        self.machine.inject(inj).map_err(|e| e.to_string())?;
-        self.trace.push(format!("      choice: {pick} for {}{how}", ask.key));
-        Ok(())
+        self.machine.inject(inj).map(|_| ()).map_err(|e| e.to_string())
     }
 
     fn pick(&mut self, hole: HoleId, label: &str, d: &Decide, how: &str) -> Result<(), String> {

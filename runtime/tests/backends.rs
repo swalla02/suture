@@ -94,6 +94,8 @@ fn jev_reads_the_confidence_and_fails_cleanly() {
     assert_eq!(j.decide(&choice(), Duration::from_secs(1)), Answer::Failed("no answers.pick.choice in the answer".into()));
     let mut j = jev(&Fake::new(Err("HTTP 422: questions.pick.criteria".into())));
     assert_eq!(j.decide(&choice(), Duration::from_secs(1)), Answer::Failed("HTTP 422: questions.pick.criteria".into()));
+    let mut j = jev(&Fake::new(Err(backend::TIMED_OUT.into())));
+    assert_eq!(j.decide(&choice(), Duration::from_secs(1)), Answer::Late, "a transport's timeout is a late answer");
     let mut j = jev(&Fake::new(Ok(jev_answer("Fast", 0.9))));
     j.key_env = Some("SUTURE_TEST_NO_SUCH_KEY".into());
     assert_eq!(j.decide(&choice(), Duration::from_secs(1)), Answer::Failed("SUTURE_TEST_NO_SUCH_KEY is not set".into()));
