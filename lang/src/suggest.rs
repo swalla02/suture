@@ -9,7 +9,7 @@ use crate::parse::{statement, text};
 
 /// Common alternative phrasings and the canonical phrase for each
 /// (appendix H.2.2). Only suggestions use it; programs never do.
-const PHRASES: &[(&str, &str)] = &[
+pub(crate) const PHRASES: &[(&str, &str)] = &[
     ("can't be more than", "is at most"),
     ("cannot be more than", "is at most"),
     ("can not be more than", "is at most"),

@@ -4,6 +4,9 @@
 //! - `suture run <dir> --scenario <file> [--models]`
 //! - `suture explain <dir> --scenario <file> <name>`
 //! - `suture serve <dir> [--state <dir>] [--listen <addr>] [--pod <name>] [--models]` (appendices L, O)
+//! - `suture lsp`: the language server, over stdin and stdout (appendix P)
+
+mod lsp;
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -11,7 +14,7 @@ use std::process::ExitCode;
 use suture_lang::ir::Program;
 
 const USAGE: &str =
-    "usage:\n  suture build <dir>\n  suture run <dir> --scenario <file> [--models]\n  suture explain <dir> --scenario <file> <name>\n  suture serve <dir> [--state <dir>] [--listen <addr>] [--pod <name>] [--models]\n  suture deploy <dir> [--state <dir>]";
+    "usage:\n  suture build <dir>\n  suture run <dir> --scenario <file> [--models]\n  suture explain <dir> --scenario <file> <name>\n  suture serve <dir> [--state <dir>] [--listen <addr>] [--pod <name>] [--models]\n  suture deploy <dir> [--state <dir>]\n  suture lsp";
 
 /// Where `suture serve` listens unless told otherwise.
 const LISTEN: &str = "127.0.0.1:7878";
@@ -27,6 +30,7 @@ fn main() -> ExitCode {
         ["serve", dir, flags @ ..] => serve(Path::new(dir), flags),
         ["deploy", dir] => deploy(Path::new(dir), None),
         ["deploy", dir, "--state", state] => deploy(Path::new(dir), Some(Path::new(state))),
+        ["lsp"] => lsp::run(),
         _ => Err(USAGE.to_string()),
     };
     match result {

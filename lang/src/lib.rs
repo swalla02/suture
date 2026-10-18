@@ -3,6 +3,7 @@
 
 pub mod ast;
 pub mod check;
+pub mod editor;
 pub mod ir;
 pub mod lex;
 pub mod manifest;

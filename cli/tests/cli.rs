@@ -269,3 +269,65 @@ fn deploy_checks_a_new_version_against_the_live_state() {
     child.wait().unwrap();
     assert!(lines.contains("deployed tickets v2 over v1") && lines.contains("B1  now under version 2"), "{lines}");
 }
+
+#[test]
+fn lsp_shows_errors_read_backs_and_next_words() {
+    use std::io::{BufRead, BufReader, Read, Write};
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("lsp");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let good = "module m version 1, currency EUR\nkind Order { total: Money }\nrule cap: every Order's total is at most 100 EUR\n";
+    std::fs::write(dir.join("m.st"), good).unwrap();
+    let uri = format!("file://{}", dir.join("m.st").display());
+    let mut child = Command::new(env!("CARGO_BIN_EXE_suture"))
+        .arg("lsp")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut send = |msg: serde_json::Value| {
+        let body = msg.to_string();
+        write!(stdin, "Content-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        stdin.flush().unwrap();
+    };
+    let mut recv = || -> serde_json::Value {
+        let mut n = 0;
+        loop {
+            let mut line = String::new();
+            stdout.read_line(&mut line).unwrap();
+            if line.trim().is_empty() {
+                break;
+            }
+            if let Some(v) = line.strip_prefix("Content-Length:") {
+                n = v.trim().parse().unwrap();
+            }
+        }
+        let mut body = vec![0; n];
+        stdout.read_exact(&mut body).unwrap();
+        serde_json::from_slice(&body).unwrap()
+    };
+    send(serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }));
+    assert_eq!(recv()["result"]["capabilities"]["hoverProvider"], true);
+    send(serde_json::json!({ "jsonrpc": "2.0", "method": "textDocument/didOpen", "params": { "textDocument": { "uri": uri, "text": good } } }));
+    assert_eq!(recv()["params"]["diagnostics"], serde_json::json!([]));
+    let bad = good.replace("every Order's", "every Ordr's");
+    send(serde_json::json!({ "jsonrpc": "2.0", "method": "textDocument/didChange", "params": { "textDocument": { "uri": uri }, "contentChanges": [{ "text": bad }] } }));
+    let d = recv();
+    assert_eq!(d["params"]["diagnostics"][0]["range"]["start"]["line"], 2, "{d}");
+    assert_eq!(d["params"]["diagnostics"][0]["severity"], 1, "{d}");
+    // Hover and completion use the last program that compiled.
+    send(serde_json::json!({ "jsonrpc": "2.0", "method": "textDocument/didChange", "params": { "textDocument": { "uri": uri }, "contentChanges": [{ "text": good }] } }));
+    recv();
+    send(serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": { "textDocument": { "uri": uri }, "position": { "line": 2, "character": 6 } } }));
+    let h = recv();
+    assert!(h["result"]["contents"]["value"].as_str().unwrap().contains("in other words:"), "{h}");
+    send(serde_json::json!({ "jsonrpc": "2.0", "id": 3, "method": "textDocument/completion", "params": { "textDocument": { "uri": uri }, "position": { "line": 2, "character": 24 } } }));
+    let c = recv();
+    assert_eq!(c["result"][0]["label"], "total", "{c}");
+    send(serde_json::json!({ "jsonrpc": "2.0", "id": 4, "method": "shutdown" }));
+    recv();
+    send(serde_json::json!({ "jsonrpc": "2.0", "method": "exit" }));
+    assert!(child.wait().unwrap().success());
+}
