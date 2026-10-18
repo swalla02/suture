@@ -1343,3 +1343,37 @@ D13 asks for least authority: an adapter sees only the fields its effect declare
 - `suture build` prints and writes the manifest.
 
 **N.2.8 Review updates.** An answer with no pending request (late or stray) is sealed by attribute name, so the log never holds a secret it carries. A deploy that adds or removes a `secret` mark on an attribute live units hold is a break (appendix M.2.2).
+
+## Appendix O. Prototype slice 14: pods (2026-10-18)
+
+Slice 11 serves a program as one process. Slice 14 runs it as several pods over one state directory, so that a pod can fail without stopping the service, and the requests to adapters are shared out among the pods.
+
+### O.1 What slice 14 adds
+
+| Added in slice 14 | Still waits |
+|---|---|
+| `suture serve --pod ⟨name⟩`: several pods over one state directory, on a volume they share | a log replicated over the network (Raft or a database), with no shared volume |
+| one log, written by one pod at a time under a lock; every pod keeps up with it | units held by one pod only, so that state is split, not copied |
+| the units are shared out among the live pods; a pod posts requests only for its own | snapshots, so a pod does not replay the whole log when it starts |
+| failover: a pod that stops beating loses its units to the others, which post their waiting requests again | |
+| any pod takes any input, so the gateway may route anywhere | |
+
+### O.2 Semantics that slice 14 settles
+
+1. **One log, one order.** The log stays the only state. A pod appends to it only while it holds an exclusive lock on `⟨state⟩/log.lock`. Holding the lock, it first reads what other pods appended since it last read, and applies it as a replay does (§L.2.3), the model answers included. Then it applies its own input and appends it, with the model answers it caused, before it lets the lock go. Inputs are thus applied in one order, the log's, by every pod.
+2. **Every pod holds all of the state.** Each pod applies every line of the log, so its units, trace and explanations are those of the whole program. Reads (`/units`, `/trace`, `/pending`) first catch up under a shared lock, so they see every input acknowledged before them. Since replay is deterministic (§L.2.3), every pod comes to the same state.
+3. **The secret store is shared.** `secrets.json` is written under the log lock before the line that refers to it. When a pod catches up, it reads the store again after reading the new lines, so every reference it applies is found.
+4. **Pods and their beats.** A pod writes `⟨state⟩/pods/⟨name⟩` every second with the Unix time. A pod is live while its last beat is less than 10 seconds old. A pod that stops cleanly removes its file.
+5. **Each unit has one owner.** The live pods are sorted by name; a unit belongs to the pod at the index of the 64-bit FNV-1a hash of its label, modulo their number. A pod posts a request to an adapter only for the units it owns. Ownership is decided anew each time the pod looks, so a pod that comes or goes moves units at once.
+6. **Failover.** When a pod stops beating, its units go to the others, which post their waiting requests, as a restart does (§L.2.8). For a short while, two pods may both think they own a unit, and post its request twice. This is why a request carries its idempotency key: an adapter must answer the same key once (§L.2.8, unchanged).
+7. **Time.** Any pod may fire the timers that fell due. Holding the lock, it catches up first, so a `pass` already made by another pod is not made twice.
+8. **Deploys.** A pod started with a newer version deploys it under the lock, as `open` does (§M.2.6). Other pods meet the `deploy` line when they catch up and apply it from `program-v⟨n⟩.json`. A pod started with an older version than the log's is refused, as before.
+9. **One process alone.** Without `--pod`, `suture serve` is a pod named `solo`, and takes the lock in the same way. So two processes on one state directory never corrupt the log, whether or not they were told about each other.
+
+### O.3 Acceptance
+
+- Two pods on one state directory take inputs in turn; each sees the units the other made, and a third pod (or a restart) that replays the log comes to the same state.
+- With two live pods, each request is posted by exactly one of them. When one stops beating, the other posts that pod's waiting requests.
+- A secret given to one pod reaches its adapter through the pod that owns its unit.
+- A timer that falls due fires once, whichever pods tick.
+- A line cut short by a pod that crashed is cut off by the next pod to take the lock.
