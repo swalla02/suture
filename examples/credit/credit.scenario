@@ -1,0 +1,62 @@
+-- The credit check against a simulated bureau, payments and carriers.
+scenario "the credit is fetched, then covers the payment":
+  given  a Customer Ada with name Ada
+  and    a Product Kettle with name Kettle
+  and    a Stock K1 with product Kettle and units 5
+  when   staff Sam places a new Order O1 with customer Ada, product Kettle, quantity 2 and total 60 EUR
+  and    staff Sam changes O1's approved to yes
+  and    bureau answers found with credit 500 EUR
+  expect O1's credit is 500 EUR
+  expect O1's Payment is sent
+  when   payments answers captured
+  and    carriers answers delivered
+  expect O1 is delivered
+  expect the total quantity taken from K1 is 2
+
+scenario "a low credit holds the payment":
+  given  a Customer Ada with name Ada
+  and    a Product Kettle with name Kettle
+  and    a Stock K1 with product Kettle and units 5
+  when   staff Sam places a new Order O1 with customer Ada, product Kettle, quantity 2 and total 600 EUR
+  and    staff Sam changes O1's approved to yes
+  and    bureau answers found with credit 500 EUR
+  expect O1's Payment is not sent
+  expect O1's Shipment is not sent
+
+scenario "a credit too old by the time of approval is fetched again":
+  given  a Customer Ada with name Ada
+  and    a Product Kettle with name Kettle
+  and    a Stock K1 with product Kettle and units 5
+  when   staff Sam places a new Order O1 with customer Ada, product Kettle, quantity 2 and total 60 EUR
+  and    bureau answers found with credit 500 EUR
+  and    3 hours pass
+  and    staff Sam changes O1's approved to yes
+  expect O1's Payment is not sent
+  when   bureau answers found with credit 400 EUR
+  expect O1's credit is 400 EUR
+  expect O1's Payment is sent
+
+scenario "a failing bureau falls back to no credit for a day":
+  given  a Customer Ada with name Ada
+  and    a Product Kettle with name Kettle
+  and    a Stock K1 with product Kettle and units 5
+  when   staff Sam places a new Order O1 with customer Ada, product Kettle, quantity 2 and total 60 EUR
+  and    staff Sam changes O1's approved to yes
+  and    bureau answers unknown
+  expect O1's credit is 0 EUR
+  expect O1's Payment is not sent
+  when   1 day passes
+  and    bureau answers found with credit 500 EUR
+  expect O1's Payment is sent
+
+scenario "a cancelled order gives back its stock":
+  given  a Customer Ada with name Ada
+  and    a Product Kettle with name Kettle
+  and    a Stock K1 with product Kettle and units 5
+  when   staff Sam places a new Order O1 with customer Ada, product Kettle, quantity 2 and total 600 EUR
+  and    staff Sam changes O1's approved to yes
+  and    bureau answers found with credit 500 EUR
+  expect the total quantity taken from K1 is 2
+  when   staff Sam cancels O1
+  expect O1 has no Shipment
+  expect the total quantity taken from K1 is 0

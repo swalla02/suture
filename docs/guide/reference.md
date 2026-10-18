@@ -20,6 +20,12 @@ effect ⟨verb⟩ ⟨Kind⟩ via ⟨adapter⟩ within ⟨duration⟩
   [marks   ⟨state⟩]
   reports  ⟨outcome⟩ [with ⟨attr⟩: ⟨Type⟩, …] [| fails with ⟨outcome⟩[, …]]
 
+source ⟨Kind⟩'s ⟨attr⟩ via ⟨adapter⟩ within ⟨duration⟩
+  sends      ⟨np⟩[, ⟨np⟩…]
+  reports    ⟨outcome⟩ [| fails with ⟨outcome⟩[, …]]
+  [good for  ⟨duration⟩]
+  [otherwise use ⟨literal⟩ | ask again after ⟨duration⟩ | ⟨action⟩[ and ⟨action⟩…]]
+
 prefer ⟨Slot⟩: ⟨Kind⟩[, then ⟨Kind⟩ [after ⟨duration⟩]]…
 prefer ⟨Kind⟩ [for a ⟨element⟩]: ⟨criterion⟩[, then ⟨criterion⟩]…
     criteria: lowest ⟨num⟩ · highest ⟨num⟩ · those ⟨cond⟩ · those whose ⟨attr⟩ …
@@ -36,7 +42,7 @@ admit change ⟨Kind⟩'s ⟨attr⟩ by ⟨role⟩[, ⟨role⟩] [where ⟨cond�
 ## Sentences
 
 ```text
-rule ⟨name⟩: ⟨rule⟩
+rule ⟨name⟩: ⟨rule⟩[, with ⟨attr⟩ at most ⟨duration⟩ old[ and ⟨attr⟩ at most ⟨duration⟩ old…]]
 define: a ⟨Kind⟩ is ⟨state⟩ when ⟨cond⟩
 desired [within ⟨duration⟩]: every ⟨subject⟩ is ⟨state⟩[ and ⟨state⟩…]
 when a ⟨Kind⟩ is ⟨outcome⟩: ⟨action⟩[ and ⟨action⟩…]

@@ -2,11 +2,11 @@
 
 Suture is a language for writing systems as statements, not steps. You write what exists, what each thing needs, the rules that must always hold, the goals to reach and by when, what the outside world does, and who may do what. You never write the order of steps, status machines, retries, locks, compensations or crash recovery. The runtime does that work, and it can say at any moment why something is not done yet.
 
-This guide teaches the language as it runs today (prototype v0, slices 1 to 7). Every `suture` program block and every scenario in it is compiled and run by the test suite (`runtime/tests/guide.rs`), so if an example here stops working, the build fails.
+This guide teaches the language as it runs today (prototype v0, slices 1 to 8). Every `suture` program block and every scenario in it is compiled and run by the test suite (`runtime/tests/guide.rs`), so if an example here stops working, the build fails.
 
 ## How to read it
 
-If you are new, read chapters 1 and 2 in order: they build a small working system and explain the ideas behind it. Chapters 3 to 12 cover one construct each and can be read in any order. Chapter 13 collects modelling advice, and chapter 14 says what v0 does not do yet.
+If you are new, read chapters 1 and 2 in order: they build a small working system and explain the ideas behind it. Chapters 3 to 12 cover one construct each and can be read in any order. Chapter 13 collects modelling advice, chapter 14 covers facts fetched from outside, and chapter 15 says what v0 does not do yet.
 
 | | Chapter | What you learn |
 |---|---|---|
@@ -23,7 +23,8 @@ If you are new, read chapters 1 and 2 in order: they build a small working syste
 | 11 | [Scenarios](11-scenarios.md) | testing a program in its own language |
 | 12 | [The `suture` command](12-the-suture-command.md) | build output, traces, explanations, errors and suggestions |
 | 13 | [Modelling patterns](13-modelling-patterns.md) | how to turn a requirement into declarations, and the traps |
-| 14 | [Limits of v0](14-limits-of-v0.md) | what is designed but not built yet |
+| 14 | [Sourcing](14-sourcing.md) | `source … via …`, lifespans, `with … at most … old`, recovery |
+| 15 | [Limits of v0](15-limits-of-v0.md) | what is designed but not built yet |
 | | [Quick reference](reference.md) | every form on one page |
 
 ## Three promises
@@ -41,3 +42,4 @@ And one non-promise: Suture uses no AI to decide what your program means. Parsin
 - `examples/tickets/`: the ticketing system of chapter 1.
 - `examples/shop/`: an online shop with stock, carriers, payments, refunds, cancellation, lost parcels and French customs forms.
 - `examples/workspaces/`: provisioning team workspaces on clusters, with accounts, repositories, billing and storage.
+- `examples/credit/`: the credit check of chapter 14, with a bureau that answers late, wrong or not at all.

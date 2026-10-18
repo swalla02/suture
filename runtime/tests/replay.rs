@@ -54,3 +54,18 @@ fn every_workspace_scenario_replays_to_the_same_state() {
         assert_eq!(replayed.digest(), digest, "{}", sc.title);
     }
 }
+
+#[test]
+fn every_credit_scenario_replays_to_the_same_state() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/credit");
+    let p = suture_lang::compile_dir(std::path::Path::new(dir)).unwrap_or_else(|e| panic!("{e:?}"));
+    let src = std::fs::read_to_string(format!("{dir}/credit.scenario")).unwrap();
+    for sc in parse_scenarios("credit.scenario", &src).unwrap() {
+        let report = run(&p, &sc);
+        assert!(report.passed(), "{}: {:?}", report.title, report.failures);
+        let digest = report.host.machine.digest();
+        let (kernel_program, _) = kernel::program(Arc::new(p.clone()));
+        let replayed = Machine::recover(kernel_program, report.host.machine.into_journal()).unwrap_or_else(|e| panic!("{}: {e}", sc.title));
+        assert_eq!(replayed.digest(), digest, "{}", sc.title);
+    }
+}

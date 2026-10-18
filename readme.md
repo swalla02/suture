@@ -6,7 +6,7 @@
 
 ## Try the language prototype
 
-Suture is becoming a language. You declare what exists, what each thing needs, the rules that must always hold and the goals to reach, and the runtime does the rest. To learn it, read **[the Suture guide](docs/guide/README.md)**: a tutorial, a chapter per construct, modelling patterns and a quick reference, all tested by the build. The design is in the [language spec](docs/superpowers/specs/2026-10-14-suture-language-design.md); its appendices B to H describe each prototype slice.
+Suture is becoming a language. You declare what exists, what each thing needs, the rules that must always hold and the goals to reach, and the runtime does the rest. To learn it, read **[the Suture guide](docs/guide/README.md)**: a tutorial, a chapter per construct, modelling patterns and a quick reference, all tested by the build. The design is in the [language spec](docs/superpowers/specs/2026-10-14-suture-language-design.md); its appendices B to I describe each prototype slice.
 
 ```
 cargo run --release -p suture-cli -- build examples/tickets

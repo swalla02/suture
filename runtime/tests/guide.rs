@@ -124,3 +124,16 @@ fn the_tickets_example_passes() {
         assert!(r.passed(), "{}: {:?}", r.title, r.failures);
     }
 }
+
+#[test]
+fn the_credit_example_passes() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/credit");
+    let p = suture_lang::compile_dir(std::path::Path::new(dir)).unwrap_or_else(|e| panic!("{e:?}"));
+    let src = std::fs::read_to_string(format!("{dir}/credit.scenario")).unwrap();
+    let list = parse_scenarios("credit.scenario", &src).unwrap();
+    assert_eq!(list.len(), 5);
+    for sc in list {
+        let r = run(&p, &sc);
+        assert!(r.passed(), "{}: {:?}", r.title, r.failures);
+    }
+}
