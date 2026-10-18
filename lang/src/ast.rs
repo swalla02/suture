@@ -137,6 +137,8 @@ pub struct Module {
 pub struct AttrDecl {
     pub name: String,
     pub ty: TypeName,
+    /// `secret` or `personal` (appendix N.2.1).
+    pub mark: Option<crate::ir::Mark>,
     pub default: Option<Literal>,
     /// `= order's total`: computed once at creation (appendix E.2.5).
     pub formula: Option<Num>,
@@ -338,6 +340,15 @@ pub struct DecideDecl {
     pub at: Loc,
 }
 
+/// `allow payments to receive Order's card, Order's address` (appendix N.2.3).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AllowDecl {
+    pub adapter: String,
+    /// (kind, attribute), as written.
+    pub fields: Vec<(String, String)>,
+    pub at: Loc,
+}
+
 /// `apply rule early to Bookings created from version 2` (appendix M.2.3).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApplyDecl {
@@ -368,4 +379,5 @@ pub struct Source {
     pub roles: Vec<RoleDecl>,
     pub admits: Vec<AdmitDecl>,
     pub applies: Vec<ApplyDecl>,
+    pub allows: Vec<AllowDecl>,
 }

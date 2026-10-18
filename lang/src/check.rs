@@ -5,7 +5,7 @@
 use crate::ast::{self, CmpOp, Head, Literal, Loc, NounPhrase, Source, Term, TypeName};
 use crate::ir::{
     self,
-    Action, Admit, Admitted, Arith, Attr, Binding, Body, Cond, Criterion, Decision, Define, Effect, Goal, Kind, Lit, Need, Num, Op, OwnerRef, Path,
+    Action, Admit, Admitted, Arith, Attr, Binding, Body, Cond, Criterion, Decision, Define, Effect, Goal, Grant, Kind, Mark, Lit, Need, Num, Op, OwnerRef, Path,
     third_person, Otherwise, Program, Reaction, Role, Rule, Slot, Step, Taking, Ty, CREATED, TIMED_OUT,
 };
 use crate::lex::Error;
@@ -13,7 +13,7 @@ use crate::readback;
 
 /// Checks a parsed module and compiles it, reporting every error it finds.
 pub fn check(src: &Source) -> Result<Program, Vec<Error>> {
-    let mut cx = Checker { errors: vec![], scope: None, period: None, contribs: vec![], caller: None };
+    let mut cx = Checker::default();
     let prog = cx.program(src);
     if cx.errors.is_empty() { Ok(prog) } else { Err(cx.errors) }
 }
@@ -21,7 +21,7 @@ pub fn check(src: &Source) -> Result<Program, Vec<Error>> {
 /// Resolves a condition about a `kind` against a compiled program, as a
 /// scenario's `expect` needs (appendix E.2.9).
 pub fn condition(p: &Program, kind: &str, c: &ast::Cond) -> Result<Cond, Vec<Error>> {
-    let mut cx = Checker { errors: vec![], scope: None, period: None, contribs: vec![], caller: None };
+    let mut cx = Checker::default();
     let at = Loc { file: String::new(), line: 0 };
     match cx.cond(p, &at, kind, c) {
         Some(c) if cx.errors.is_empty() => Ok(c),
@@ -317,7 +317,14 @@ fn show(np: &NounPhrase) -> String {
     s
 }
 
+#[derive(Default)]
 struct Checker {
+    /// While an adapter's `sends` or a secret's formula is checked: secrets may be read.
+    sending: bool,
+    /// The marked attributes read while `sending`, as (kind, attribute, mark).
+    marked: Vec<(String, String, Mark)>,
+    /// The grants an effect or a source used, by index into `allows`.
+    granted: Vec<(usize, usize)>,
     errors: Vec<Error>,
     scope: Option<Scope>,
     /// The period of the rule being checked, for its totals across units.
@@ -656,6 +663,7 @@ impl Checker {
             attempts: src.module.as_ref().and_then(|m| m.attempts).unwrap_or(3),
             candidates: src.module.as_ref().and_then(|m| m.candidates).unwrap_or(8),
             warnings: vec![],
+            grants: vec![],
         };
         self.kinds(src, &mut p);
         self.slots(src, &mut p);
@@ -714,7 +722,57 @@ impl Checker {
         }
         // After the tiers are known: only a local rule can apply from a version.
         self.applies(src, &mut p);
+        self.grants(src, &mut p);
         p
+    }
+
+    /// The marked attributes just read by an adapter's `sends` need a grant
+    /// to that adapter (appendix N.2.3).
+    fn grants_for(&mut self, src: &Source, at: &Loc, adapter: &str) {
+        for (kind, attr, m) in std::mem::take(&mut self.marked) {
+            let found = src.allows.iter().enumerate().find_map(|(i, g)| {
+                (g.adapter == adapter).then(|| g.fields.iter().position(|(k, a)| *k == kind && *a == attr).map(|j| (i, j))).flatten()
+            });
+            match found {
+                Some(ij) => self.granted.push(ij),
+                None => {
+                    let what = if m == Mark::Secret { "secret" } else { "personal" };
+                    self.errors.push(err(at, format!("{kind}'s {attr} is {what}, and {adapter} is not allowed to receive it; write `allow {adapter} to receive {kind}'s {attr}`")));
+                }
+            }
+        }
+    }
+
+    /// `allow …`: each field must be a marked attribute, and is listed in the
+    /// manifest. One that no effect or source sends is a warning.
+    fn grants(&mut self, src: &Source, p: &mut Program) {
+        let adapters: Vec<&str> = p.effects.iter().map(|e| e.adapter.as_str()).chain(p.sources.iter().map(|s| s.adapter.as_str())).collect();
+        let mut out = vec![];
+        for (i, g) in src.allows.iter().enumerate() {
+            if !adapters.contains(&g.adapter.as_str()) {
+                self.errors.push(err(&g.at, format!("no effect or source is via {}", g.adapter)));
+                continue;
+            }
+            for (j, (kind, attr)) in g.fields.iter().enumerate() {
+                let Some(k) = p.kind(kind) else {
+                    self.errors.push(err(&g.at, format!("unknown kind {kind}")));
+                    continue;
+                };
+                match k.attr(attr) {
+                    None => self.errors.push(err(&g.at, format!("{} has no attribute {attr}", a(kind)))),
+                    Some(x) if x.mark.is_none() => {
+                        self.errors.push(err(&g.at, format!("{kind}'s {attr} is not marked secret or personal, so it needs no `allow`")))
+                    }
+                    Some(_) => {
+                        if !self.granted.contains(&(i, j)) {
+                            p.warnings.push(format!("`allow {} to receive {kind}'s {attr}`: no effect or source via {} sends it", g.adapter, g.adapter));
+                        }
+                        out.push(Grant { adapter: g.adapter.clone(), kind: kind.clone(), attr: attr.clone() });
+                    }
+                }
+            }
+        }
+        p.grants = out;
     }
 
     /// `apply rule R to Ks created from version n` (appendix M.2.3).
@@ -784,7 +842,18 @@ impl Checker {
                         None => None,
                     },
                 };
-                attrs.push(Attr { name: a.name.clone(), ty, of: None, default, formula: None });
+                if let Some(m) = a.mark {
+                    if m == Mark::Secret && ty != Ty::Text {
+                        self.errors.push(err(&k.at, format!("{}.{} is {ty:?}; only a Text attribute can be secret", k.name, a.name)));
+                    }
+                    if matches!(ty, Ty::Ref | Ty::Set) {
+                        self.errors.push(err(&k.at, format!("{}.{} refers to shared entities; only a value can be marked", k.name, a.name)));
+                    }
+                    if m == Mark::Secret && default.is_some() {
+                        self.errors.push(err(&k.at, format!("{}.{} is secret, so it has no default", k.name, a.name)));
+                    }
+                }
+                attrs.push(Attr { name: a.name.clone(), ty, of: None, default, formula: None, mark: a.mark });
             }
             let plural = k.plural.clone().unwrap_or_else(|| plural_of(&k.name));
             p.kinds.push(Kind { name: k.name.clone(), plural, attrs, owner: None });
@@ -895,7 +964,10 @@ impl Checker {
                     self.errors.push(err(&k.at, format!("{}.{} refers to {}; it has no default", k.name, a.name, a_(target))));
                 }
                 let kind = p.kinds.iter_mut().find(|x| x.name == k.name).expect("declared kinds are compiled");
-                kind.attrs.push(Attr { name: a.name.clone(), ty, of: Some(target.clone()), default: None, formula: None });
+                kind.attrs.push(Attr { name: a.name.clone(), ty, of: Some(target.clone()), default: None, formula: None, mark: None });
+                if a.mark.is_some() {
+                    self.errors.push(err(&k.at, format!("{}.{} refers to shared entities; only a value can be marked", k.name, a.name)));
+                }
             }
         }
     }
@@ -983,7 +1055,11 @@ impl Checker {
                     }
                     continue;
                 }
-                let Some((num, ty)) = self.num(p, &k.at, &k.name, f) else { continue };
+                // A secret's formula may copy a secret; nothing else may read one.
+                self.sending = attr.mark == Some(Mark::Secret);
+                let num = self.num(p, &k.at, &k.name, f);
+                self.sending = false;
+                let Some((num, ty)) = num else { continue };
                 if ty != want {
                     self.errors.push(err(&k.at, format!("{}.{} is {want:?}, but its formula gives a {ty:?}", k.name, a.name)));
                     continue;
@@ -1234,11 +1310,13 @@ impl Checker {
                         continue;
                     }
                     Some(_) => {}
-                    None => kind.attrs.push(Attr { name: name.clone(), ty, of: None, default: None, formula: None }),
+                    None => kind.attrs.push(Attr { name: name.clone(), ty, of: None, default: None, formula: None, mark: None }),
                 }
                 data.push((name.clone(), ty));
             }
             let mut sends = vec![];
+            self.sending = true;
+            self.marked.clear();
             for np in &e.sends {
                 match self.np(p, &e.at, &e.kind, np) {
                     Some((path, End::Value(_) | End::Ref(_) | End::Set(_))) => sends.push((np.steps.last().cloned().unwrap_or_default(), path)),
@@ -1248,6 +1326,8 @@ impl Checker {
                     None => {}
                 }
             }
+            self.sending = false;
+            self.grants_for(src, &e.at, &e.adapter);
             p.effects.push(Effect {
                 kind: e.kind.clone(),
                 verb: e.verb.clone(),
@@ -1413,7 +1493,13 @@ impl Checker {
                 self.errors.push(err(&s.at, format!("a source's answer carries only {}; drop `with {extra}`", s.attr)));
                 continue;
             }
+            if attr.mark == Some(Mark::Secret) {
+                self.errors.push(err(&s.at, format!("{}.{} is secret, so it cannot be sourced", s.kind, s.attr)));
+                continue;
+            }
             let mut sends = vec![];
+            self.sending = true;
+            self.marked.clear();
             for np in &s.sends {
                 match self.np(p, &s.at, &s.kind, np) {
                     Some((path, End::Value(_) | End::Ref(_) | End::Set(_))) => sends.push((np.steps.last().cloned().unwrap_or_default(), path)),
@@ -1421,6 +1507,8 @@ impl Checker {
                     None => {}
                 }
             }
+            self.sending = false;
+            self.grants_for(src, &s.at, &s.adapter);
             let otherwise = match &s.otherwise {
                 None => Otherwise::Hold,
                 Some(ast::OtherwiseDecl::Again(secs)) => Otherwise::Again(*secs),
@@ -2128,6 +2216,13 @@ impl Checker {
                         return None;
                     }
                     (ty, None) => {
+                        if let Some(m) = a.mark {
+                            if m == Mark::Secret && !self.sending {
+                                self.errors.push(err(at, format!("`{}`: {}'s {w} is secret; secrets can be sent to an adapter, never compared or computed with", show(np), kind.name)));
+                                return None;
+                            }
+                            self.marked.push((kind.name.clone(), w.clone(), m));
+                        }
                         steps.push(Step::Attr(w.clone()));
                         return Some((Path { steps }, End::Value(ty)));
                     }

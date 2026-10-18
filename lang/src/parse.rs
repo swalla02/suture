@@ -46,11 +46,12 @@ pub(crate) fn statement(st: &Stmt, out: &mut Source) -> Result<(), Error> {
         "role" => role(st, at, out),
         "admit" => admit(st, at, out),
         "apply" => apply(st, at, out),
+        "allow" => allow(st, at, out),
         w if w.starts_with(char::is_uppercase) && matches!(st.lines[0].get(1), Some(Tok::Word(x)) if x == "is") => slot(st, at, out),
         w if w.starts_with(char::is_uppercase) && matches!(st.lines[0].get(1), Some(Tok::Word(x)) if x == "uses") => uses(st, at, out),
         w if w.starts_with(char::is_uppercase) => needs(st, at, out),
         _ => Err(st.error(format!(
-            "unknown statement `{first}`: expected module, kind, effect, source, decide, rule, define, desired, when, prefer, role, admit, apply, `Kind needs …` or `Slot is …`"
+            "unknown statement `{first}`: expected module, kind, effect, source, decide, rule, define, desired, when, prefer, role, admit, apply, allow, `Kind needs …` or `Slot is …`"
         ))),
     }
 }
@@ -174,6 +175,13 @@ fn kind(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
             let attr = c.word()?;
             c.expect_sym(':')?;
             let ty = type_name(&mut c)?;
+            let mark = if c.eat_word("secret") {
+                Some(crate::ir::Mark::Secret)
+            } else if c.eat_word("personal") {
+                Some(crate::ir::Mark::Personal)
+            } else {
+                None
+            };
             let (mut default, mut formula) = (None, None);
             if c.eat_sym('=') {
                 // A lone literal is a default; anything else is a formula.
@@ -186,7 +194,7 @@ fn kind(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
                     }
                 }
             }
-            attrs.push(AttrDecl { name: attr, ty, default, formula });
+            attrs.push(AttrDecl { name: attr, ty, mark, default, formula });
             if c.eat_sym('}') {
                 break;
             }
@@ -654,6 +662,30 @@ fn decide(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     };
     c.expect_end()?;
     out.decides.push(DecideDecl { point, scope, cond, model, within_ms, source: text(&toks), at });
+    Ok(())
+}
+
+/// `allow payments to receive Order's card, Order's address` (appendix N.2.3).
+fn allow(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
+    let toks = st.tokens();
+    let mut c = Cursor::new(&toks, &st.file, st.line);
+    c.expect_word("allow")?;
+    let adapter = c.word()?;
+    c.expect_word("to")?;
+    c.expect_word("receive")?;
+    let mut fields = vec![];
+    loop {
+        let kind = c.kind_name()?;
+        if !c.eat_poss() {
+            return Err(c.error(format!("expected `{kind}'s` and the attribute, as in `Order's card`, found {}", c.found())));
+        }
+        fields.push((kind, c.word()?));
+        if !(c.eat_sym(',') || c.eat_word("and")) {
+            break;
+        }
+    }
+    c.expect_end()?;
+    out.allows.push(AllowDecl { adapter, fields, at });
     Ok(())
 }
 

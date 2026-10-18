@@ -34,6 +34,25 @@ pub struct Program {
     pub candidates: u32,
     /// What `suture build` warns about; the program still runs.
     pub warnings: Vec<String>,
+    /// The marked fields each adapter may receive (appendix N.2.3).
+    #[serde(default)]
+    pub grants: Vec<Grant>,
+}
+
+/// `allow payments to receive Order's card`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Grant {
+    pub adapter: String,
+    pub kind: String,
+    pub attr: String,
+}
+
+/// An attribute's mark (appendix N.2.1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Mark {
+    Secret,
+    Personal,
 }
 
 /// `lines: list of Line` on an Order (appendix E.2.6).
@@ -247,6 +266,8 @@ pub struct Attr {
     pub default: Option<Lit>,
     /// Computed once at creation, after defaults (appendix E.2.5).
     pub formula: Option<Num>,
+    #[serde(default)]
+    pub mark: Option<Mark>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
