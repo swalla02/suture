@@ -538,7 +538,7 @@ impl Host {
                 let inj = Injection::new(net).at_hole(meet, hole).key(format!("deadline:{:032x}", hole.0));
                 self.machine.inject(inj).map_err(|e| e.to_string())?;
                 let (ask, _) = self.pending.remove(i);
-                let within = self.prog.effect_of(&ask.kind).map_or(0, |e| e.within_secs);
+                let within = self.prog.request_within(&ask.kind);
                 self.trace.push(format!("      {}: no answer within {}   ({})", ask.adapter, duration(within), ask.key));
                 self.expired.push(ask);
                 self.pump()
@@ -552,6 +552,7 @@ impl Host {
                 }
                 self.tell(&label, &Msg::GoalDue { goal })
             }
+            Timer::Patience(label, id) if id.contains('~') => self.tell(&label, &Msg::Due { id }),
             Timer::Patience(label, id) => {
                 let Some(unit) = self.unit(&label) else { return Ok(()) };
                 if interp::patience_due(&self.prog, &unit, &id).is_none() {
@@ -624,7 +625,7 @@ impl Host {
             }
             self.machine.commit().map_err(|e| e.to_string())?;
             for (ask, hole) in outside {
-                let within = self.prog.effect_of(&ask.kind).map_or(0, |e| e.within_secs);
+                let within = self.prog.request_within(&ask.kind);
                 self.expired.retain(|a| a.key != ask.key);
                 self.schedule(self.now + within, Timer::Deadline(hole));
                 self.pending.push((ask, hole));

@@ -4,10 +4,10 @@
 
 use std::collections::BTreeMap;
 
-use suture_lang::ir::{Arith, Body, Cond, Criterion, Effect, Num, Op, Path, Program, Rule, Step, Ty, CREATED, TIMED_OUT};
+use suture_lang::ir::{Action, Arith, Body, Cond, Criterion, Effect, Num, Op, Otherwise, Path, Program, Rule, Source, Step, Ty, CREATED, TIMED_OUT};
 
 use crate::choice::{choose, pick};
-use crate::state::{period_key, Ask, Bind, Decide, Fact, Facts, Msg, Node, Status, Unit, Val};
+use crate::state::{period_key, Ask, Bind, Decide, Fact, Facts, Fetch, Msg, Node, Status, Unit, Val};
 
 static NO_TOTALS: BTreeMap<String, Val> = BTreeMap::new();
 
@@ -25,16 +25,27 @@ pub struct View<'a> {
     pub period: Option<&'a str>,
     /// In an `admit` condition: the caller's unit (appendix G.2.3).
     pub caller: Option<&'a str>,
+    /// When a step checks a rule before acting: the clock. Sourced values
+    /// are then known only while fresh, and strict rules count what they
+    /// cannot know against the action (appendix I.2.3–I.2.4).
+    pub now: Option<i64>,
+    /// While a rule is checked: its `with a at most … old` bounds.
+    pub bounds: &'a [(String, u64)],
 }
 
 impl<'a> View<'a> {
     pub fn of(u: &'a Unit) -> View<'a> {
-        View { root: &u.root, facts: &u.facts, taken: &u.taken, cand: None, elem: None, period: None, caller: None }
+        View { root: &u.root, facts: &u.facts, taken: &u.taken, cand: None, elem: None, period: None, caller: None, now: None, bounds: &[] }
+    }
+
+    /// The view a step checks its rules with before acting at `now`.
+    fn acting(self, now: i64) -> View<'a> {
+        View { now: Some(now), ..self }
     }
 
     /// A tree being built, with its facts and nothing taken yet.
     fn bare(root: &'a Node, facts: &'a Facts) -> View<'a> {
-        View { root, facts, taken: &NO_TOTALS, cand: None, elem: None, period: None, caller: None }
+        View { root, facts, taken: &NO_TOTALS, cand: None, elem: None, period: None, caller: None, now: None, bounds: &[] }
     }
 
     fn with(self, root: &'a Node) -> View<'a> {
@@ -180,6 +191,9 @@ fn give(prog: &Program, kind: &str, n: &mut Node, given: &[(String, Val)]) -> Re
         if a.formula.is_some() {
             return Err(format!("{kind}.{name} is computed by its formula; it is not given"));
         }
+        if prog.source_of(kind, name).is_some() {
+            return Err(format!("{kind}.{name} comes from its source; it is not given"));
+        }
         if v.ty() != a.ty {
             let want = a.of.as_ref().map_or_else(|| format!("{:?}", a.ty), |k| format!("{:?} of {k}", a.ty));
             return Err(format!("{kind}.{name} is {want}, not {}", v.show(&prog.currency)));
@@ -231,6 +245,7 @@ fn blank(prog: &Program, kind: &str, attempt: u32, now: i64) -> Node {
         slots: Default::default(),
         binds: Default::default(),
         parts: vec![],
+        fetched: Default::default(),
     }
 }
 
@@ -261,6 +276,17 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
                 return Outcome::new(u, out);
             }
         }
+        Msg::Answer { key, outcome, .. } if is_fetch(key) && outcome == TIMED_OUT => {
+            if let Err(note) = fetch_deadline(prog, &mut u, key, now, &mut out) {
+                return Outcome::kept(unit, note, Out::default());
+            }
+        }
+        Msg::Answer { key, outcome, data } if is_fetch(key) => {
+            if let Err(note) = fetch_answer(prog, &mut u, key, outcome, data, now, &mut out) {
+                return Outcome::kept(unit, note, out);
+            }
+        }
+        Msg::Due { id } => fetch_due(&mut u, id),
         Msg::Answer { key, outcome, .. } if outcome == TIMED_OUT => {
             if let Err(refusal) = deadline(prog, &mut u, key, &mut out) {
                 return Outcome::kept(unit, refusal.note, Out::default());
@@ -360,7 +386,7 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
     }
     settle(prog, &mut u, &mut out, now);
     goals(prog, &mut u);
-    if let (Some(r), Msg::Answer { key, outcome, .. }) = (violated(prog, &u), msg) {
+    if let (Some(r), Msg::Answer { key, outcome, .. }) = (violated(prog, &u).filter(|_| !matches!(msg, Msg::Answer { key, .. } if is_fetch(key))), msg) {
         // A consequence no pass guards, such as a withdrawn part, would
         // break a rule: refuse the answer and ask again (appendix B.3.4).
         // A deadline is not an answer, so nothing is asked again for it.
@@ -708,6 +734,10 @@ fn goal_due(prog: &Program, u: &mut Unit, goal: u32) {
     u.notes.push(format!("alert: not met within {}: {}", duration(g.within_secs.unwrap_or(0)), g.source));
     for at in positions(&u.root) {
         let n = node_at(&u.root, &at);
+        for attr in n.fetched.iter().filter(|(_, f)| f.failed).map(|(a, _)| a) {
+            let adapter = prog.source_of(&n.kind, attr).map_or("its source", |s| s.adapter.as_str());
+            u.notes.push(format!("  because {attr} could not be sourced from {adapter}"));
+        }
         for (part, rule) in &n.held {
             u.notes.push(format!("  because {part} waits: rule {rule}"));
         }
@@ -750,7 +780,15 @@ fn react(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize], kind: &st
         Some(x) => r.by.iter().any(|b| b == x),
     };
     for r in prog.reactions.iter().filter(|r| r.kind == kind && r.outcome == outcome).filter(fits) {
-        for a in &r.actions {
+        apply(prog, root, facts, at, &r.actions, notes);
+    }
+}
+
+/// Applies actions at the node at `at`: a reaction's, or a source's
+/// `otherwise` (appendix I.2.6).
+fn apply(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize], actions: &[Action], notes: &mut Vec<String>) {
+    {
+        for a in actions {
             let Some(target) = here(View::bare(root, facts), at, &a.target.steps) else { continue };
             let Some(calc) = &a.becomes else {
                 let n = node_at_mut(root, &target);
@@ -779,7 +817,11 @@ fn react(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize], kind: &st
 fn settle(prog: &Program, u: &mut Unit, out: &mut Out, now: i64) {
     for _ in 0..SETTLE_ROUNDS {
         let changed = positions(&u.root).iter().any(|at| {
-            needs_pass(prog, u, at, now, out) || bind_pass(prog, u, at, out) || done_pass(prog, u, at) || request_pass(prog, u, at, out)
+            needs_pass(prog, u, at, now, out)
+                || bind_pass(prog, u, at, out)
+                || done_pass(prog, u, at, now)
+                || request_pass(prog, u, at, now, out)
+                || sources_pass(prog, u, at, now, out)
         });
         if !changed {
             return;
@@ -858,7 +900,7 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut Ou
                 while formulas(prog, &mut t, &u.facts, &pos) {}
                 let part = node_at(&t, &pos).clone();
                 let next = slot.and_then(|s| choose(s, Some(&want)).map(|next| (s, next)));
-                change = match newly_broken(prog, View::of(u), &t) {
+                change = match newly_broken(prog, View::of(u).acting(now), &t) {
                     // Refused on facts that never change: move on at once (appendix F.2.15).
                     Some(r) if r.fixed && next.is_some() => {
                         let (s, next) = next.expect("checked above");
@@ -977,7 +1019,7 @@ fn patience(prog: &Program, u: &mut Unit, id: &str, out: &mut Out) -> bool {
 /// A part with no effect of its own is done once every active need of it is
 /// done (appendix B.3.2), unless being done would break a rule: then it waits
 /// on that rule. A root is never done; its goals describe it.
-fn done_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
+fn done_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64) -> bool {
     let n = node_at(&u.root, at);
     if at.is_empty() || n.status != Status::Idle || prog.effect_of(&n.kind).is_some() || !needs_done(prog, View::of(u), at) || !bound(prog, &u.root, at) {
         return false;
@@ -985,7 +1027,7 @@ fn done_pass(prog: &Program, u: &mut Unit, at: &[usize]) -> bool {
     let (kind, waiting) = (n.kind.clone(), n.waiting.clone());
     let mut t = u.root.clone();
     node_at_mut(&mut t, at).status = Status::Done;
-    match newly_broken(prog, View::of(u), &t) {
+    match newly_broken(prog, View::of(u).acting(now), &t) {
         Some(r) if waiting.as_deref() == Some(r.name.as_str()) => false,
         Some(r) => {
             node_at_mut(&mut u.root, at).waiting = Some(r.name.clone());
@@ -1014,7 +1056,7 @@ fn needs_done(prog: &Program, v: View, at: &[usize]) -> bool {
 /// Sends a ready part's request, unless a rule would break. Then the part
 /// waits on that rule, and every later step of the unit checks it again
 /// (appendix B.3.5).
-fn request_pass(prog: &Program, u: &mut Unit, at: &[usize], out: &mut Out) -> bool {
+fn request_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut Out) -> bool {
     let n = node_at(&u.root, at);
     let Some(effect) = prog.effect_of(&n.kind) else { return false };
     if n.status != Status::Idle || !needs_done(prog, View::of(u), at) || !bound(prog, &u.root, at) {
@@ -1023,7 +1065,7 @@ fn request_pass(prog: &Program, u: &mut Unit, at: &[usize], out: &mut Out) -> bo
     let (kind, waiting) = (n.kind.clone(), n.waiting.clone());
     let mut t = u.root.clone();
     node_at_mut(&mut t, at).status = Status::Requested;
-    match broken_rule(prog, View::of(u).with(&t)) {
+    match broken_rule(prog, View::of(u).with(&t).acting(now)) {
         Some(r) if waiting.as_deref() == Some(r.name.as_str()) => false,
         Some(r) => {
             node_at_mut(&mut u.root, at).waiting = Some(r.name.clone());
@@ -1040,6 +1082,189 @@ fn request_pass(prog: &Program, u: &mut Unit, at: &[usize], out: &mut Out) -> bo
             u.notes.push(format!("{kind} → {} via {} ({})", effect.verb, effect.adapter, sends.join(", ")));
             out.asks.push(a);
             true
+        }
+    }
+}
+
+/// Whether a request key is a source's fetch: `O1~credit#2` (appendix I.2.2).
+pub fn is_fetch(key: &str) -> bool {
+    key.contains('~')
+}
+
+/// `O1~credit#2`, `O1/Check#1~score#1`: the node, the attribute and the fetch's number.
+fn fetch_key(label: &str, root: &Node, at: &[usize], attr: &str, n: u32) -> String {
+    format!("{}~{attr}#{n}", node_key(label, root, at))
+}
+
+fn fetch_ask(label: &str, v: View, at: &[usize], src: &Source) -> Ask {
+    let n = node_at(v.root, at).fetched.get(&src.attr).map_or(0, |f| f.n);
+    let sends = src.sends.iter().filter_map(|(name, path)| value(v, at, path).map(|x| (name.clone(), x))).collect();
+    Ask {
+        adapter: src.adapter.clone(),
+        verb: "source".into(),
+        kind: src.request_kind(),
+        label: label.to_string(),
+        key: fetch_key(label, v.root, at, &src.attr, n),
+        sends,
+    }
+}
+
+/// The node and attribute of the fetch numbered as `key` says, open or not.
+fn find_fetch(u: &Unit, key: &str, open: bool) -> Option<(Vec<usize>, String)> {
+    positions(&u.root).into_iter().find_map(|at| {
+        let n = node_at(&u.root, &at);
+        let hit = n.fetched.iter().find(|(a, f)| (!open || f.sends > 0) && fetch_key(&u.label, &u.root, &at, a, f.n) == key);
+        hit.map(|(a, _)| (at.clone(), a.clone()))
+    })
+}
+
+/// Fetches what a waiting part's strict rules need (appendix I.2.5): each
+/// sourced value a rule it waits on reads that is not fresh for that rule
+/// and has no open or failed fetch. Makes at most one change.
+fn sources_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut Out) -> bool {
+    let n = node_at(&u.root, at);
+    let mut waits: Vec<String> = n.held.values().cloned().collect();
+    if n.status == Status::Idle {
+        waits.extend(n.waiting.clone());
+    }
+    for name in waits {
+        let Some(r) = prog.rules.iter().find(|r| r.name == name) else { continue };
+        for (kind, attr) in &r.sources {
+            let Some(src) = prog.source_of(kind, attr) else { continue };
+            let bound = r.fresh.iter().find(|(a, _)| a == attr).map(|(_, secs)| *secs);
+            for pos in positions(&u.root) {
+                let node = node_at(&u.root, &pos);
+                if node.kind != *kind {
+                    continue;
+                }
+                let f = node.fetched.get(attr).cloned().unwrap_or_default();
+                if f.sends > 0 || f.failed || f.fresh(now, bound) {
+                    continue;
+                }
+                let why = match (f.at, bound) {
+                    (None, _) => format!("asking {}", src.adapter),
+                    (Some(_), Some(b)) if f.until.is_none_or(|until| now < until) => {
+                        format!("older than {} for rule {}: asking {} again", duration(b), r.name, src.adapter)
+                    }
+                    (Some(_), _) => format!("older than {}: asking {} again", duration(src.good_for.unwrap_or(0)), src.adapter),
+                };
+                let fetch = node_at_mut(&mut u.root, &pos).fetched.entry(attr.clone()).or_default();
+                fetch.n += 1;
+                fetch.sends = 1;
+                let a = fetch_ask(&u.label, View::of(u), &pos, src);
+                let sends: Vec<String> = a.sends.iter().map(|(k, v)| format!("{k} {}", v.show(&prog.currency))).collect();
+                u.notes.push(format!("{attr}: {why} ({})", sends.join(", ")));
+                out.asks.push(a);
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// A fetch's answer (appendix I.2.2): the value is recorded as fetched now,
+/// or the fetch fails. A malformed answer is refused and asked again.
+fn fetch_answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[(String, Val)], now: i64, out: &mut Out) -> Result<(), String> {
+    let Some((at, attr)) = find_fetch(u, key, true) else { return Err(format!("ignored an answer for {key}: no open fetch")) };
+    let kind = node_at(&u.root, &at).kind.clone();
+    let src = prog.source_of(&kind, &attr).expect("a fetch has a source");
+    let mut refuse = |why: String| {
+        out.asks.push(fetch_ask(&u.label, View::of(u), &at, src));
+        Err(format!("refused an answer for {key}: {why}"))
+    };
+    if outcome != src.success {
+        if src.failures.iter().any(|f| f == outcome) {
+            fail(prog, u, &at, src, key, outcome, now);
+            return Ok(());
+        }
+        return refuse(format!("a source of {attr} reports `{}` or fails with {}, not `{outcome}`", src.success, src.failures.join(", ")));
+    }
+    let value = match data {
+        [(name, v)] if *name == attr && v.ty() == src.ty => v.clone(),
+        [(name, v)] if *name == attr => return refuse(format!("{attr} must be {:?}, not {}", src.ty, v.show(&prog.currency))),
+        _ => return refuse(format!("a `{}` answer carries {attr} and nothing else", src.success)),
+    };
+    let shown = value.show(&prog.currency);
+    let n = node_at_mut(&mut u.root, &at);
+    n.attrs.insert(attr.clone(), value);
+    let f = n.fetched.entry(attr.clone()).or_default();
+    *f = Fetch { n: f.n, sends: 0, at: Some(now), until: src.good_for.map(|g| now + g as i64), failed: false, fallback: false };
+    match src.good_for {
+        Some(g) => {
+            u.notes.push(format!("{attr}: {shown} from {}, trusted for {}", src.adapter, duration(g)));
+            u.timers.push((format!("{key}:stale"), g));
+        }
+        None => u.notes.push(format!("{attr}: {shown} from {}", src.adapter)),
+    }
+    Ok(())
+}
+
+/// A fetch's deadline: it is asked again with the same key, or after the
+/// last send it fails.
+fn fetch_deadline(prog: &Program, u: &mut Unit, key: &str, now: i64, out: &mut Out) -> Result<(), String> {
+    let Some((at, attr)) = find_fetch(u, key, true) else { return Err(format!("ignored a deadline for {key}: no open fetch")) };
+    let kind = node_at(&u.root, &at).kind.clone();
+    let src = prog.source_of(&kind, &attr).expect("a fetch has a source");
+    let f = node_at_mut(&mut u.root, &at).fetched.entry(attr.clone()).or_default();
+    if f.sends < prog.attempts {
+        f.sends += 1;
+        let sends = f.sends;
+        u.notes.push(format!("{attr}: no answer within {}: asking again (send {sends} of {})", duration(src.within_secs), prog.attempts));
+        out.asks.push(fetch_ask(&u.label, View::of(u), &at, src));
+        return Ok(());
+    }
+    fail(prog, u, &at, src, key, &format!("timed out after {} sends", prog.attempts), now);
+    Ok(())
+}
+
+/// A fetch failed: the source's `otherwise` applies (appendix I.2.6).
+fn fail(prog: &Program, u: &mut Unit, at: &[usize], src: &Source, key: &str, why: &str, now: i64) {
+    let attr = &src.attr;
+    let f = node_at_mut(&mut u.root, at).fetched.entry(attr.clone()).or_default();
+    f.sends = 0;
+    f.failed = true;
+    let failed = format!("{attr}: {} failed ({why})", src.adapter);
+    match &src.otherwise {
+        Otherwise::Hold => u.notes.push(format!("{failed}; the steps its rules guard wait")),
+        Otherwise::Use(l) => {
+            let v = Val::from_lit(l);
+            u.notes.push(format!("{failed}: using {} instead", v.show(&prog.currency)));
+            let n = node_at_mut(&mut u.root, at);
+            n.attrs.insert(attr.clone(), v);
+            let f = n.fetched.entry(attr.clone()).or_default();
+            *f = Fetch { n: f.n, sends: 0, at: Some(now), until: src.good_for.map(|g| now + g as i64), failed: false, fallback: true };
+            if let Some(g) = src.good_for {
+                u.timers.push((format!("{key}:stale"), g));
+            }
+        }
+        Otherwise::Again(secs) => {
+            u.notes.push(format!("{failed}: asking again in {}", duration(*secs)));
+            u.timers.push((format!("{key}:again"), *secs));
+        }
+        Otherwise::Act(actions) => {
+            u.notes.push(failed);
+            let mut t = u.root.clone();
+            let mut notes = vec![];
+            apply(prog, &mut t, &u.facts, at, actions, &mut notes);
+            match newly_broken(prog, View::of(u), &t) {
+                Some(r) => u.notes.push(format!("reaction held: rule {}: {}", r.name, r.paraphrase)),
+                None => {
+                    u.root = t;
+                    u.notes.extend(notes);
+                }
+            }
+        }
+    }
+}
+
+/// A source's timer (appendix I.2.5–I.2.6): after `ask again after`, the
+/// failed fetch may fetch again. Either way the step settles, so a part that
+/// still waits fetches what it needs.
+fn fetch_due(u: &mut Unit, id: &str) {
+    let Some(key) = id.strip_suffix(":again") else { return };
+    if let Some((at, attr)) = find_fetch(u, key, false) {
+        if let Some(f) = node_at_mut(&mut u.root, &at).fetched.get_mut(&attr) {
+            f.failed = false;
         }
     }
 }
@@ -1125,15 +1350,23 @@ fn newly_broken<'p>(prog: &'p Program, before: View, after: &Node) -> Option<&'p
     prog.rules.iter().find(|r| broken(prog, before.with(after), r) && !broken(prog, before, r))
 }
 
+/// Whether a rule is broken. A strict rule (one that reads sourced facts),
+/// checked before an action, counts what it cannot know against the action
+/// (appendix I.2.4): a filter that might hold applies, an `every` that might
+/// fail fails, and a `no … has` that might be present is present.
 fn broken(prog: &Program, v: View, r: &Rule) -> bool {
+    let strict = v.now.is_some() && !r.sources.is_empty();
+    let v = View { bounds: &r.fresh, ..v };
+    let may = |t: T| t == T::Yes || (strict && t == T::Unknown);
     positions(v.root).iter().any(|at| {
         node_at(v.root, at).kind == r.subject
-            && r.filter.iter().all(|f| eval(prog, v, at, f) == T::Yes)
+            && r.filter.iter().all(|f| may(eval(prog, v, at, f)))
             && match &r.body {
-                Body::Every(c) => eval(prog, v, at, c) == T::No,
-                Body::No { pred, unless } => {
-                    eval(prog, v, at, pred) == T::Yes && unless.as_ref().is_none_or(|u| eval(prog, v, at, u) != T::Yes)
+                Body::Every(c) => {
+                    let t = eval(prog, v, at, c);
+                    t == T::No || (strict && t == T::Unknown)
                 }
+                Body::No { pred, unless } => may(eval(prog, v, at, pred)) && unless.as_ref().is_none_or(|u| eval(prog, v, at, u) != T::Yes),
             }
     })
 }
@@ -1394,7 +1627,16 @@ fn value(v: View, from: &[usize], path: &Path) -> Option<Val> {
     let Step::Attr(name) = last else { return None };
     match locate(v, from, rest)? {
         Place::Here(at) if name == CREATED => Some(Val::Time(node_at(v.root, &at).created)),
-        Place::Here(at) => node_at(v.root, &at).attrs.get(name).cloned(),
+        Place::Here(at) => {
+            let n = node_at(v.root, &at);
+            if let (Some(now), Some(f)) = (v.now, n.fetched.get(name)) {
+                let bound = v.bounds.iter().find(|(a, _)| a == name).map(|(_, secs)| *secs);
+                if !f.fresh(now, bound) {
+                    return None;
+                }
+            }
+            n.attrs.get(name).cloned()
+        }
         Place::There(l) => {
             let f = v.facts.get(&l)?;
             if name == CREATED { Some(Val::Time(f.created)) } else { f.attrs.get(name).cloned() }

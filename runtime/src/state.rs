@@ -263,6 +263,52 @@ impl Status {
     }
 }
 
+/// Where a sourced attribute's value stands (appendix I.2).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Fetch {
+    /// How many fetches it has made: the open or last one's number.
+    pub n: u32,
+    /// Sends of the open fetch; 0 while none is open.
+    pub sends: u32,
+    /// When the value was fetched, or fell back, if it has one.
+    pub at: Option<i64>,
+    /// Until when its `good for` trusts it; `None`: for ever.
+    pub until: Option<i64>,
+    /// The last fetch failed, and no recovery set a value.
+    pub failed: bool,
+    /// The value is the source's `otherwise use`.
+    pub fallback: bool,
+}
+
+impl Fetch {
+    /// Whether the value can be used now by a rule that accepts values at
+    /// most `bound` seconds old.
+    pub fn fresh(&self, now: i64, bound: Option<u64>) -> bool {
+        let Some(at) = self.at else { return false };
+        self.until.is_none_or(|u| now < u) && bound.is_none_or(|b| now - at <= b as i64)
+    }
+
+    fn to_value(&self) -> Value {
+        let opt = |x: Option<i64>| Value::list(x.into_iter().map(Value::from));
+        Value::tuple([
+            Value::from(i64::from(self.n)),
+            Value::from(i64::from(self.sends)),
+            opt(self.at),
+            opt(self.until),
+            Value::from(self.failed),
+            Value::from(self.fallback),
+        ])
+    }
+
+    fn from_value(v: &Value) -> Result<Fetch, String> {
+        let [n, sends, at, until, failed, fallback] = fields::<6>(v, "fetch")?;
+        let opt = |x: &Value| items(x)?.first().map(int).transpose();
+        let small = |x: &Value| int(x).and_then(|i| u32::try_from(i).map_err(|e| e.to_string()));
+        let flag = |x: &Value| x.as_bool().ok_or_else(|| format!("not a yes or no: {x}"));
+        Ok(Fetch { n: small(n)?, sends: small(sends)?, at: opt(at)?, until: opt(until)?, failed: flag(failed)?, fallback: flag(fallback)? })
+    }
+}
+
 /// One entity of a unit: its root, or a part (spec appendix B.3.1).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Node {
@@ -290,6 +336,8 @@ pub struct Node {
     pub binds: BTreeMap<String, Bind>,
     /// Its parts, every attempt kept, in the order they were created.
     pub parts: Vec<Node>,
+    /// Its sourced attributes' fetches, by attribute (appendix I.2).
+    pub fetched: BTreeMap<String, Fetch>,
 }
 
 impl Node {
@@ -307,11 +355,17 @@ impl Node {
             Value::list(self.slots.iter().map(|(slot, alt)| Value::tuple([text(slot), text(alt)]))),
             Value::list(self.binds.iter().map(|(id, b)| Value::tuple([text(id), b.to_value()]))),
             Value::list(self.parts.iter().map(Node::to_value)),
+            Value::list(self.fetched.iter().map(|(a, f)| Value::tuple([text(a), f.to_value()]))),
         ])
     }
 
     fn from_value(v: &Value) -> Result<Node, String> {
-        let [kind, attrs, created, status, outcome, attempt, sends, waiting, held, slots, binds, parts] = fields::<12>(v, "node")?;
+        let [kind, attrs, created, status, outcome, attempt, sends, waiting, held, slots, binds, parts, fetched] = fields::<13>(v, "node")?;
+        let mut fetches = BTreeMap::new();
+        for f in items(fetched)? {
+            let [a, f] = fields::<2>(f, "fetched attribute")?;
+            fetches.insert(string(a)?, Fetch::from_value(f)?);
+        }
         let mut bound = BTreeMap::new();
         for b in items(binds)? {
             let [id, b] = fields::<2>(b, "binding")?;
@@ -341,6 +395,7 @@ impl Node {
             slots: slot_alts,
             binds: bound,
             parts: items(parts)?.iter().map(Node::from_value).collect::<Result<_, _>>()?,
+            fetched: fetches,
         })
     }
 }
@@ -359,8 +414,9 @@ pub struct Unit {
     pub matched: Vec<u32>,
     /// The goals that raised an alert, by index (appendix C.3.4).
     pub alerts: Vec<u32>,
-    /// The patience timers this unit asked for: an id and a duration
-    /// (appendix D.3.5). The host starts each id once.
+    /// The timers this unit asked for: an id and a duration. The host starts
+    /// each id once. A slot's patience (appendix D.3.5) fires a `Patience`;
+    /// a source's id has a `~` and fires a `Due` (appendix I.2.5–I.2.6).
     pub timers: Vec<(String, u64)>,
     /// The shared entities it reads, carried in (appendix F.2.3).
     pub facts: Facts,
@@ -433,6 +489,9 @@ pub enum Msg {
     Change { attr: String, value: Val, by: String },
     /// New values of the facts a reader carries (appendix G.2.7).
     Refresh { facts: Facts },
+    /// A source's timer: a value's `good for` ran out, or a failed fetch
+    /// may ask again (appendix I.2.5–I.2.6).
+    Due { id: String },
 }
 
 impl Msg {
@@ -454,6 +513,7 @@ impl Msg {
             Msg::Event { verb, by } => Value::tuple([Value::from(9i64), text(verb), text(by)]),
             Msg::Change { attr, value, by } => Value::tuple([Value::from(10i64), pairs_value(&[(attr.clone(), value.clone())]), text(by)]),
             Msg::Refresh { facts } => Value::tuple([Value::from(11i64), facts_value(facts)]),
+            Msg::Due { id } => Value::tuple([Value::from(12i64), text(id)]),
         }
     }
 
@@ -506,6 +566,10 @@ impl Msg {
             Some(Ok(11)) => {
                 let [_, facts] = fields::<2>(v, "refresh message")?;
                 Ok(Msg::Refresh { facts: facts_from(facts)? })
+            }
+            Some(Ok(12)) => {
+                let [_, id] = fields::<2>(v, "due message")?;
+                Ok(Msg::Due { id: string(id)? })
             }
             _ => Err(format!("not a message: {v}")),
         }
@@ -697,6 +761,7 @@ mod tests {
                 ("Stock.1".to_string(), Bind::Granted { to: "S2".into(), taken: Some(("quantity".into(), Val::Count(2))) }),
             ]),
             parts: vec![],
+            fetched: BTreeMap::from([("credit".to_string(), Fetch { n: 2, sends: 1, at: Some(10), until: None, failed: false, fallback: true })]),
         };
         let root = Node {
             kind: "Order".into(),
@@ -711,6 +776,7 @@ mod tests {
             slots: BTreeMap::from([("Delivery".to_string(), "Shipment".to_string())]),
             binds: BTreeMap::new(),
             parts: vec![part],
+            fetched: BTreeMap::new(),
         };
         Unit {
             label: "O1".into(),
@@ -757,6 +823,7 @@ mod tests {
             Msg::Event { verb: "cancels".into(), by: "customer Ada".into() },
             Msg::Change { attr: "units".into(), value: Val::Count(2), by: "staff Tom".into() },
             Msg::Refresh { facts: u.facts.clone() },
+            Msg::Due { id: "O1~credit#1:stale".into() },
         ] {
             assert_eq!(Msg::from_value(&m.to_value()).unwrap(), m);
         }
