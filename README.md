@@ -188,7 +188,7 @@ target/release/suture serve   examples/tickets --listen 127.0.0.1:7878
 
 **[The Suture guide](docs/guide/README.md)** is the place to start: a tutorial, one chapter per construct, modelling patterns, the limits of v0, and a quick reference. Every program, error and scenario in it is compiled and run by the test suite.
 
-The design is in the [language spec](docs/superpowers/specs/2026-10-14-suture-language-design.md). Its appendices B to O describe each prototype slice.
+The design is in the [language spec](docs/superpowers/specs/2026-10-14-suture-language-design.md). Its appendices B to P describe each prototype slice.
 
 ## Inside
 

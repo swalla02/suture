@@ -116,6 +116,7 @@ suture serve   ⟨dir⟩ [--state ⟨dir⟩] [--listen ⟨addr⟩] [--pod ⟨nam
                                                    serve the program over HTTP, with its log (chapters 17, 20)
 suture deploy  ⟨dir⟩ [--state ⟨dir⟩]               check a new version against the live state (chapter 18)
 suture explain ⟨dir⟩ --scenario ⟨file⟩ ⟨name⟩      … and explain one entity at the end of each
+suture lsp                                         the language server, over stdin and stdout (chapter 21)
 ```
 
 Exit status: 0 success, 1 a scenario failed, 2 the program does not compile or bad arguments.
