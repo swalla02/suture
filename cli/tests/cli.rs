@@ -111,3 +111,41 @@ fn run_with_models_asks_the_configured_backend_and_falls_back_when_it_fails() {
     assert!(!ok);
     assert!(out.contains("models.json: routing@1: unknown backend `magic`"), "{out}");
 }
+
+#[test]
+fn serve_runs_a_program_and_a_restart_keeps_its_state() {
+    use std::io::{BufRead, BufReader, Read, Write};
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let state = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("serve-state");
+    let _ = std::fs::remove_dir_all(&state);
+    let start = || {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_suture"))
+            .args(["serve", "examples/tickets", "--listen", "127.0.0.1:0", "--state", state.to_str().unwrap()])
+            .env("SUTURE_OPERATOR_TOKEN", "t")
+            .current_dir(&root)
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut first = String::new();
+        BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut first).unwrap();
+        let addr = first.split("http://").nth(1).and_then(|r| r.split(',').next()).unwrap_or_else(|| panic!("{first}")).to_string();
+        (child, addr)
+    };
+    let post = |addr: &str, path: &str, headers: &str, body: &str| {
+        let mut s = std::net::TcpStream::connect(addr).unwrap();
+        write!(s, "POST {path} HTTP/1.1\r\nContent-Length: {}\r\n{headers}\r\n{body}", body.len()).unwrap();
+        let mut out = String::new();
+        s.read_to_string(&mut out).unwrap();
+        out
+    };
+    let (mut child, addr) = start();
+    let out = post(&addr, "/world", "Authorization: Bearer t\r\n", r#"{"kind": "Fan", "label": "Ada", "attrs": {"name": "Ada"}}"#);
+    assert!(out.starts_with("HTTP/1.1 200"), "{out}");
+    child.kill().unwrap();
+    child.wait().unwrap();
+    let (mut child, addr) = start();
+    let out = post(&addr, "/world", "Authorization: Bearer t\r\n", r#"{"kind": "Fan", "label": "Ada", "attrs": {"name": "Ada"}}"#);
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(out.starts_with("HTTP/1.1 409") && out.contains("Ada already exists"), "the log brought Ada back: {out}");
+}

@@ -5,6 +5,7 @@ pub mod backend;
 pub mod choice;
 pub mod explain;
 pub mod host;
+pub mod http;
 pub mod interp;
 pub mod kernel;
 pub mod scenario;

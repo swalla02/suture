@@ -3,6 +3,7 @@
 //! - `suture build <dir>`
 //! - `suture run <dir> --scenario <file> [--models]`
 //! - `suture explain <dir> --scenario <file> <name>`
+//! - `suture serve <dir> [--state <dir>] [--listen <addr>] [--models]` (appendix L)
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -10,7 +11,10 @@ use std::process::ExitCode;
 use suture_lang::ir::Program;
 
 const USAGE: &str =
-    "usage:\n  suture build <dir>\n  suture run <dir> --scenario <file> [--models]\n  suture explain <dir> --scenario <file> <name>";
+    "usage:\n  suture build <dir>\n  suture run <dir> --scenario <file> [--models]\n  suture explain <dir> --scenario <file> <name>\n  suture serve <dir> [--state <dir>] [--listen <addr>] [--models]";
+
+/// Where `suture serve` listens unless told otherwise.
+const LISTEN: &str = "127.0.0.1:7878";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -20,6 +24,7 @@ fn main() -> ExitCode {
         ["run", dir, "--scenario", file] => scenarios(Path::new(dir), Path::new(file), None, false),
         ["run", dir, "--scenario", file, "--models"] => scenarios(Path::new(dir), Path::new(file), None, true),
         ["explain", dir, "--scenario", file, name] => scenarios(Path::new(dir), Path::new(file), Some(*name), false),
+        ["serve", dir, flags @ ..] => serve(Path::new(dir), flags),
         _ => Err(USAGE.to_string()),
     };
     match result {
@@ -160,4 +165,56 @@ fn scenarios(dir: &Path, file: &Path, explain: Option<&str>, models: bool) -> Re
         all_passed &= report.passed();
     }
     Ok(all_passed)
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// Serves the program until the process is stopped (appendix L): its state
+/// directory replayed first, `adapters.json` and (with `--models`)
+/// `models.json` read from beside it.
+fn serve(dir: &Path, flags: &[&str]) -> Result<bool, String> {
+    let (mut state, mut listen, mut models) = (suture_runtime::service::Service::default_state(dir), LISTEN.to_string(), false);
+    let mut rest = flags.iter();
+    while let Some(f) = rest.next() {
+        match *f {
+            "--state" => state = rest.next().map(Path::new).ok_or(USAGE)?.to_path_buf(),
+            "--listen" => listen = rest.next().ok_or(USAGE)?.to_string(),
+            "--models" => models = true,
+            _ => return Err(USAGE.to_string()),
+        }
+    }
+    let prog = compile(dir)?;
+    let read = |name: &str| -> Result<Option<String>, String> {
+        let path = dir.join(name);
+        match std::fs::read_to_string(&path) {
+            Ok(t) => Ok(Some(t)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(format!("{}: {e}", path.display())),
+        }
+    };
+    let backends = match (models, read("models.json")?) {
+        (false, _) => vec![],
+        (true, None) => return Err(format!("{}: not found", dir.join("models.json").display())),
+        (true, Some(t)) => suture_runtime::backend::load(&t, || Box::new(suture_runtime::backend::Curl))?,
+    };
+    let adapters = read("adapters.json")?.map_or(Ok(Default::default()), |t| suture_runtime::service::adapters(&t))?;
+    let mut svc = suture_runtime::service::Service::open(&prog, &state, unix_now(), |host| {
+        for (name, b) in backends {
+            host.models.register_backend(&name, b);
+        }
+    })?;
+    let replayed = svc.host.trace.len();
+    svc.connect(adapters, Box::new(suture_runtime::backend::Curl));
+    let listener = std::net::TcpListener::bind(&listen).map_err(|e| format!("{listen}: {e}"))?;
+    let operator = std::env::var("SUTURE_OPERATOR_TOKEN").ok();
+    let bound = listener.local_addr().map_err(|e| e.to_string())?;
+    println!("{} v{} on http://{bound}, state in {}", prog.module, prog.version, state.display());
+    println!("  replayed {replayed} trace lines; operator requests {}", if operator.is_some() { "need the token" } else { "refused: SUTURE_OPERATOR_TOKEN is not set" });
+    // Requests that were waiting when the service stopped are posted again.
+    svc.post_new(unix_now())?;
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    suture_runtime::http::serve(&mut svc, listener, operator.as_deref(), &stop, unix_now, &mut std::io::stdout()).map_err(|e| e.to_string())?;
+    Ok(true)
 }
