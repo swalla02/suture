@@ -1,6 +1,6 @@
 //! Explanations (spec §5.6): why a unit is where it is, read from its state.
 
-use suture_lang::ir::Program;
+use suture_lang::ir::{Otherwise, Program};
 
 use crate::interp::{duration, holds, in_state, request_key};
 use crate::state::{Fetch, Node, Status, Unit};
@@ -45,7 +45,11 @@ fn sourced(prog: &Program, n: &Node, now: Option<i64>, depth: usize, out: &mut V
         let value = n.attrs.get(&src.attr).map(|v| v.show(&prog.currency));
         let what = match (&f, value) {
             (f, _) if f.sends > 0 => format!("asking {}, send {} of {}", src.adapter, f.sends, prog.attempts),
-            (f, _) if f.failed => format!("{} failed; the steps its rules guard wait", src.adapter),
+            (f, _) if f.failed => match &src.otherwise {
+                Otherwise::Again(secs) => format!("{} failed; asking again {} after the failure", src.adapter, duration(*secs)),
+                Otherwise::Act(_) => format!("{} failed, and its `otherwise` was applied", src.adapter),
+                _ => format!("{} failed; the steps its rules guard wait", src.adapter),
+            },
             (Fetch { at: Some(at), .. }, Some(v)) => {
                 let from = if f.fallback { format!("{v}, the fallback after {} failed", src.adapter) } else { format!("{v} from {}", src.adapter) };
                 let age = now.map(|t| format!(", {} old", duration((t - at).max(0) as u64))).unwrap_or_default();

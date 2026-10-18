@@ -30,6 +30,8 @@ Suture v0 is a prototype. Everything earlier in this guide runs and is tested. T
 | closest patterns for `define`, `desired` and `when` | they get the phrasing table; rules get closest patterns too |
 | sourcing an attribute of a kind other units refer to or pick with `uses` | source it on the unit that reads it, or carry it with a formula |
 | a source whose answer carries more than one value | one source per attribute |
+| sourcing a `Bool` state | source a Text or Count and compare it in the rule |
+| a formula, a `becomes`, or a total's filter that stays fresh over a sourced fact | read the sourced fact in the rule itself |
 | prefetching, or a model choosing between sources | facts are fetched when a step waits on them, from their one source |
 | `decide ⟨choice⟩ with model "…"` | `prefer`; the choice interface is in place, the model backend is not |
 | waking only as many waiting bindings as a freed amount can serve | every waiter of the pool key is woken, in arrival order, and gathers again |

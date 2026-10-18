@@ -150,7 +150,7 @@ scenario "a credit too old by the time of approval is fetched again":
 O1  credit: older than 1 hour for rule credit: asking bureau again (name "Ada")
 ```
 
-Only guards are strict. Answers, events and changes are checked against the last values, stale or not, so an answer is never refused because a credit got old while it was on its way.
+Only guards are strict. Answers, events and changes are checked against the last values, stale or not, so an answer is never refused because a credit got old while it was on its way. An effect that `sends` a sourced attribute sends its last value too: freshness is a matter for the rules that guard the request.
 
 ## When the fetch fails
 
@@ -292,7 +292,9 @@ main.st:26: Order is shared (Invoice refers to it), so its credit cannot be sour
 
 The last one is a v0 limit: a fact that other units carry would need its freshness carried too, so the kind of a sourced attribute must not be referred to by another kind or picked by a `uses`. Its own parts may refer to it, as `Payment` and `Shipment` do here.
 
-The other errors say what they mean: an attribute that does not exist, one with a default or a formula, a second source for the same attribute, an `otherwise use` of the wrong type, an answer that carries something else, and a `with x at most … old` on a rule that reads no sourced `x`.
+A copy would not stay fresh either, so a formula or a `becomes` that reads a sourced attribute is an error: read it in a rule instead.
+
+The other errors say what they mean: an attribute that does not exist, one with a default or a formula, a `Bool` (v0 sources values, not states), a second source for the same attribute, an `otherwise use` of the wrong type, an `otherwise` that sets a sourced attribute, an answer that carries something else, and a `with x at most … old` on a rule that reads no sourced `x`.
 
 ## What you see
 
@@ -309,13 +311,13 @@ sourcing:
   Order's credit from bureau within 5 seconds (sends name); trusted until the unit ends; if it fails, it is cancelled; read by rule credit
 ```
 
-`suture explain` gives each sourced value with its age and how long it is still trusted, or where its fetch stands:
+`suture explain` gives each sourced value with its age and how long it is still trusted, or where its fetch stands. For the first program of this chapter, half an hour after the credit came:
 
 ```text
 Order O1 (approved yes, cancelled no, credit 500 EUR, customer Ada, product Kettle, quantity 2, total 60 EUR)
   credit: 500 EUR from bureau, 30 minutes old, trusted 1410 minutes more
 ```
 
-Other lines read `credit: asking bureau, send 1 of 3`, `credit: 0 EUR, the fallback after bureau failed`, `credit: bureau failed; the steps its rules guard wait`, and `credit: not fetched yet`.
+Other lines read `credit: asking bureau, send 1 of 3`, `credit: 0 EUR, the fallback after bureau failed`, `credit: bureau failed; the steps its rules guard wait` (or, with the other recoveries, `bureau failed; asking again 1 hour after the failure` and ``bureau failed, and its `otherwise` was applied``), and `credit: not fetched yet`.
 
 The repository's `examples/credit/` has the whole credit check with its scenarios.

@@ -267,3 +267,52 @@ fn explain_shows_where_a_sourced_value_stands() {
     let fallback = format!("{placed}  and    bureau answers unknown\n");
     assert!(show(&fallback).contains("  credit: 0 EUR, the fallback after bureau failed"), "{}", show(&fallback));
 }
+
+#[test]
+fn a_late_answer_after_the_last_time_out_is_ignored() {
+    let p = prog(CREDIT);
+    let t = passes(
+        &p,
+        "  when   staff Sam places a new Order O1 with customer Ada and total 50 EUR
+  and    6 seconds pass
+  and    bureau answers found with credit 900 EUR
+  expect O1's credit is 0 EUR
+",
+    );
+    assert!(has(&t, "ignored a late answer for O1~credit#1: it timed out"), "{}", t.join("\n"));
+}
+
+#[test]
+fn a_rule_reading_a_source_through_a_definition_is_strict() {
+    let p = prog(&CREDIT.replace(
+        "rule credit:   no Order has a Payment that is sent unless its total is at most its credit,
+               with credit at most 1 hour old",
+        "define: an Order is covered when its total is at most its credit
+rule credit:   no Order has a Payment that is sent unless it is covered",
+    ));
+    let t = passes(
+        &p,
+        "  when   staff Sam places a new Order O1 with customer Ada and total 50 EUR
+  and    staff Sam changes O1's approved to yes
+  expect O1's Payment is not sent
+  when   bureau answers found with credit 100 EUR
+  expect O1's Payment is sent
+",
+    );
+    assert!(has(&t, "O1  credit: asking bureau"), "{}", t.join("\n"));
+}
+
+#[test]
+fn two_recovery_actions_both_apply() {
+    let p = prog(&CREDIT.replace("otherwise  use 0 EUR", "otherwise  it is cancelled and it is not approved"));
+    passes(
+        &p,
+        "  when   staff Sam places a new Order O1 with customer Ada and total 50 EUR
+  and    staff Sam changes O1's approved to yes
+  and    bureau answers unknown
+  expect O1 is cancelled
+  expect O1 is not approved
+  expect O1 has no Payment
+",
+    );
+}

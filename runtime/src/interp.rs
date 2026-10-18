@@ -1134,7 +1134,8 @@ fn sources_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut 
             let bound = r.fresh.iter().find(|(a, _)| a == attr).map(|(_, secs)| *secs);
             for pos in positions(&u.root) {
                 let node = node_at(&u.root, &pos);
-                if node.kind != *kind {
+                // A failed attempt is kept for the record; only live nodes fetch.
+                if node.kind != *kind || node.status == Status::Failed {
                     continue;
                 }
                 let f = node.fetched.get(attr).cloned().unwrap_or_default();
@@ -1247,7 +1248,13 @@ fn fail(prog: &Program, u: &mut Unit, at: &[usize], src: &Source, key: &str, why
             let mut notes = vec![];
             apply(prog, &mut t, &u.facts, at, actions, &mut notes);
             match newly_broken(prog, View::of(u), &t) {
-                Some(r) => u.notes.push(format!("reaction held: rule {}: {}", r.name, r.paraphrase)),
+                Some(r) => {
+                    // The recovery cannot apply, so the next waiting step fetches again.
+                    u.notes.push(format!("reaction held: rule {}: {}", r.name, r.paraphrase));
+                    if let Some(f) = node_at_mut(&mut u.root, at).fetched.get_mut(attr) {
+                        f.failed = false;
+                    }
+                }
                 None => {
                     u.root = t;
                     u.notes.extend(notes);
@@ -1255,6 +1262,17 @@ fn fail(prog: &Program, u: &mut Unit, at: &[usize], src: &Source, key: &str, why
             }
         }
     }
+}
+
+/// Whether a source's timer still has a reason: the fetch it names is still
+/// the latest, and for `:again` it is still failed. The host skips the rest.
+pub fn fetch_due_matters(u: &Unit, id: &str) -> bool {
+    let (key, again) = match (id.strip_suffix(":again"), id.strip_suffix(":stale")) {
+        (Some(k), _) => (k, true),
+        (_, Some(k)) => (k, false),
+        _ => return false,
+    };
+    find_fetch(u, key, false).is_some_and(|(at, attr)| node_at(&u.root, &at).fetched.get(&attr).is_some_and(|f| f.sends == 0 && f.failed == again))
 }
 
 /// A source's timer (appendix I.2.5–I.2.6): after `ask again after`, the

@@ -72,6 +72,9 @@ fn not_known_at_creation(p: &Program, kind: &str, n: &Num) -> Option<String> {
             let (last, rest) = path.steps.split_last()?;
             let Step::Attr(attr) = last else { return None };
             let at = end_kind(p, kind, rest)?;
+            if p.source_of(&at, attr).is_some() {
+                return Some(format!("{attr}, which comes from its source and goes stale"));
+            }
             let answered = p.effect_of(&at).is_some_and(|e| e.data.iter().any(|(d, _)| d == attr));
             answered.then(|| format!("{attr}, which an answer sets later"))
         }
@@ -83,6 +86,18 @@ fn not_known_at_creation(p: &Program, kind: &str, n: &Num) -> Option<String> {
         Num::Sum { .. } | Num::Count { .. } => None,
         Num::Taken { name, .. } => Some(format!("the total {name} taken from it, which changes")),
     }
+}
+
+/// A sourced attribute that `n`, read from a `kind`, reads, if any.
+fn sourced_in(p: &Program, kind: &str, n: &Num) -> Option<String> {
+    let mut found = None;
+    num_reads(n, &mut |path, last| {
+        let (Some(attr), Some((_, rest))) = (last, path.steps.split_last()) else { return };
+        if found.is_none() && end_kind(p, kind, rest).is_some_and(|k| p.source_of(&k, attr).is_some()) {
+            found = Some(attr.to_string());
+        }
+    });
+    found
 }
 
 /// The kind a walk of parts, slots and owner steps ends at, from `kind`.
@@ -1226,6 +1241,10 @@ impl Checker {
                 self.errors.push(err(&s.at, format!("{}.{} refers to shared entities; a source gives a value", s.kind, s.attr)));
                 continue;
             }
+            if attr.ty == Ty::Bool {
+                self.errors.push(err(&s.at, format!("{}.{} is a state; v0 sources values, not states: source a Text or Count and compare it", s.kind, s.attr)));
+                continue;
+            }
             if p.source_of(&s.kind, &s.attr).is_some() {
                 self.errors.push(err(&s.at, format!("{}.{} already has a source", s.kind, s.attr)));
                 continue;
@@ -1268,6 +1287,11 @@ impl Checker {
                     Otherwise::Use(lit)
                 }
                 Some(ast::OtherwiseDecl::Act(actions)) => {
+                    let sourced = |a: &ast::Action| src.sources.iter().any(|x| x.attr == a.attr && (x.kind == s.kind || !a.target.steps.is_empty()));
+                    if let Some(a) = actions.iter().find(|a| sourced(a)) {
+                        self.errors.push(err(&s.at, format!("`{}` comes from a source; `otherwise` cannot set it", a.attr)));
+                        continue;
+                    }
                     let r = ast::ReactionDecl { kind: s.kind.clone(), outcome: String::new(), by: vec![], actions: actions.clone(), at: s.at.clone() };
                     Otherwise::Act(self.actions(p, &r))
                 }
@@ -1508,6 +1532,10 @@ impl Checker {
                         let Some((num, ty)) = self.num(p, &r.at, &r.kind, a.becomes.as_ref().expect("checked above")) else { continue };
                         if ty != want {
                             self.errors.push(err(&r.at, format!("{k}.{} is {want:?}, but it would become a {ty:?}", a.attr)));
+                            continue;
+                        }
+                        if let Some(x) = sourced_in(p, &r.kind, &num) {
+                            self.errors.push(err(&r.at, format!("`{} becomes …` reads {x}, which comes from its source and goes stale; read it in a rule instead", a.attr)));
                             continue;
                         }
                         actions.push(Action { target, attr: a.attr.clone(), value: true, becomes: Some(num) });
