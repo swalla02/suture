@@ -2,7 +2,7 @@
 
 ```text
 suture build   ⟨dir⟩
-suture run     ⟨dir⟩ --scenario ⟨file⟩
+suture run     ⟨dir⟩ --scenario ⟨file⟩ [--models]
 suture explain ⟨dir⟩ --scenario ⟨file⟩ ⟨name⟩
 ```
 
@@ -22,7 +22,7 @@ Read the build output after every change. The read-backs are the cheapest test t
 
 ## `suture run`
 
-`run` compiles the program, then runs every scenario in the file and prints its trace. Each line is one thing the runtime did:
+`run` compiles the program, then runs every scenario in the file and prints its trace. With `--models`, the model backends in the directory's `models.json` answer the models that a scenario does not script (chapter 15). Each line is one thing the runtime did:
 
 | Line | Means |
 |---|---|

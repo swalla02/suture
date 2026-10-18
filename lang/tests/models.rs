@@ -177,3 +177,21 @@ fn source_choice_misuses_are_errors() {
         assert!(e.iter().any(|x| x.starts_with(want)), "want {want}\ngot {e:#?}");
     }
 }
+
+#[test]
+fn a_rule_reads_an_attribute_with_two_sources_once() {
+    let p = prog(&format!(
+        "{CREDIT}source Order's credit via bureau within 5 seconds
+  sends    the customer's name
+  reports  found
+source Order's credit via backup within 2 seconds
+  sends    the customer's name
+  reports  found
+"
+    ));
+    let r = p.rules.iter().find(|r| r.name == "credit").unwrap();
+    assert_eq!(r.sources, [("Order".to_string(), "credit".to_string())]);
+    assert_eq!(suture_lang::readback::rule_sources(&p, r).as_deref(), Some("credit from bureau or backup, fetched once"));
+    let line = suture_lang::readback::source_line(&p, &p.sources[0]);
+    assert!(line.contains("if it fails, the next source is asked; if every source fails, the steps its rules guard wait"), "{line}");
+}

@@ -1,0 +1,3 @@
+{
+  "routing@1": { "model": "jev-latest", "key_env": "JEV_API_KEY", "min_confidence": 0.6 }
+}

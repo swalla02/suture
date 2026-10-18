@@ -1,6 +1,6 @@
 # 15. Decision models
 
-A program is full of small choices that the rules leave open: which stock a shipment takes, which carrier it goes with. `prefer` ranks the options with fixed criteria (chapter 9). A **decision model** can pick instead: a function that is given the options and picks one by name. It can be a trained model or a lookup table. Suture does not care, because a model only ever picks among options that are already allowed, and every pick is checked by the rules as before.
+A program is full of small choices that the rules leave open: which stock a shipment takes, which carrier it goes with, which way an order is delivered, which service to ask for a fact. `prefer` ranks the options with fixed criteria (chapter 9). A **decision model** can pick instead: a function that is given the options and picks one by name. It can be a trained model or a lookup table. Suture does not care, because a model only ever picks among options that are already allowed, and every pick is checked by the rules as before.
 
 `decide` says which model handles which choices. It can be set for the whole app, for one workflow, for one step of a workflow, for one decision, or for any of these under a condition. The most specific one wins.
 
@@ -187,7 +187,7 @@ main.st:31: `decide Carrier with model "fleet@1"` and `decide Carrier with model
 
 In v0, two `decide`s with a `whose` at the same rank always count as a tie, even when their conditions could never both hold.
 
-The other errors: naming a kind that no `uses` picks, naming a slot (v0 picks a slot's alternative with `prefer` and patience only), a scope in which the choice is never made, and a model name without `@version`.
+The other errors: naming something that no `uses`, slot or source picks, naming a sourced attribute with only one source, a scope in which the choice is never made, a model name without `@version`, and a `within` on `with prefer`.
 
 ## When the model is no help
 
@@ -195,7 +195,9 @@ The other errors: naming a kind that no `uses` picks, naming a slot (v0 picks a 
 
 - the model declines (a stand-in with no pick queued declines);
 - the model picks something it was not offered;
-- no model of that name is available.
+- no model of that name is available;
+- the model does not answer within its deadline;
+- a backend is unsure (its confidence is below its `min_confidence`), or fails.
 
 The trace says which:
 
@@ -203,9 +205,14 @@ The trace says which:
       choice: Cheap for O1/Shipment#1@Carrier by prefer (model "carriers@1" declined)
       choice: Cheap for O1/Shipment#1@Carrier by prefer (model "carriers@1" picked Slow, which it was not offered)
       choice: Cheap for O1/Shipment#1@Carrier by prefer (model "carriers@1" is not available)
+      choice: Cheap for O1/Shipment#1@Carrier by prefer (model "carriers@1" did not answer within 1000 ms)
+      choice: Cheap for O1/Shipment#1@Carrier by prefer (model "carriers@1" was unsure, at 0.41)
+      choice: Cheap for O1/Shipment#1@Carrier by prefer (model "carriers@1" failed: HTTP 401: …)
 ```
 
-A model cannot break a rule either. Its pick is still asked to grant the take, and a pick that would break a rule is refused. The option is then dropped, and the same model is asked again among the rest. A model that picks `Small` (1 unit) for an order of 2 sees `Small` refused, and is asked again with only `Big` left.
+A model is asked only when there is a choice. With one option, that option is taken, and the trace shows no model.
+
+A model cannot break a rule either. Its pick is still asked to grant the take, and a pick that would break a rule is refused. The option is then dropped, and the choice is made again among the rest. A model that picks `Small` (1 unit) for an order of 2 sees `Small` refused; only `Big` is left, so `Big` is taken without asking.
 
 ## Pinned and replayed
 
@@ -231,4 +238,205 @@ host.models.register("dearest@1", Box::new(|c: &Choice| {
 }));
 ```
 
-Returning `None` declines. In v0 a model answers at once; deadlines for slow models, real model backends, and models for slots and sources are designed but not built (chapter 16).
+Returning `None` declines. A `Choice` also holds the kind of the entity that chooses and its facts. `host.models.register_backend` takes anything that implements `Backend`, which is how the Jev and custom backends below are built.
+
+## Slots
+
+A slot's alternative is a choice too (chapter 4). `decide Return …` hands it to a model; an app-level or workflow-level `decide` covers it as well.
+
+```suture
+module returns version 1, currency EUR
+
+kind Applicant   { name: Text }
+kind Application { applicant: Applicant, paid: Bool = no }
+kind Courier     { application: Application }
+kind Collection  { application: Application }
+kind Locker      { application: Application }
+
+Application needs Return
+Return      is    Courier or Collection or Locker
+
+effect send Courier via couriers within 2 days
+  sends    the application's applicant's name
+  marks    sent
+  reports  delivered | fails with lost
+effect notify Collection via mailer within 1 hour
+  sends    the application's applicant's name
+  reports  notified
+effect open Locker via lockers within 1 hour
+  sends    the application's applicant's name
+  reports  opened
+
+rule prepaid: no Application has a Courier that is sent unless it is paid
+
+prefer Return: Courier, then Collection after 3 days, then Locker
+decide Return with model "routing@1"
+```
+
+The model is asked when the slot is first filled, and again each time it moves on: after a failure, after its patience, or after a refusal on fixed facts. It is offered the alternatives not yet tried, in `prefer` order. Patience is still per alternative.
+
+```scenario
+scenario "the model sends an unpaid application's return to a locker":
+  given  an Applicant Ada with name Ada
+  when   model "routing@1" picks Courier, then Locker
+  and    a new Application A1 with applicant Ada
+  and    3 days pass
+  and    lockers answers opened
+  expect A1's Locker is opened
+```
+
+```text
+A1  Return: asking model "routing@1"
+      choice: Courier for A1?Return#1 by model "routing@1" (of Courier, Collection, Locker)
+A1  Return: trying Courier
+A1  needs Courier
+A1  Courier waits: rule prepaid
+A1  Return: no Courier after 3 days, asking model "routing@1"
+      choice: Locker for A1?Return#2 by model "routing@1" (of Collection, Locker)
+A1  Return: trying Locker
+```
+
+While the model is asked, the slot is empty and nothing is created for it. Its answer, or `prefer`'s in its place, comes back to the unit as a message, so it is journaled like any answer, and the unit checks it against the options once more.
+
+## Deadlines
+
+Every model answer has a deadline: 1 second, or what `within` says.
+
+```text
+decide Return with model "routing@1" within 300 milliseconds
+decide Order's credit with model "sources@1" within 2 seconds
+```
+
+A model that is later than that leaves the choice to `prefer`, like one that declines. In scenarios, `model "routing@1" is late` plays a late answer, and `model "routing@1" declines` a decline:
+
+```scenario
+scenario "a late model leaves the return to prefer":
+  given  an Applicant Ada with name Ada
+  when   model "routing@1" is late
+  and    a new Application A1 with applicant Ada and paid yes
+  and    couriers answers delivered
+  expect A1's Courier is delivered
+```
+
+```text
+      choice: Courier for A1?Return#1 by prefer (model "routing@1" did not answer within 1000 ms)
+```
+
+The deadline is part of the program, like the model's name. The journal holds the answer, or its absence, so replay never waits.
+
+## Sources
+
+An attribute with more than one source (chapter 14) is a choice point named `K's a`: the model picks which source to ask.
+
+```suture
+module credit version 1, currency EUR
+
+role staff
+
+kind Customer { name: Text }
+kind Order    { customer: Customer, total: Money, credit: Money }
+kind Payment  { order: Order }
+
+Order needs Payment
+
+effect capture Payment via payments within 30 seconds
+  sends    the order's total
+  marks    sent
+  reports  captured
+
+source Order's credit via bureau within 2 seconds
+  sends      the customer's name
+  reports    found | fails with unknown
+source Order's credit via backup within 2 seconds
+  sends      the customer's name
+  reports    found | fails with unknown
+  otherwise  use 0 EUR
+
+rule credit: no Order has a Payment that is sent unless its total is at most its credit
+
+decide Order's credit with model "sources@1"
+
+admit place a new Order by staff
+```
+
+The model is asked when a fetch starts, and again when a source fails, among those the fetch has not tried yet. When one source is left, it is asked without the model; when all have failed, the `otherwise` applies.
+
+```scenario
+scenario "the model asks the backup first":
+  given  a Customer Bo with name Bo
+  when   model "sources@1" picks backup
+  and    staff Sam places a new Order O1 with customer Bo and total 50 EUR
+  and    backup answers unknown
+  and    bureau answers found with credit 80 EUR
+  and    payments answers captured
+  expect O1's credit is 80 EUR
+```
+
+```text
+O1  credit: asking model "sources@1" for a source
+      choice: backup for O1~credit#1?source by model "sources@1" (of bureau, backup)
+O1  credit: asking backup (name "Bo")
+      backup: unknown   (O1~credit#1)
+O1  credit: backup failed (unknown), asking bureau (name "Bo")
+```
+
+## Real backends
+
+A scenario's stand-ins and Rust functions are enough to test a program. To run it against a real decision model, put a `models.json` beside the module and run with `--models`:
+
+```text
+{
+  "routing@1": { "model": "jev-latest", "key_env": "JEV_API_KEY", "min_confidence": 0.6 },
+  "sources@1": { "backend": "custom", "url": "https://models.example.com/pick",
+                 "key_env": "PICK_KEY", "pick": "/result/pick", "confidence": "/result/p" }
+}
+```
+
+```text
+suture run examples/returns --scenario examples/returns/returns.scenario --models
+```
+
+A scenario's own scripted answers still come first; `--models` answers the rest. Without `--models`, a model that no scenario scripts is not available, and `prefer` picks. Endpoints and keys are host settings, not program text: changing them does not change the program, and the key is read from the environment variable `key_env` names, never from the file.
+
+### Jev, the default
+
+A model with no `backend`, or `"backend": "jev"`, is asked through Jev's decision API (`POST https://api.typesafe.ai/v1/systemone`, with the key as a bearer token). The fields are `model` (default `jev-latest`), `url`, `key_env` (default `JEV_API_KEY`) and `min_confidence`. Each choice is one `choice` question named `pick`. The entity that chooses is the state, and the options are the criteria, each described by its facts:
+
+```text
+{
+  "model": "jev-latest",
+  "state": { "unit": "O1", "chooser": "Shipment", "facts": { "weight": 3 } },
+  "questions": {
+    "pick": {
+      "type": "choice",
+      "instructions": "Choose the Carrier for O1 (Shipment). The options, best first by the program's own preference: Cheap, Fast.",
+      "criteria": { "Cheap": "fee 5 EUR, zone EU", "Fast": "fee 9 EUR, zone EU" }
+    }
+  }
+}
+```
+
+The pick is `answers.pick.choice`. With a `min_confidence`, a pick whose `answers.pick.confidence` is lower is not used, and `prefer` picks:
+
+```text
+{ "model": "jev-1.13.0",
+  "answers": { "pick": { "type": "choice", "choice": "Fast", "probabilities": { "Cheap": 0.1, "Fast": 0.9 }, "confidence": 0.9 } },
+  "usage": { "input_tokens": 120, "output_tokens": 1 } }
+```
+
+An HTTP error, an answer without `answers.pick.choice`, or a missing key fails the model, and `prefer` picks.
+
+### A custom format
+
+For another API, `"backend": "custom"` posts the same state with the options as a list, and reads the pick (and, optionally, the confidence) at the JSON pointers you name:
+
+```text
+{ "point": "Carrier",
+  "state": { "unit": "O1", "chooser": "Shipment", "facts": { "weight": 3 } },
+  "options": [ { "label": "Cheap", "facts": { "fee": "5 EUR", "zone": "EU" } },
+               { "label": "Fast",  "facts": { "fee": "9 EUR", "zone": "EU" } } ] }
+```
+
+`url` and `pick` are required; `key_env`, `confidence` and `min_confidence` are optional. Anything else, an unknown field among them, is an error when the file is read, before any scenario runs. For a format that JSON pointers cannot reach, implement `Backend` in Rust.
+
+Whatever the backend, the model only ever picks among the options it is offered. Its pick is checked, journaled, and still subject to every rule.

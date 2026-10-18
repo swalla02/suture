@@ -29,12 +29,13 @@ Suture v0 is a prototype. Everything earlier in this guide runs and is tested. T
 | `attempts` per part kind | one module-wide setting |
 | closest patterns for `define`, `desired` and `when` | they get the phrasing table; rules get closest patterns too |
 | sourcing an attribute of a kind other units refer to or pick with `uses` | source it on the unit that reads it, or carry it with a formula |
-| a source whose answer carries more than one value | one source per attribute |
+| a source whose answer carries more than one value | one attribute per source |
 | sourcing a `Bool` state | source a Text or Count and compare it in the rule |
 | a formula, a `becomes`, or a total's filter that stays fresh over a sourced fact | read the sourced fact in the rule itself |
-| prefetching, or a model choosing between sources | facts are fetched when a step waits on them, from their one source |
-| a model picking a slot's alternative, or a source | `prefer` and patience; one source per attribute |
-| a deadline for a model's answer, and real model backends | models answer at once; scenarios script them, Rust registers functions |
+| prefetching | facts are fetched when a step waits on them |
+| asking a model without holding up the step | a model is asked in the step that needs it, which waits up to the model's `within`; keep it short |
+| keys from anywhere but an environment variable | `models.json` names the variable with `key_env` |
+| a model that sees the whole unit | it sees the entity that chooses, with its own facts, and the options with theirs |
 | two `decide`s with a `whose` at the same rank, even when their conditions exclude each other | give one of them a nearer scope or a choice point |
 | waking only as many waiting bindings as a freed amount can serve | every waiter of the pool key is woken, in arrival order, and gathers again |
 

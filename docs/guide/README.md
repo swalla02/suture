@@ -24,7 +24,7 @@ If you are new, read chapters 1 and 2 in order: they build a small working syste
 | 12 | [The `suture` command](12-the-suture-command.md) | build output, traces, explanations, errors and suggestions |
 | 13 | [Modelling patterns](13-modelling-patterns.md) | how to turn a requirement into declarations, and the traps |
 | 14 | [Sourcing](14-sourcing.md) | `source … via …`, lifespans, `with … at most … old`, recovery |
-| 15 | [Decision models](15-decision-models.md) | `decide … with model`: app, workflow, step, decision and condition levels |
+| 15 | [Decision models](15-decision-models.md) | `decide … with model`: the levels, slots and sources, deadlines, Jev and custom backends |
 | 16 | [Limits of v0](16-limits-of-v0.md) | what is designed but not built yet |
 | | [Quick reference](reference.md) | every form on one page |
 

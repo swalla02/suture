@@ -548,7 +548,15 @@ fn sourced_reads(p: &Program, r: &Rule) -> Vec<(String, String)> {
         }
         i += 1;
     }
-    p.sources.iter().filter(|s| names.contains(&s.attr)).map(|s| (s.kind.clone(), s.attr.clone())).collect()
+    let mut out: Vec<(String, String)> = vec![];
+    for s in p.sources.iter().filter(|s| names.contains(&s.attr)) {
+        // An attribute with several sources is read once.
+        let read = (s.kind.clone(), s.attr.clone());
+        if !out.contains(&read) {
+            out.push(read);
+        }
+    }
+    out
 }
 
 /// Whether a rule's filter and `unless` read only facts that never change

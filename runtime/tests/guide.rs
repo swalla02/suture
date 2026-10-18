@@ -137,3 +137,20 @@ fn the_credit_example_passes() {
         assert!(r.passed(), "{}: {:?}", r.title, r.failures);
     }
 }
+
+#[test]
+fn the_returns_example_passes() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/returns");
+    let p = suture_lang::compile_dir(std::path::Path::new(dir)).unwrap_or_else(|e| panic!("{e:?}"));
+    let src = std::fs::read_to_string(format!("{dir}/returns.scenario")).unwrap();
+    let list = parse_scenarios("returns.scenario", &src).unwrap();
+    assert_eq!(list.len(), 2);
+    for sc in list {
+        let r = run(&p, &sc);
+        assert!(r.passed(), "{}: {:?}", r.title, r.failures);
+    }
+    // models.json is host configuration: it must load, and it names a model the program decides with.
+    let text = std::fs::read_to_string(format!("{dir}/models.json")).unwrap();
+    let names: Vec<String> = suture_runtime::backend::load(&text, || Box::new(suture_runtime::backend::Curl)).unwrap().into_iter().map(|(n, _)| n).collect();
+    assert!(names.iter().all(|n| p.decisions.iter().any(|d| d.model.as_ref() == Some(n))), "{names:?}");
+}

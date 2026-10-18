@@ -294,7 +294,29 @@ The last one is a v0 limit: a fact that other units carry would need its freshne
 
 A copy would not stay fresh either, so a formula or a `becomes` that reads a sourced attribute is an error: read it in a rule instead.
 
-The other errors say what they mean: an attribute that does not exist, one with a default or a formula, a `Bool` (v0 sources values, not states), a second source for the same attribute, an `otherwise use` of the wrong type, an `otherwise` that sets a sourced attribute, an answer that carries something else, and a `with x at most … old` on a rule that reads no sourced `x`.
+The other errors say what they mean: an attribute that does not exist, one with a default or a formula, a `Bool` (v0 sources values, not states), a second source via the same adapter, a second `otherwise` for the same attribute, an `otherwise use` of the wrong type, an `otherwise` that sets a sourced attribute, an answer that carries something else, and a `with x at most … old` on a rule that reads no sourced `x`.
+
+## More than one source
+
+An attribute can have several sources, each with its own adapter. They are tried in the order they are declared: when one fails, the next is asked, and only when every one has failed does the `otherwise` apply, so only one of them may have an `otherwise`. The value is trusted for the `good for` of the source that gave it. Chapter 15 shows how a model can pick which source to ask first.
+
+```text
+source Order's credit via bureau within 2 seconds
+  sends      the customer's name
+  reports    found | fails with unknown
+  good for   1 day
+source Order's credit via backup within 5 seconds
+  sends      the customer's name
+  reports    found | fails with unknown
+  good for   1 hour
+  otherwise  use 0 EUR
+```
+
+```text
+O1  credit: asking bureau (name "Ada")
+      bureau: unknown   (O1~credit#1)
+O1  credit: bureau failed (unknown), asking backup (name "Ada")
+```
 
 ## What you see
 
