@@ -128,13 +128,13 @@ The state directory holds the compiled program and `log.jsonl`. Every input is a
 
 On start, the service replays the log. It gives the same units, the same trace and the same waiting requests, and no model is asked again, because the log holds what each one answered. Then it posts the waiting requests again, with their keys. Time that passed while the service was down passes at the first tick, so a deadline that ran out meanwhile fires then.
 
-A log written under a different program is refused:
+A changed program under the same version is refused:
 
 ```text
-examples/tickets/.suture: the log was written under tickets v1, and this program differs; a deploy with live units waits for versioning, so start with a fresh state directory
+examples/tickets/.suture: the state runs tickets v1, and this program differs under the same version; give it a new version to deploy it
 ```
 
-Changing a program that has live units needs versioning, which is designed but not built yet (chapter 16).
+A higher version is deployed over the live units, once the deploy check finds nothing they would break (chapter 18).
 
 ## The clock
 

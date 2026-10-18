@@ -68,6 +68,14 @@ suture serve examples/tickets --listen 127.0.0.1:7878
 
 runs the program as a service: inputs over HTTP, requests posted to the adapters in `adapters.json`, the real clock, and a log in the state directory (`⟨dir⟩/.suture` by default) that a restart replays. Chapter 17 covers it.
 
+## `suture deploy`
+
+```sh
+suture deploy examples/tickets
+```
+
+checks a new version of the program against the live units in the state directory, and prints what the deploy would do, or the breaks that need a resolution first. It never writes, and it exits with failure if the deploy would be refused. Chapter 18 covers it.
+
 ## Errors
 
 Every error has the file and line, and a fixed template. The compiler reports every statement it cannot read, not just the first. Errors that need the whole program (unknown names, types, tiers) are reported once every statement reads.

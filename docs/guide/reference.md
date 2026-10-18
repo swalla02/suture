@@ -36,6 +36,7 @@ prefer ⟨Kind⟩ [for a ⟨element⟩]: ⟨criterion⟩[, then ⟨criterion⟩]
 admit ⟨verb⟩ a new ⟨Kind⟩[, ⟨Kind⟩… or ⟨Kind⟩] by ⟨role⟩[, ⟨role⟩] [where ⟨cond⟩]
 admit ⟨verb⟩ ⟨Kind⟩ by ⟨role⟩[, ⟨role⟩] [where ⟨cond⟩]
 admit change ⟨Kind⟩'s ⟨attr⟩ by ⟨role⟩[, ⟨role⟩] [where ⟨cond⟩]
+apply rule ⟨name⟩ to ⟨Kinds⟩ created from version ⟨n⟩
 ```
 
 **Types:** `Text`, `Bool`, `Count`, `Money`, `Duration`, `Time`, `⟨Kind⟩`, `list of ⟨Kind⟩`, `set of ⟨Kind⟩`. Built-in: `created: Time`.
@@ -110,6 +111,7 @@ suture build   ⟨dir⟩                               compile, write ⟨module�
 suture run     ⟨dir⟩ --scenario ⟨file⟩             run scenarios and print their traces
 suture serve   ⟨dir⟩ [--state ⟨dir⟩] [--listen ⟨addr⟩] [--models]
                                                    serve the program over HTTP, with its log (chapter 17)
+suture deploy  ⟨dir⟩ [--state ⟨dir⟩]               check a new version against the live state (chapter 18)
 suture explain ⟨dir⟩ --scenario ⟨file⟩ ⟨name⟩      … and explain one entity at the end of each
 ```
 

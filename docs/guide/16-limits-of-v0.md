@@ -6,11 +6,12 @@ Suture v0 is a prototype. Everything earlier in this guide runs and is tested. T
 
 - **One process.** `suture serve` (chapter 17) runs a program as one process, applying one input at a time. Several runtime pods sharing the work, with failover between them, are a later slice.
 - **The log only grows.** It is never compacted or snapshotted, so a restart replays every input since the start.
-- **No versioning yet.** A log written under another program is refused; a deploy that resolves live units under a changed program is designed but not built.
+- **Deploys happen at start.** A new version is deployed when `suture serve` starts it (chapter 18), not while the service runs. Going back to an older version is not supported.
+- **Resolutions are few.** A rule over totals (`per-group` or `global`) cannot apply from a version, and a value cannot be migrated by a formula; change the rule, or give the attribute a default.
 - **Whole seconds.** The clock and every timer count whole seconds.
 - **HTTP only.** The service speaks plain HTTP/1.1, one request per connection, with a `Content-Length` body, and leaves TLS to the gateway in front of it. Adapters are reached over HTTP through `curl`.
 - **One request at a time.** Inputs, reads, timers and adapter posts take turns, so a slow adapter holds up the service for as long as its post takes (at most 10 seconds).
-- **No `suture test` or `suture deploy`.** Tests run through `cargo test` and `suture run`. Deploy checks against live state (refusing a new version until every rule that live entities would break has a resolution) are designed for a later sub-project.
+- **No `suture test`.** Tests run through `cargo test` and `suture run`.
 - **Alerts** appear only in the trace and in `suture explain`; they are not sent anywhere.
 
 ## Security
