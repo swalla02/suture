@@ -9,4 +9,5 @@ publish = false
 [dependencies]
 suture = { path = ".." }
 suture-lang = { path = "../lang" }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"

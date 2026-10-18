@@ -82,7 +82,7 @@ pub struct Models {
 }
 
 /// What a model did with a choice.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Answer {
     Picked(String),
     Declined,

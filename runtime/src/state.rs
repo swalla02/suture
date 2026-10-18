@@ -8,7 +8,7 @@ use suture_lang::ir::{Lit, Ty};
 
 /// An attribute's value. Money is in cents; times and durations are in
 /// seconds of the runtime clock.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Val {
     Text(String),
     Bool(bool),

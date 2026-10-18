@@ -3,7 +3,7 @@
 //! requests to adapters. In slice 1 the adapters are simulated: a scenario
 //! answers for them, one request at a time.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
 use suture::{HoleId, Injection, Machine, NetBuilder, Value};
@@ -47,6 +47,11 @@ pub struct Host {
     readers: BTreeMap<String, Vec<String>>,
     /// The decision models, by `name@version` (appendix J.2.7).
     pub models: Models,
+    /// Every model answer, by choice key, in the order they were given
+    /// (appendix L.2.1).
+    pub model_answers: Vec<(String, Answer)>,
+    /// Answers to give again on replay instead of asking (appendix L.2.3).
+    pub replay: VecDeque<(String, Answer)>,
 }
 
 /// A binding waiting on its pool key, with its choice's hole.
@@ -94,6 +99,8 @@ impl Host {
             gate: vec![],
             readers: BTreeMap::new(),
             models: Models::default(),
+            model_answers: vec![],
+            replay: VecDeque::new(),
         };
         // One unit holds each total `checked globally` (appendix F.2.13).
         for g in h.prog.globals.clone() {
@@ -343,7 +350,12 @@ impl Host {
     /// says why (appendix K.2.5).
     fn consult(&mut self, model: &str, c: &Choice, within: u64) -> (String, String) {
         let names: Vec<&str> = c.options.iter().map(|o| o.label.as_str()).collect();
-        let how = match self.models.ask(model, c, within) {
+        let answer = match self.replay.front() {
+            Some((k, _)) if *k == c.key => self.replay.pop_front().expect("a front").1,
+            _ => self.models.ask(model, c, within),
+        };
+        self.model_answers.push((c.key.clone(), answer.clone()));
+        let how = match answer {
             Answer::Picked(p) if names.contains(&p.as_str()) => return (p, format!(" by model \"{model}\" (of {})", names.join(", "))),
             Answer::Picked(p) => format!("model \"{model}\" picked {p}, which it was not offered"),
             Answer::Declined => format!("model \"{model}\" declined"),
@@ -544,13 +556,22 @@ impl Host {
     /// The adapter answers its oldest pending request, or the oldest for `target`.
     /// An answer for a request that already timed out is noted and ignored.
     pub fn answer(&mut self, adapter: &str, outcome: &str, data: &[(String, Val)], target: Option<&str>) -> Result<(), String> {
+        let what = target.map(|t| format!(" for {t}")).unwrap_or_default();
+        self.answer_where(adapter, outcome, data, &what, |a| a.adapter == adapter && target.is_none_or(|t| a.label == t))
+    }
+
+    /// The adapter answers the request with this idempotency key (appendix L.2.6).
+    pub fn answer_key(&mut self, adapter: &str, outcome: &str, data: &[(String, Val)], key: &str) -> Result<(), String> {
+        self.answer_where(adapter, outcome, data, &format!(" with key {key}"), |a| a.adapter == adapter && a.key == key)
+    }
+
+    fn answer_where(&mut self, adapter: &str, outcome: &str, data: &[(String, Val)], what: &str, matches: impl Fn(&Ask) -> bool) -> Result<(), String> {
         if outcome == TIMED_OUT {
             return Err(format!("only the runtime reports `{TIMED_OUT}`; {adapter} must answer with an outcome of its effect"));
         }
-        let matches = |a: &Ask| a.adapter == adapter && target.is_none_or(|t| a.label == t);
         let Some(i) = self.pending.iter().position(|(a, _)| matches(a)) else {
             let Some(ask) = self.expired.iter().rfind(|a| matches(a)).cloned() else {
-                return Err(format!("{adapter} has no pending request{}", target.map(|t| format!(" for {t}")).unwrap_or_default()));
+                return Err(format!("{adapter} has no pending request{what}"));
             };
             self.trace.push(format!("      {adapter}: {outcome}   ({})", ask.key));
             self.trace.push(format!("{:<3} ignored a late answer for {}: it timed out", ask.label, ask.key));
@@ -589,6 +610,11 @@ impl Host {
         }
         self.now = until;
         first_error.map_or(Ok(()), Err)
+    }
+
+    /// When the next timer falls due, if any.
+    pub fn next_due(&self) -> Option<u64> {
+        self.timers.first_key_value().map(|(&(due, _), _)| due)
     }
 
     /// When the request with this key is due, if it is pending.
