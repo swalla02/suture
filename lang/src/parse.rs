@@ -37,6 +37,7 @@ pub(crate) fn statement(st: &Stmt, out: &mut Source) -> Result<(), Error> {
         "kind" => kind(st, at, out),
         "effect" => effect(st, at, out),
         "source" => source(st, at, out),
+        "decide" => decide(st, at, out),
         "rule" => rule(st, at, out),
         "define" => define(st, at, out),
         "desired" => goal(st, at, out),
@@ -48,7 +49,7 @@ pub(crate) fn statement(st: &Stmt, out: &mut Source) -> Result<(), Error> {
         w if w.starts_with(char::is_uppercase) && matches!(st.lines[0].get(1), Some(Tok::Word(x)) if x == "uses") => uses(st, at, out),
         w if w.starts_with(char::is_uppercase) => needs(st, at, out),
         _ => Err(st.error(format!(
-            "unknown statement `{first}`: expected module, kind, effect, source, rule, define, desired, when, prefer, role, admit, `Kind needs …` or `Slot is …`"
+            "unknown statement `{first}`: expected module, kind, effect, source, decide, rule, define, desired, when, prefer, role, admit, `Kind needs …` or `Slot is …`"
         ))),
     }
 }
@@ -590,6 +591,44 @@ fn role(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     };
     c.expect_end()?;
     out.roles.push(RoleDecl { name, kind, at });
+    Ok(())
+}
+
+/// `decide [Carrier] [for Orders [whose …]] with model "carriers@1" | with prefer` (appendix J).
+fn decide(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
+    let toks = st.tokens();
+    let mut c = Cursor::new(&toks, &st.file, st.line);
+    c.expect_word("decide")?;
+    let point = if c.is_word("for") || c.is_word("with") { None } else { Some(c.kind_name()?) };
+    let (scope, cond) = if c.eat_word("for") {
+        let scope = c.kind_name()?;
+        let cond = if c.eat_word("whose") {
+            let mut steps = vec![c.word()?];
+            while c.eat_poss() {
+                steps.push(c.word()?);
+            }
+            Some(predicate(&mut c, Num::Np(NounPhrase { head: Head::It, steps }))?)
+        } else {
+            None
+        };
+        (Some(scope), cond)
+    } else {
+        (None, None)
+    };
+    c.expect_word("with")?;
+    let model = if c.eat_word("prefer") {
+        None
+    } else {
+        c.expect_word("model")?;
+        let Some(Tok::Str(m)) = c.peek() else {
+            return Err(c.error(format!("expected the model's name in quotes, as in \"carriers@1\", found {}", c.found())));
+        };
+        let m = m.clone();
+        c.next();
+        Some(m)
+    };
+    c.expect_end()?;
+    out.decides.push(DecideDecl { point, scope, cond, model, source: text(&toks), at });
     Ok(())
 }
 

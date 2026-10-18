@@ -289,6 +289,45 @@ fn a_kind(k: &str) -> String {
 }
 
 /// `customer (a Customer), support, staff` (appendix G.2.1).
+/// Who handles a choice point (appendix J.2.8): the `decide`s that can,
+/// most specific first, down to the first that always applies, then the
+/// `prefer` ranking every model falls back to.
+pub fn handlers(p: &Program, b: &crate::ir::Binding) -> Vec<String> {
+    let mut chain = vec![b.subject.clone()];
+    while let Some(o) = p.kind(chain.last().expect("not empty")).and_then(|x| x.owner.as_ref()) {
+        if chain.contains(&o.kind) {
+            break;
+        }
+        chain.push(o.kind.clone());
+    }
+    let mut ranked: Vec<((bool, usize, bool), &crate::ir::Decision)> = p
+        .decisions
+        .iter()
+        .filter(|d| d.point.as_ref().is_none_or(|x| *x == b.target))
+        .filter_map(|d| {
+            let near = match &d.scope {
+                None => 0,
+                Some(k) => chain.len() - chain.iter().position(|c| c == k)?,
+            };
+            Some(((d.point.is_some(), near, d.cond.is_some()), d))
+        })
+        .collect();
+    ranked.sort_by(|x, y| y.0.cmp(&x.0));
+    let mut out = vec![];
+    for (_, d) in ranked {
+        let scope = d.source.split_once(" for ").and_then(|(_, rest)| rest.rsplit_once(" with ")).map(|(s, _)| s.to_string());
+        out.push(match scope {
+            Some(s) => format!("for {s}: {}", d.handler()),
+            None => d.handler(),
+        });
+        if d.cond.is_none() {
+            break;
+        }
+    }
+    out.push(if b.prefer.is_empty() { "otherwise the order they were created".to_string() } else { format!("otherwise `prefer {}`", b.target) });
+    out
+}
+
 pub fn roles(p: &Program) -> String {
     let shown: Vec<String> = p.roles.iter().map(|r| match &r.kind {
         Some(k) => format!("{} (a {k})", r.name),

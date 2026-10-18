@@ -5,7 +5,7 @@
 use crate::ast::{self, CmpOp, Head, Literal, Loc, NounPhrase, Source, Term, TypeName};
 use crate::ir::{
     self,
-    Action, Admit, Admitted, Arith, Attr, Binding, Body, Cond, Criterion, Define, Effect, Goal, Kind, Lit, Need, Num, Op, OwnerRef, Path,
+    Action, Admit, Admitted, Arith, Attr, Binding, Body, Cond, Criterion, Decision, Define, Effect, Goal, Kind, Lit, Need, Num, Op, OwnerRef, Path,
     third_person, Otherwise, Program, Reaction, Role, Rule, Slot, Step, Taking, Ty, CREATED, TIMED_OUT,
 };
 use crate::lex::Error;
@@ -634,6 +634,7 @@ impl Checker {
             needs: vec![],
             effects: vec![],
             sources: vec![],
+            decisions: vec![],
             rules: vec![],
             defines: vec![],
             goals: vec![],
@@ -666,6 +667,7 @@ impl Checker {
             p.needs[i].cond = c;
         }
         self.rules(src, &mut p);
+        self.decides(src, &mut p);
         self.goals(src, &mut p);
         self.roles(src, &mut p);
         self.admits(src, &mut p);
@@ -1214,6 +1216,94 @@ impl Checker {
                 data,
                 failures: e.failures.clone(),
             });
+        }
+    }
+
+    /// Which model handles which choices (appendix J.2.1–J.2.3).
+    fn decides(&mut self, src: &Source, p: &mut Program) {
+        let chain = |p: &Program, k: &str| {
+            let mut out = vec![k.to_string()];
+            while let Some(o) = p.kind(out.last().expect("not empty")).and_then(|x| x.owner.as_ref()) {
+                if out.contains(&o.kind) {
+                    break;
+                }
+                out.push(o.kind.clone());
+            }
+            out
+        };
+        let mut kept: Vec<(usize, &ast::DecideDecl)> = vec![];
+        for d in &src.decides {
+            if let Some(point) = &d.point {
+                if p.slot(point).is_some() {
+                    self.errors.push(err(&d.at, format!("{point} is a slot; v0 picks a slot's alternative by `prefer` and patience, not by a model")));
+                    continue;
+                }
+                if !p.bindings.iter().any(|b| b.target == *point) {
+                    self.errors.push(err(&d.at, format!("no `uses` picks {}, so there is no choice to decide", a(point))));
+                    continue;
+                }
+            }
+            let scope = match &d.scope {
+                None => None,
+                Some(w) => match p.kinds.iter().find(|k| k.plural == *w || k.name == *w) {
+                    Some(k) => Some(k.name.clone()),
+                    None => {
+                        self.errors.push(err(&d.at, format!("unknown kind `{w}`")));
+                        continue;
+                    }
+                },
+            };
+            if let Some(k) = &scope {
+                let inside = p.bindings.iter().any(|b| d.point.as_ref().is_none_or(|x| *x == b.target) && chain(p, &b.subject).contains(k));
+                if !inside {
+                    let what = d.point.as_deref().map_or_else(|| "choice is made".to_string(), |x| format!("{x} is chosen"));
+                    self.errors.push(err(&d.at, format!("no {what} inside {}", a(k))));
+                    continue;
+                }
+            }
+            if let Some(m) = &d.model {
+                let ok = m.split_once('@').is_some_and(|(n, v)| !n.is_empty() && !v.is_empty() && !v.contains('@'));
+                if !ok {
+                    self.errors.push(err(&d.at, format!("a model is named `name@version`, as in \"{m}@1\"")));
+                    continue;
+                }
+            }
+            let cond = match (&d.cond, &scope) {
+                (Some(c), Some(k)) => match self.cond(p, &d.at, k, c) {
+                    Some(c) => Some(c),
+                    None => continue,
+                },
+                _ => None,
+            };
+            kept.push((p.decisions.len(), d));
+            p.decisions.push(Decision { point: d.point.clone(), scope, cond, model: d.model.clone(), source: d.source.clone() });
+        }
+        // Two that can both decide one choice, at the same rank (J.2.3).
+        let mut seen = vec![];
+        for b in &p.bindings {
+            let chain = chain(p, &b.subject);
+            let rank = |x: &Decision| -> Option<(bool, usize, bool)> {
+                let near = match &x.scope {
+                    None => 0,
+                    Some(k) => chain.len() - chain.iter().position(|c| c == k)?,
+                };
+                x.point.as_ref().is_none_or(|q| *q == b.target).then_some((x.point.is_some(), near, x.cond.is_some()))
+            };
+            for (i, (di, ai)) in kept.iter().enumerate() {
+                for (dj, aj) in &kept[i + 1..] {
+                    let (x, y) = (&p.decisions[*di], &p.decisions[*dj]);
+                    if rank(x).is_some() && rank(x) == rank(y) && !seen.contains(&(*di, *dj)) {
+                        seen.push((*di, *dj));
+                        self.errors.push(err(
+                            &aj.at,
+                            format!(
+                                "`{}` and `{}` (line {}) can both decide {}'s {}, and neither is more specific",
+                                y.source, x.source, ai.at.line, a(&b.subject), b.target
+                            ),
+                        ));
+                    }
+                }
+            }
         }
     }
 

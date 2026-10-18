@@ -322,6 +322,20 @@ pub struct AdmitDecl {
     pub at: Loc,
 }
 
+/// `decide [Carrier] [for Orders [whose …]] with model "carriers@1"` (appendix J).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DecideDecl {
+    /// The choice point: a `uses` target.
+    pub point: Option<String>,
+    /// `for Orders`: the plural, as written.
+    pub scope: Option<String>,
+    pub cond: Option<Cond>,
+    /// `None`: `with prefer`.
+    pub model: Option<String>,
+    pub source: String,
+    pub at: Loc,
+}
+
 /// Everything parsed from a module's files.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Source {
@@ -330,6 +344,7 @@ pub struct Source {
     pub needs: Vec<NeedsDecl>,
     pub effects: Vec<EffectDecl>,
     pub sources: Vec<SourceDecl>,
+    pub decides: Vec<DecideDecl>,
     pub rules: Vec<RuleDecl>,
     pub defines: Vec<DefineDecl>,
     pub goals: Vec<GoalDecl>,

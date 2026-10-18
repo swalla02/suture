@@ -13,6 +13,8 @@ pub struct Program {
     pub effects: Vec<Effect>,
     /// Attributes whose values come from outside (appendix I).
     pub sources: Vec<Source>,
+    /// Which model handles which choices (appendix J).
+    pub decisions: Vec<Decision>,
     pub rules: Vec<Rule>,
     pub defines: Vec<Define>,
     pub goals: Vec<Goal>,
@@ -69,6 +71,30 @@ impl List {
         let s = self.singulars();
         let kind = self.element.to_lowercase();
         if s.contains(&kind) { kind } else { s[0].clone() }
+    }
+}
+
+/// `decide [Carrier] [for Orders [whose …]] with model "…"` (appendix J).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Decision {
+    /// The choice point, a `uses` target; `None`: every choice in the scope.
+    pub point: Option<String>,
+    /// The kind whose choices it covers, its own and its parts'; `None`: the module.
+    pub scope: Option<String>,
+    /// `whose …`, read at the scope's node.
+    pub cond: Option<Cond>,
+    /// `None`: `with prefer`.
+    pub model: Option<String>,
+    pub source: String,
+}
+
+impl Decision {
+    /// How it reads in `suture build`: `for Orders whose …: model "careful@1"`.
+    pub fn handler(&self) -> String {
+        match &self.model {
+            Some(m) => format!("model \"{m}\""),
+            None => "`prefer`".to_string(),
+        }
     }
 }
 

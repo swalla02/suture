@@ -71,6 +71,9 @@ fn build(dir: &Path) -> Result<bool, String> {
         println!("\nchoices:");
         for b in &prog.bindings {
             println!("  {}", suture_lang::readback::choice(&prog, b));
+            if !prog.decisions.is_empty() && !b.key_attr.is_empty() {
+                println!("    decided by: {}", suture_lang::readback::handlers(&prog, b).join("; "));
+            }
         }
     }
     if !prog.roles.is_empty() || !prog.admits.is_empty() {
