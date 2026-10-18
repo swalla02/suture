@@ -4,8 +4,9 @@
 
 use crate::ast::{self, CmpOp, Head, Literal, Loc, NounPhrase, Source, Term, TypeName};
 use crate::ir::{
+    self,
     Action, Admit, Admitted, Arith, Attr, Binding, Body, Cond, Criterion, Define, Effect, Goal, Kind, Lit, Need, Num, Op, OwnerRef, Path,
-    third_person, Program, Reaction, Role, Rule, Slot, Step, Taking, Ty, CREATED, TIMED_OUT,
+    third_person, Otherwise, Program, Reaction, Role, Rule, Slot, Step, Taking, Ty, CREATED, TIMED_OUT,
 };
 use crate::lex::Error;
 use crate::readback;
@@ -342,6 +343,7 @@ fn across(p: &Program, from: &str, of: &NounPhrase) -> Option<(String, Option<St
 fn changeable(p: &Program) -> Vec<String> {
     let mut out: Vec<String> = p.reactions.iter().flat_map(|r| r.actions.iter().map(|a| a.attr.clone())).collect();
     out.extend(p.effects.iter().flat_map(|e| e.data.iter().map(|(n, _)| n.clone())));
+    out.extend(p.sources.iter().map(|s| s.attr.clone()));
     out.extend(admitted_changes(p).into_iter().map(|(_, a)| a));
     out
 }
@@ -370,6 +372,9 @@ pub fn unchangeable(p: &Program, kind: &str, attr: &str) -> Option<String> {
     }
     if a.formula.is_some() {
         return Some(format!("`{attr}` is calculated when the {kind} is created, so it cannot be changed"));
+    }
+    if p.source_of(kind, attr).is_some() {
+        return Some(format!("`{attr}` comes from its source, so it cannot be changed"));
     }
     if let Some(b) = p.bindings.iter().find(|b| b.target == kind && b.key_attr == attr) {
         return Some(format!("`{attr}` keys the pool of `{} uses a {kind}`, and changing a pool key waits for a later slice", b.subject));
@@ -445,51 +450,90 @@ fn carried_reads(r: &Rule, changes: &[(String, String)]) -> Vec<String> {
             }
         }
     };
-    fn num(n: &Num, see: &mut dyn FnMut(&Path, Option<&str>)) {
-        match n {
-            Num::Path(x) => see(x, match x.steps.last() { Some(Step::Attr(a)) => Some(a.as_str()), _ => None }),
-            Num::Bin(a, _, b) => {
-                num(a, see);
-                num(b, see);
-            }
-            Num::Sum { calc, filter, .. } => {
-                num(calc, see);
-                if let Some(f) = filter {
-                    cond(f, see);
-                }
-            }
-            Num::Count { filter: Some(f), .. } => cond(f, see),
-            _ => {}
-        }
-    }
-    fn cond(c: &Cond, see: &mut dyn FnMut(&Path, Option<&str>)) {
-        match c {
-            Cond::Cmp { left, right, .. } => {
-                num(left, see);
-                num(right, see);
-            }
-            Cond::Contains { set, item, .. } => {
-                num(set, see);
-                num(item, see);
-            }
-            Cond::State { node, state, .. } => see(node, Some(state)),
-            Cond::Has { .. } => {}
-            Cond::And(cs) | Cond::Or(cs) => cs.iter().for_each(|c| cond(c, see)),
-        }
-    }
+    rule_reads(r, &mut see);
+    out
+}
+
+/// Calls `see` for every path a rule reads, with its last attribute, or for
+/// a state, the state's name.
+fn rule_reads(r: &Rule, see: &mut dyn FnMut(&Path, Option<&str>)) {
     for c in &r.filter {
-        cond(c, &mut see);
+        cond_reads(c, see);
     }
     match &r.body {
-        Body::Every(c) => cond(c, &mut see),
+        Body::Every(c) => cond_reads(c, see),
         Body::No { pred, unless } => {
-            cond(pred, &mut see);
+            cond_reads(pred, see);
             if let Some(u) = unless {
-                cond(u, &mut see);
+                cond_reads(u, see);
             }
         }
     }
-    out
+}
+
+fn num_reads(n: &Num, see: &mut dyn FnMut(&Path, Option<&str>)) {
+    match n {
+        Num::Path(x) => see(x, match x.steps.last() { Some(Step::Attr(a)) => Some(a.as_str()), _ => None }),
+        Num::Bin(a, _, b) => {
+            num_reads(a, see);
+            num_reads(b, see);
+        }
+        Num::Sum { calc, filter, .. } => {
+            num_reads(calc, see);
+            if let Some(f) = filter {
+                cond_reads(f, see);
+            }
+        }
+        Num::Count { filter: Some(f), .. } => cond_reads(f, see),
+        _ => {}
+    }
+}
+
+fn cond_reads(c: &Cond, see: &mut dyn FnMut(&Path, Option<&str>)) {
+    match c {
+        Cond::Cmp { left, right, .. } => {
+            num_reads(left, see);
+            num_reads(right, see);
+        }
+        Cond::Contains { set, item, .. } => {
+            num_reads(set, see);
+            num_reads(item, see);
+        }
+        Cond::State { node, state, .. } => see(node, Some(state)),
+        Cond::Has { state: Some(st), node, .. } => see(node, Some(st)),
+        Cond::Has { .. } => {}
+        Cond::And(cs) | Cond::Or(cs) => cs.iter().for_each(|c| cond_reads(c, see)),
+    }
+}
+
+/// The sourced attributes a rule reads, directly or through definitions
+/// (appendix I.2.4), as (kind, attribute). Names are matched by attribute,
+/// so a rule may be strict about more than it needs, never less.
+fn sourced_reads(p: &Program, r: &Rule) -> Vec<(String, String)> {
+    let mut names: Vec<String> = vec![];
+    let mut states: Vec<String> = vec![];
+    rule_reads(r, &mut |_, last| {
+        if let Some(a) = last {
+            names.push(a.to_string());
+        }
+    });
+    // A state may be a definition, which reads further.
+    let mut i = 0;
+    while i < names.len() {
+        let n = names[i].clone();
+        if !states.contains(&n) {
+            states.push(n.clone());
+            for d in p.defines.iter().filter(|d| d.state == n) {
+                cond_reads(&d.cond, &mut |_, last| {
+                    if let Some(a) = last {
+                        names.push(a.to_string());
+                    }
+                });
+            }
+        }
+        i += 1;
+    }
+    p.sources.iter().filter(|s| names.contains(&s.attr)).map(|s| (s.kind.clone(), s.attr.clone())).collect()
 }
 
 /// Whether a rule's filter and `unless` read only facts that never change
@@ -574,6 +618,7 @@ impl Checker {
             kinds: vec![],
             needs: vec![],
             effects: vec![],
+            sources: vec![],
             rules: vec![],
             defines: vec![],
             goals: vec![],
@@ -596,6 +641,7 @@ impl Checker {
         self.bindings(src, &mut p);
         self.prefers(src, &mut p);
         self.effects(src, &mut p);
+        self.sources(src, &mut p);
         self.list_elements(src, &p);
         self.state_names(src, &p);
         self.formulas(src, &mut p);
@@ -611,6 +657,15 @@ impl Checker {
         self.reactions(src, &mut p);
         for i in 0..p.rules.len() {
             p.rules[i].fixed = fixed_rule(&p, &p.rules[i]);
+            p.rules[i].sources = sourced_reads(&p, &p.rules[i]);
+            for (attr, secs) in p.rules[i].fresh.clone() {
+                if !p.rules[i].sources.iter().any(|(_, a)| *a == attr) {
+                    let r = &p.rules[i];
+                    let at = src.rules.iter().find(|x| x.name == r.name).map_or_else(|| Loc { file: String::new(), line: 0 }, |x| x.at.clone());
+                    let old = readback::duration_text(secs as i64);
+                    self.errors.push(err(&at, format!("rule {}: `with {attr} at most {old} old`: the rule reads no sourced `{attr}`", r.name)));
+                }
+            }
             // A carried fact that the other unit's own reactions or answers
             // change is never refreshed in v0 (appendix G.1), so the rule
             // could be broken without anyone knowing: refuse it.
@@ -1147,6 +1202,91 @@ impl Checker {
         }
     }
 
+    /// Sourced attributes (appendix I.2.1–I.2.2).
+    fn sources(&mut self, src: &Source, p: &mut Program) {
+        for s in &src.sources {
+            let Some(k) = src.kinds.iter().find(|k| k.name == s.kind) else {
+                self.errors.push(err(&s.at, format!("unknown kind {}", s.kind)));
+                continue;
+            };
+            let Some(attr) = p.kind(&s.kind).and_then(|k| k.attr(&s.attr)).cloned() else {
+                self.errors.push(err(&s.at, format!("{} has no attribute `{}` to source", a(&s.kind), s.attr)));
+                continue;
+            };
+            let decl = k.attrs.iter().find(|x| x.name == s.attr);
+            if decl.is_some_and(|x| x.formula.is_some()) || attr.formula.is_some() {
+                self.errors.push(err(&s.at, format!("{}.{} is calculated by its formula, so it cannot be sourced", s.kind, s.attr)));
+                continue;
+            }
+            if attr.default.is_some() {
+                self.errors.push(err(&s.at, format!("{}.{} has a default, so it cannot be sourced", s.kind, s.attr)));
+                continue;
+            }
+            if matches!(attr.ty, Ty::Ref | Ty::Set) {
+                self.errors.push(err(&s.at, format!("{}.{} refers to shared entities; a source gives a value", s.kind, s.attr)));
+                continue;
+            }
+            if p.source_of(&s.kind, &s.attr).is_some() {
+                self.errors.push(err(&s.at, format!("{}.{} already has a source", s.kind, s.attr)));
+                continue;
+            }
+            if p.effects.iter().any(|e| e.kind == s.kind && e.data.iter().any(|(n, _)| *n == s.attr)) {
+                self.errors.push(err(&s.at, format!("{}.{} is set by its effect's answer, so it cannot also be sourced", s.kind, s.attr)));
+                continue;
+            }
+            let referrer = p.kinds.iter().find(|x| x.attrs.iter().any(|y| matches!(y.ty, Ty::Ref | Ty::Set) && y.of.as_deref() == Some(s.kind.as_str())));
+            if let Some(r) = referrer {
+                self.errors.push(err(&s.at, format!("{} is shared ({} refers to it), so its {} cannot be sourced in v0", s.kind, r.name, s.attr)));
+                continue;
+            }
+            if p.bindings.iter().any(|b| b.target == s.kind) {
+                self.errors.push(err(&s.at, format!("{} is shared (a `uses` picks it), so its {} cannot be sourced in v0", s.kind, s.attr)));
+                continue;
+            }
+            if let Some((extra, _)) = s.data.iter().find(|(n, _)| *n != s.attr) {
+                self.errors.push(err(&s.at, format!("a source's answer carries only {}; drop `with {extra}`", s.attr)));
+                continue;
+            }
+            let mut sends = vec![];
+            for np in &s.sends {
+                match self.np(p, &s.at, &s.kind, np) {
+                    Some((path, End::Value(_) | End::Ref(_) | End::Set(_))) => sends.push((np.steps.last().cloned().unwrap_or_default(), path)),
+                    Some((_, End::Node(k))) => self.errors.push(err(&s.at, format!("a source sends values; `{}` is a {k}", show(np)))),
+                    None => {}
+                }
+            }
+            let otherwise = match &s.otherwise {
+                None => Otherwise::Hold,
+                Some(ast::OtherwiseDecl::Again(secs)) => Otherwise::Again(*secs),
+                Some(ast::OtherwiseDecl::Use(l)) => {
+                    let currency = p.currency.clone();
+                    let Some((lit, ty)) = self.lit(&s.at, l, &currency) else { continue };
+                    if ty != attr.ty {
+                        self.errors.push(err(&s.at, format!("{}.{} is {:?}, but `otherwise use` gives {ty:?}", s.kind, s.attr, attr.ty)));
+                        continue;
+                    }
+                    Otherwise::Use(lit)
+                }
+                Some(ast::OtherwiseDecl::Act(actions)) => {
+                    let r = ast::ReactionDecl { kind: s.kind.clone(), outcome: String::new(), by: vec![], actions: actions.clone(), at: s.at.clone() };
+                    Otherwise::Act(self.actions(p, &r))
+                }
+            };
+            p.sources.push(ir::Source {
+                kind: s.kind.clone(),
+                attr: s.attr.clone(),
+                ty: attr.ty,
+                adapter: s.adapter.clone(),
+                within_secs: s.within_secs,
+                sends,
+                success: s.success.clone(),
+                failures: s.failures.clone(),
+                good_for: s.good_for,
+                otherwise,
+            });
+        }
+    }
+
     /// A state name has one meaning in a kind (appendix B.3): its effect's
     /// marks and outcomes may not repeat each other, an attribute, `done` or
     /// `failed`.
@@ -1266,6 +1406,8 @@ impl Checker {
                 tier: tier.into(),
                 period: r.period.clone(),
                 fixed: false,
+                sources: vec![],
+                fresh: r.fresh.clone(),
             };
             rule.formula = readback::formula(p, &rule);
             rule.paraphrase = readback::paraphrase(p, &rule);
@@ -1348,6 +1490,12 @@ impl Checker {
     fn actions(&mut self, p: &Program, r: &ast::ReactionDecl) -> Vec<Action> {
             let mut actions = vec![];
             for a in &r.actions {
+                if let Some((_, End::Node(k))) = self.np(p, &r.at, &r.kind, &a.target) {
+                    if p.source_of(&k, &a.attr).is_some() {
+                        self.errors.push(err(&r.at, format!("{k}.{} comes from its source; a reaction cannot set it", a.attr)));
+                        continue;
+                    }
+                }
                 match self.np(p, &r.at, &r.kind, &a.target) {
                     Some((target, End::Node(k) | End::Ref(k))) if through_ref(&target) || matches!(target.steps.last(), Some(Step::Attr(_))) => {
                         self.errors.push(err(&r.at, format!("`{}` is a shared {k}; a reaction changes only its own unit", show(&a.target))));

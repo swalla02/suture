@@ -215,6 +215,31 @@ pub struct EffectDecl {
     pub at: Loc,
 }
 
+/// `source Order's credit via bureau within 2 seconds`, with its lines (appendix I).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceDecl {
+    pub kind: String,
+    pub attr: String,
+    pub adapter: String,
+    pub within_secs: u64,
+    pub sends: Vec<NounPhrase>,
+    pub success: String,
+    /// Data named on the `reports` line; only the attribute itself may be.
+    pub data: Vec<(String, TypeName)>,
+    pub failures: Vec<String>,
+    pub good_for: Option<u64>,
+    pub otherwise: Option<OtherwiseDecl>,
+    pub at: Loc,
+}
+
+/// What a source does when no fresh value can be had (appendix I.2.6).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OtherwiseDecl {
+    Use(Literal),
+    Again(u64),
+    Act(Vec<Action>),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuleDecl {
     pub name: String,
@@ -223,6 +248,8 @@ pub struct RuleDecl {
     pub period: Option<String>,
     /// `…, checked globally` (appendix F.2.13).
     pub globally: bool,
+    /// `…, with credit at most 1 hour old` (appendix I.2.3).
+    pub fresh: Vec<(String, u64)>,
     /// The sentence as written, for read-backs.
     pub source: String,
     pub at: Loc,
@@ -302,6 +329,7 @@ pub struct Source {
     pub kinds: Vec<KindDecl>,
     pub needs: Vec<NeedsDecl>,
     pub effects: Vec<EffectDecl>,
+    pub sources: Vec<SourceDecl>,
     pub rules: Vec<RuleDecl>,
     pub defines: Vec<DefineDecl>,
     pub goals: Vec<GoalDecl>,

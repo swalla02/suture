@@ -11,6 +11,8 @@ pub struct Program {
     pub kinds: Vec<Kind>,
     pub needs: Vec<Need>,
     pub effects: Vec<Effect>,
+    /// Attributes whose values come from outside (appendix I).
+    pub sources: Vec<Source>,
     pub rules: Vec<Rule>,
     pub defines: Vec<Define>,
     pub goals: Vec<Goal>,
@@ -256,6 +258,43 @@ pub struct Effect {
     pub failures: Vec<String>,
 }
 
+/// `source Order's credit via bureau within 2 seconds …` (appendix I).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Source {
+    pub kind: String,
+    pub attr: String,
+    pub ty: Ty,
+    pub adapter: String,
+    pub within_secs: u64,
+    /// What the adapter receives, as for an effect.
+    pub sends: Vec<(String, Path)>,
+    pub success: String,
+    pub failures: Vec<String>,
+    /// How long a value is trusted; `None`: for ever.
+    pub good_for: Option<u64>,
+    pub otherwise: Otherwise,
+}
+
+impl Source {
+    /// How requests name it: `Order~credit`.
+    pub fn request_kind(&self) -> String {
+        format!("{}~{}", self.kind, self.attr)
+    }
+}
+
+/// What a source does when its fetch fails (appendix I.2.6).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Otherwise {
+    /// The value stays unknown, and every step its rules guard waits.
+    Hold,
+    /// The value is this, as if fetched now.
+    Use(Lit),
+    /// Fetch again after this many seconds, if a step still needs it.
+    Again(u64),
+    /// Apply these actions at the sourced node.
+    Act(Vec<Action>),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rule {
     pub name: String,
@@ -272,6 +311,11 @@ pub struct Rule {
     /// Whether its filter and `unless` read only facts that never change, so
     /// a slot it holds back moves on at once (appendix F.2.15).
     pub fixed: bool,
+    /// The sourced attributes it reads, directly or through a definition, as
+    /// (kind, attribute): if any, the rule is strict (appendix I.2.4).
+    pub sources: Vec<(String, String)>,
+    /// `with credit at most 1 hour old`: the oldest value it accepts, in seconds.
+    pub fresh: Vec<(String, u64)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -419,6 +463,19 @@ impl Program {
 
     pub fn effect_of(&self, kind: &str) -> Option<&Effect> {
         self.effects.iter().find(|e| e.kind == kind)
+    }
+
+    pub fn source_of(&self, kind: &str, attr: &str) -> Option<&Source> {
+        self.sources.iter().find(|s| s.kind == kind && s.attr == attr)
+    }
+
+    /// The deadline of a request, by the kind it names: a part kind with an
+    /// effect, or a source's `Order~credit`.
+    pub fn request_within(&self, kind: &str) -> u64 {
+        match kind.split_once('~') {
+            Some((k, a)) => self.source_of(k, a).map_or(0, |s| s.within_secs),
+            None => self.effect_of(kind).map_or(0, |e| e.within_secs),
+        }
     }
 
     /// The states a node of `kind` can be in (spec B.3): its Bool attributes,

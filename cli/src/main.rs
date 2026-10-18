@@ -57,6 +57,15 @@ fn build(dir: &Path) -> Result<bool, String> {
         println!("  understood as:   {}", r.formula);
         println!("  in other words:  {}", r.paraphrase);
         println!("  cost:            {}", r.tier);
+        if let Some(src) = suture_lang::readback::rule_sources(&prog, r) {
+            println!("  sources:         {src}");
+        }
+    }
+    if !prog.sources.is_empty() {
+        println!("\nsourcing:");
+        for s in &prog.sources {
+            println!("  {}", suture_lang::readback::source_line(&prog, s));
+        }
     }
     if !prog.bindings.is_empty() {
         println!("\nchoices:");

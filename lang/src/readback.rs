@@ -336,6 +336,64 @@ pub fn watches(p: &Program) -> Vec<String> {
     out
 }
 
+/// A strict rule's sourced facts (appendix I.2.8): `credit from bureau, at
+/// most 1 hour old`, or `None` for a rule that reads none.
+pub fn rule_sources(p: &Program, r: &Rule) -> Option<String> {
+    let parts: Vec<String> = r
+        .sources
+        .iter()
+        .filter_map(|(k, a)| p.source_of(k, a))
+        .map(|s| {
+            let bound = r.fresh.iter().find(|(a, _)| *a == s.attr).map(|(_, secs)| *secs).into_iter().chain(s.good_for).min();
+            match bound {
+                Some(secs) => format!("{} from {}, at most {} old", s.attr, s.adapter, duration_text(secs as i64)),
+                None => format!("{} from {}, fetched once", s.attr, s.adapter),
+            }
+        })
+        .collect();
+    (!parts.is_empty()).then(|| parts.join("; "))
+}
+
+/// One line for `suture build`'s `sourcing:` section.
+pub fn source_line(p: &Program, s: &crate::ir::Source) -> String {
+    let sends: Vec<&str> = s.sends.iter().map(|(n, _)| n.as_str()).collect();
+    let trusted = s.good_for.map_or_else(|| "trusted until the unit ends".to_string(), |secs| format!("trusted for {}", duration_text(secs as i64)));
+    let otherwise = match &s.otherwise {
+        crate::ir::Otherwise::Hold => "if it fails, the steps its rules guard wait".to_string(),
+        crate::ir::Otherwise::Use(l) => format!("if it fails, use {}", lit_text(p, l)),
+        crate::ir::Otherwise::Again(secs) => format!("if it fails, ask again after {}", duration_text(*secs as i64)),
+        crate::ir::Otherwise::Act(actions) => {
+            let acts: Vec<String> = actions.iter().map(|a| format!("{} is {}{}", target_text(&a.target), if a.value { "" } else { "not " }, a.attr)).collect();
+            format!("if it fails, {}", acts.join(" and "))
+        }
+    };
+    let readers: Vec<&str> = p.rules.iter().filter(|r| r.sources.iter().any(|(k, a)| *k == s.kind && *a == s.attr)).map(|r| r.name.as_str()).collect();
+    let read = if readers.is_empty() { "no rule reads it, so it is never fetched".to_string() } else { format!("read by rule{} {}", if readers.len() == 1 { "" } else { "s" }, readers.join(", ")) };
+    format!(
+        "{}'s {} from {} within {} (sends {}); {trusted}; {otherwise}; {read}",
+        s.kind,
+        s.attr,
+        s.adapter,
+        duration_text(s.within_secs as i64),
+        sends.join(", ")
+    )
+}
+
+/// `it`, `its Order`: where an action applies.
+fn target_text(path: &crate::ir::Path) -> String {
+    let names: Vec<String> = path
+        .steps
+        .iter()
+        .map(|s| match s {
+            crate::ir::Step::Part(k) | crate::ir::Step::Slot(k) => k.clone(),
+            crate::ir::Step::Owner => "owner".into(),
+            crate::ir::Step::Attr(a) => a.clone(),
+            _ => "…".into(),
+        })
+        .collect();
+    if names.is_empty() { "it".into() } else { format!("its {}", names.join("'s ")) }
+}
+
 pub fn lit_text(p: &Program, l: &Lit) -> String {
     match l {
         Lit::Text(s) => format!("\"{s}\""),

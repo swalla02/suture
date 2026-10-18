@@ -36,6 +36,7 @@ pub(crate) fn statement(st: &Stmt, out: &mut Source) -> Result<(), Error> {
         "module" => module(st, at, out),
         "kind" => kind(st, at, out),
         "effect" => effect(st, at, out),
+        "source" => source(st, at, out),
         "rule" => rule(st, at, out),
         "define" => define(st, at, out),
         "desired" => goal(st, at, out),
@@ -47,7 +48,7 @@ pub(crate) fn statement(st: &Stmt, out: &mut Source) -> Result<(), Error> {
         w if w.starts_with(char::is_uppercase) && matches!(st.lines[0].get(1), Some(Tok::Word(x)) if x == "uses") => uses(st, at, out),
         w if w.starts_with(char::is_uppercase) => needs(st, at, out),
         _ => Err(st.error(format!(
-            "unknown statement `{first}`: expected module, kind, effect, rule, define, desired, when, prefer, role, admit, `Kind needs …` or `Slot is …`"
+            "unknown statement `{first}`: expected module, kind, effect, source, rule, define, desired, when, prefer, role, admit, `Kind needs …` or `Slot is …`"
         ))),
     }
 }
@@ -390,6 +391,64 @@ fn effect(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     Ok(())
 }
 
+/// `source <Kind>'s <attr> via <adapter> within <duration>`, then indented
+/// `sends …` and `reports …`, and optionally `good for …` and `otherwise …`
+/// lines (appendix I).
+fn source(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
+    let mut c = Cursor::new(&st.lines[0], &st.file, st.line);
+    c.expect_word("source")?;
+    let kind = c.kind_name()?;
+    if !c.eat_poss() {
+        return Err(c.error(format!("expected `{kind}'s` and the attribute it sources, found {}", c.found())));
+    }
+    let attr = c.word()?;
+    c.expect_word("via")?;
+    let adapter = c.word()?;
+    c.expect_word("within")?;
+    let within_secs = duration(&mut c)?;
+    c.expect_end()?;
+    let (mut sends, mut reports, mut good_for, mut otherwise) = (None, None, None, None);
+    for line in &st.lines[1..] {
+        let mut c = Cursor::new(line, &st.file, st.line);
+        if c.eat_word("sends") {
+            let mut list = vec![field(&mut c)?];
+            while c.eat_sym(',') {
+                list.push(field(&mut c)?);
+            }
+            c.expect_end()?;
+            sends = Some(list);
+        } else if c.eat_word("reports") {
+            reports = Some(outcomes(&mut c)?);
+        } else if c.eat_word("good") {
+            c.expect_word("for")?;
+            good_for = Some(duration(&mut c)?);
+            c.expect_end()?;
+        } else if c.eat_word("otherwise") {
+            otherwise = Some(if c.eat_word("use") {
+                let l = crate::sentence::literal(&mut c)?.ok_or_else(|| c.error(format!("expected a value after `use`, found {}", c.found())))?;
+                OtherwiseDecl::Use(l)
+            } else if c.eat_word("ask") {
+                c.expect_word("again")?;
+                c.expect_word("after")?;
+                OtherwiseDecl::Again(duration(&mut c)?)
+            } else {
+                let mut actions = vec![action(&mut c)?];
+                while c.eat_word("and") {
+                    actions.push(action(&mut c)?);
+                }
+                OtherwiseDecl::Act(actions)
+            });
+            c.expect_end()?;
+        } else {
+            return Err(c.error(format!("expected `sends`, `reports`, `good for` or `otherwise`, found {}", c.found())));
+        }
+    }
+    let sends = sends.ok_or_else(|| st.error("a source needs a `sends` line saying what the adapter receives"))?;
+    let (success, data, failures) = reports.ok_or_else(|| st.error("a source needs a `reports` line"))?;
+    out.sources.push(SourceDecl { kind, attr, adapter, within_secs, sends, success, data, failures, good_for, otherwise, at });
+    Ok(())
+}
+
 /// `rule <name>: <every … | no …>`
 fn rule(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     let toks = st.tokens();
@@ -413,13 +472,29 @@ fn rule(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     } else {
         rule_body(&mut c)?
     };
-    let globally = c.eat_sym(',');
-    if globally {
-        c.expect_word("checked")?;
-        c.expect_word("globally")?;
+    let (mut globally, mut fresh) = (false, vec![]);
+    while c.eat_sym(',') {
+        if c.eat_word("with") {
+            // `with credit at most 1 hour old[ and score at most …]` (appendix I.2.3).
+            loop {
+                let attr = c.word()?;
+                c.expect_word("at")?;
+                c.expect_word("most")?;
+                let secs = duration(&mut c)?;
+                c.expect_word("old")?;
+                fresh.push((attr, secs));
+                if !c.eat_word("and") {
+                    break;
+                }
+            }
+        } else {
+            c.expect_word("checked")?;
+            c.expect_word("globally")?;
+            globally = true;
+        }
     }
     c.expect_end()?;
-    out.rules.push(RuleDecl { name, body, period, globally, source: text(after_colon(&toks)), at });
+    out.rules.push(RuleDecl { name, body, period, globally, fresh, source: text(after_colon(&toks)), at });
     Ok(())
 }
 
