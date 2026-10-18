@@ -69,7 +69,7 @@ This is why the runtime can be trusted with money and stock. It never "rolls bac
 
 Some statements leave a choice open: which alternative fills a slot, which session a ticket uses. Every open choice is resolved through one function, which receives the allowed options and returns one of them. In v0 that function is your `prefer`, and ties are broken by creation order, so choices are deterministic. The choice is journaled.
 
-Because every pick is still checked against the rules, the choice function cannot break a rule however it picks. This is where a decision model could plug in later: it can only pick among options that are already allowed.
+Because every pick is still checked against the rules, the choice function cannot break a rule however it picks. This is where a decision model plugs in (chapter 15): it can only pick among options that are already allowed.
 
 ## The journal
 

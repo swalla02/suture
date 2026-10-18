@@ -1,4 +1,4 @@
-# 15. Limits of v0
+# 16. Limits of v0
 
 Suture v0 is a prototype. Everything earlier in this guide runs and is tested. This chapter lists what is designed (in `docs/superpowers/specs/2026-10-14-suture-language-design.md`) but not built yet, so you do not go looking for it.
 
@@ -33,7 +33,9 @@ Suture v0 is a prototype. Everything earlier in this guide runs and is tested. T
 | sourcing a `Bool` state | source a Text or Count and compare it in the rule |
 | a formula, a `becomes`, or a total's filter that stays fresh over a sourced fact | read the sourced fact in the rule itself |
 | prefetching, or a model choosing between sources | facts are fetched when a step waits on them, from their one source |
-| `decide ⟨choice⟩ with model "…"` | `prefer`; the choice interface is in place, the model backend is not |
+| a model picking a slot's alternative, or a source | `prefer` and patience; one source per attribute |
+| a deadline for a model's answer, and real model backends | models answer at once; scenarios script them, Rust registers functions |
+| two `decide`s with a `whose` at the same rank, even when their conditions exclude each other | give one of them a nearer scope or a choice point |
 | waking only as many waiting bindings as a freed amount can serve | every waiter of the pool key is woken, in arrival order, and gathers again |
 
 ## By design, never

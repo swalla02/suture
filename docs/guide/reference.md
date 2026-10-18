@@ -26,6 +26,8 @@ source ⟨Kind⟩'s ⟨attr⟩ via ⟨adapter⟩ within ⟨duration⟩
   [good for  ⟨duration⟩]
   [otherwise use ⟨literal⟩ | ask again after ⟨duration⟩ | ⟨action⟩[ and ⟨action⟩…]]
 
+decide [⟨Kind⟩] [for ⟨Kinds⟩ [whose ⟨cond⟩]] with model "⟨name⟩@⟨version⟩" | with prefer
+
 prefer ⟨Slot⟩: ⟨Kind⟩[, then ⟨Kind⟩ [after ⟨duration⟩]]…
 prefer ⟨Kind⟩ [for a ⟨element⟩]: ⟨criterion⟩[, then ⟨criterion⟩]…
     criteria: lowest ⟨num⟩ · highest ⟨num⟩ · those ⟨cond⟩ · those whose ⟨attr⟩ …
@@ -92,6 +94,7 @@ scenario "⟨title⟩":
   when   ⟨role⟩ ⟨Name⟩ changes ⟨Name⟩'s ⟨attr⟩ to ⟨value⟩
            is refused at the gate | is refused by rule ⟨name⟩
   when   ⟨adapter⟩ answers ⟨outcome⟩ [with ⟨attr⟩ ⟨value⟩, …] [for ⟨Name⟩]
+  when   model "⟨name⟩@⟨version⟩" picks ⟨Name⟩[, then ⟨Name⟩…]
   when   ⟨n⟩ ⟨seconds|minutes|hours|days|weeks⟩ pass
   and    …
   expect ⟨cond about a Name⟩

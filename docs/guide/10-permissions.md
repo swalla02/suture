@@ -55,7 +55,7 @@ A caller has a role and a name.
 - With `is a Member`, the caller's name must be an existing Member, and inside an `admit` condition `the caller` is that Member. An input from a member who does not exist is refused at the gate.
 - With no kind, the name is only an identity: `librarian Lin`.
 
-In v0 callers are named by the scenario (and later by the input file). Real authentication is designed but not built (chapter 15).
+In v0 callers are named by the scenario (and later by the input file). Real authentication is designed but not built (chapter 16).
 
 ## Three things to admit
 
