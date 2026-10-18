@@ -1271,3 +1271,40 @@ Until slice 10, a program ran only inside a scenario: the inputs, the outside an
 - A log written under a different program is refused.
 - Time passing on the real clock fires a deadline; downtime fires the deadlines it covered.
 - A request is posted to its adapter; an immediate reply is applied, and a later one arrives through `/answers`; restart posts waiting requests again with the same key.
+
+## Appendix M. Prototype slice 12: versions and deploys (2026-10-18)
+
+D12 says a deploy is refused until every live break has an explicit resolution. Slice 12 builds that. A served program can be replaced by a newer version of the same module. The deploy check runs the new version against every live unit and lists what it would break. A resolution in the new program's text says how each break is handled. Once nothing is left unresolved, the live units move to the new version in place, and nothing that already happened is undone.
+
+### M.1 What slice 12 adds
+
+| Added in slice 12 | Still waits |
+|---|---|
+| `apply rule ⟨name⟩ to ⟨Kinds⟩ created from version ⟨n⟩` | resolutions for rules over totals (`per-group`, `global`) |
+| every unit records the version it was created under | migrating a value by a formula (`set Booking's seat to …`) |
+| `suture deploy <dir> [--state <dir>]`: the deploy check against the live state, without changing it | a deploy while the service runs (stop, then start the new version) |
+| `suture serve` with a newer version: the check, then the deploy, logged | going back to an older version |
+| replay across versions: a log holds each deploy, and the state directory each version's program | |
+
+### M.2 Semantics that slice 12 settles
+
+1. **Versions.** A deploy replaces a program with another of the same module and a higher version. Different content under the same version is refused: it asks for a new version number. The units' kinds, attributes, parts and requests carry over by name.
+2. **A unit's version.** A unit records the version of the program it was created under. A deploy does not change it.
+3. **`apply rule R to Ks created from version n`** limits rule R to the units of root kind K created under version n or later. Older units are not checked against R, and R does not hold them back. Only a rule about one entity at a time (`local`) can be applied this way. K must be the rule's subject or own it, and n must be from 1 to the module's version. Each rule may have only one such statement. `suture build` prints it under the rule's read-back.
+4. **The deploy check** builds the new version's view of each live unit and lists every break:
+   - a live unit of a kind, or with a part of a kind, that the new version does not have;
+   - an attribute whose type changed while live units hold a value of it;
+   - an attribute the new version adds without a default, on a kind with live units;
+   - a rule of the new version that a live unit breaks, unless an `apply` limits the rule to versions after the unit's.
+   
+   Each break names the units (the first few, then how many more) and how it can be resolved. A deploy with any break is refused, and nothing changes.
+5. **What a deploy does.** Attributes the new version removes are dropped from live units, and the report says so. Added attributes take their defaults. Goals and rules are matched by their text, so a goal already met or alerted stays so. Then every live unit settles once under the new version. A new `needs` may create parts, a request already sent stays sent, and its answer is awaited as before. The trace and the report say what changed.
+6. **The log.** A deploy is the record `{"deploy": {"version": n}}`. The state directory keeps each version's program as `program-v⟨n⟩.json` (the first stays `program.json`). Replay applies the records under the version in force, and at a deploy record it makes the same deploy again. A deploy is written only after its check has passed.
+7. **`suture deploy`** replays the state directory, runs the check and prints the report or the breaks. It exits with failure if the deploy would be refused. It never writes, so it can run in a pipeline before the new version is started.
+
+### M.3 Acceptance
+
+- A rule that live units break refuses the deploy and names them. `apply … created from version 2` resolves the break: old units are not checked against the rule, and new ones are.
+- A removed kind with live units, a changed type and an added attribute without a default are each refused. With a default, the attribute is filled.
+- After a deploy, a new need creates parts on live units, and a pending request is answered as before.
+- A restart replays across the deploy to the same state. The same version with other content is refused.
