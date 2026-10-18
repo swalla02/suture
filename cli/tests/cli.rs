@@ -149,3 +149,75 @@ fn serve_runs_a_program_and_a_restart_keeps_its_state() {
     child.wait().unwrap();
     assert!(out.starts_with("HTTP/1.1 409") && out.contains("Ada already exists"), "the log brought Ada back: {out}");
 }
+
+#[test]
+fn deploy_checks_a_new_version_against_the_live_state() {
+    use std::io::{BufRead, BufReader, Read, Write};
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let tmp = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("deploy-cli");
+    let _ = std::fs::remove_dir_all(&tmp);
+    let state = tmp.join("state");
+    let v1 = std::fs::read_to_string(root.join("examples/tickets/tickets.st")).unwrap();
+    let write = |name: &str, text: &str| {
+        let d = tmp.join(name);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("tickets.st"), text).unwrap();
+        d
+    };
+    let v2 = v1.replace("module tickets version 1", "module tickets version 2").replace("rule early:", "rule pairs: every Booking's quantity is at most 1\nrule early:");
+    let (dir1, dir2) = (write("v1", &v1), write("v2", &v2));
+    let dir3 = write("v2-applied", &v2.replace("admit book", "apply rule pairs to Bookings created from version 2\nadmit book"));
+    let start = |dir: &std::path::Path| {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_suture"))
+            .args(["serve", dir.to_str().unwrap(), "--listen", "127.0.0.1:0", "--state", state.to_str().unwrap()])
+            .env("SUTURE_OPERATOR_TOKEN", "t")
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut out = BufReader::new(child.stdout.take().unwrap());
+        let mut first = String::new();
+        out.read_line(&mut first).unwrap();
+        let addr = first.split("http://").nth(1).and_then(|r| r.split(',').next()).unwrap_or_else(|| panic!("{first}")).to_string();
+        let mut rest = vec![];
+        loop {
+            let mut l = String::new();
+            out.read_line(&mut l).unwrap();
+            let done = l.contains("replayed");
+            rest.push(l);
+            if done {
+                break;
+            }
+        }
+        (child, addr, rest.concat(), out)
+    };
+    let post = |addr: &str, path: &str, headers: &str, body: &str| {
+        let mut s = std::net::TcpStream::connect(addr).unwrap();
+        write!(s, "POST {path} HTTP/1.1\r\nContent-Length: {}\r\n{headers}\r\n{body}", body.len()).unwrap();
+        let mut out = String::new();
+        s.read_to_string(&mut out).unwrap();
+        assert!(out.starts_with("HTTP/1.1 200"), "{out}");
+    };
+    let (mut child, addr, _, _out) = start(&dir1);
+    let op = "Authorization: Bearer t\r\n";
+    post(&addr, "/world", op, r#"{"kind": "Fan", "label": "Ada", "attrs": {"name": "Ada"}}"#);
+    post(&addr, "/world", op, r#"{"kind": "Show", "label": "Hamlet", "attrs": {"name": "Hamlet", "price": "40 EUR"}}"#);
+    post(&addr, "/world", op, r#"{"kind": "Session", "label": "Fri", "attrs": {"show": "Hamlet", "day": "Friday", "seats": 100}}"#);
+    post(&addr, "/inputs", "Suture-Caller: fan Ada\r\n", r#"{"new": {"verb": "books", "kind": "Booking", "label": "B1", "attrs": {"fan": "Ada", "show": "Hamlet", "quantity": 2}}}"#);
+    child.kill().unwrap();
+    child.wait().unwrap();
+
+    let deploy = |dir: &std::path::Path| Command::new(env!("CARGO_BIN_EXE_suture")).args(["deploy", dir.to_str().unwrap(), "--state", state.to_str().unwrap()]).output().unwrap();
+    let out = deploy(&dir2);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(text.contains("tickets v2: the deploy would be refused") && text.contains("rule pairs would break") && text.contains("live in B1"), "{text}");
+    let out = deploy(&dir3);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{text}");
+    assert!(text.contains("tickets v2: the deploy can go ahead") && text.contains("deployed tickets v2 over v1"), "{text}");
+
+    let (mut child, _, lines, _out) = start(&dir3);
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(lines.contains("deployed tickets v2 over v1") && lines.contains("B1  now under version 2"), "{lines}");
+}

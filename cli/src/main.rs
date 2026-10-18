@@ -11,7 +11,7 @@ use std::process::ExitCode;
 use suture_lang::ir::Program;
 
 const USAGE: &str =
-    "usage:\n  suture build <dir>\n  suture run <dir> --scenario <file> [--models]\n  suture explain <dir> --scenario <file> <name>\n  suture serve <dir> [--state <dir>] [--listen <addr>] [--models]";
+    "usage:\n  suture build <dir>\n  suture run <dir> --scenario <file> [--models]\n  suture explain <dir> --scenario <file> <name>\n  suture serve <dir> [--state <dir>] [--listen <addr>] [--models]\n  suture deploy <dir> [--state <dir>]";
 
 /// Where `suture serve` listens unless told otherwise.
 const LISTEN: &str = "127.0.0.1:7878";
@@ -25,6 +25,8 @@ fn main() -> ExitCode {
         ["run", dir, "--scenario", file, "--models"] => scenarios(Path::new(dir), Path::new(file), None, true),
         ["explain", dir, "--scenario", file, name] => scenarios(Path::new(dir), Path::new(file), Some(*name), false),
         ["serve", dir, flags @ ..] => serve(Path::new(dir), flags),
+        ["deploy", dir] => deploy(Path::new(dir), None),
+        ["deploy", dir, "--state", state] => deploy(Path::new(dir), Some(Path::new(state))),
         _ => Err(USAGE.to_string()),
     };
     match result {
@@ -63,6 +65,9 @@ fn build(dir: &Path) -> Result<bool, String> {
         println!("  understood as:   {}", r.formula);
         println!("  in other words:  {}", r.paraphrase);
         println!("  cost:            {}", r.tier);
+        if let Some(a) = &r.applies {
+            println!("  applies to:      {} created from version {}", prog.kind(&a.kind).map_or(&a.kind, |k| &k.plural), a.from);
+        }
         if let Some(src) = suture_lang::readback::rule_sources(&prog, r) {
             println!("  sources:         {src}");
         }
@@ -174,6 +179,36 @@ fn unix_now() -> u64 {
 /// Serves the program until the process is stopped (appendix L): its state
 /// directory replayed first, `adapters.json` and (with `--models`)
 /// `models.json` read from beside it.
+/// The deploy check against the live state, which it never writes (appendix M.2.7).
+fn deploy(dir: &Path, state: Option<&Path>) -> Result<bool, String> {
+    use suture_runtime::service::{Check, Service};
+    let prog = compile(dir)?;
+    let state = state.map_or_else(|| Service::default_state(dir), Path::to_path_buf);
+    if !state.join("log.jsonl").exists() {
+        return Err(format!("{}: no log, so nothing is live; `suture serve` starts it", state.display()));
+    }
+    match Service::check(&prog, &state, unix_now())? {
+        Check::Same => {
+            println!("{} v{}: the state already runs this program", prog.module, prog.version);
+            Ok(true)
+        }
+        Check::Deploys(lines) => {
+            println!("{} v{}: the deploy can go ahead; it would do this:", prog.module, prog.version);
+            for l in lines {
+                println!("  {l}");
+            }
+            Ok(true)
+        }
+        Check::Refused(breaks) => {
+            println!("{} v{}: the deploy would be refused; these breaks need a resolution:", prog.module, prog.version);
+            for b in breaks {
+                println!("  {b}");
+            }
+            Ok(false)
+        }
+    }
+}
+
 fn serve(dir: &Path, flags: &[&str]) -> Result<bool, String> {
     let (mut state, mut listen, mut models) = (suture_runtime::service::Service::default_state(dir), LISTEN.to_string(), false);
     let mut rest = flags.iter();
@@ -205,7 +240,7 @@ fn serve(dir: &Path, flags: &[&str]) -> Result<bool, String> {
             host.models.register_backend(&name, b);
         }
     })?;
-    let replayed = svc.host.trace.len();
+    let replayed = svc.host.trace.len() - svc.deployed.len();
     svc.connect(adapters, Box::new(suture_runtime::backend::Curl));
     let listener = std::net::TcpListener::bind(&listen).map_err(|e| format!("{listen}: {e}"))?;
     let operator = std::env::var("SUTURE_OPERATOR_TOKEN").ok();
@@ -216,6 +251,9 @@ fn serve(dir: &Path, flags: &[&str]) -> Result<bool, String> {
     println!("{} v{} on http://{bound}, state in {}", prog.module, prog.version, state.display());
     if !bound.ip().is_loopback() {
         println!("  warning: listening beyond this machine; only the gateway may reach this port, since it trusts the Suture-Caller header");
+    }
+    for l in &svc.deployed {
+        println!("  {l}");
     }
     println!("  replayed {replayed} trace lines; operator requests {}", if operator.is_some() { "need the token" } else { "refused: SUTURE_OPERATOR_TOKEN is not set" });
     // Requests that were waiting when the service stopped are posted again.
