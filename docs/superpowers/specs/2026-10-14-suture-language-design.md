@@ -1308,3 +1308,36 @@ D12 says a deploy is refused until every live break has an explicit resolution. 
 - A removed kind with live units, a changed type and an added attribute without a default are each refused. With a default, the attribute is filled.
 - After a deploy, a new need creates parts on live units, and a pending request is answered as before.
 - A restart replays across the deploy to the same state. The same version with other content is refused.
+
+## Appendix N. Prototype slice 13: data marks and the manifest (2026-10-18)
+
+D13 asks for least authority: an adapter sees only the fields its effect declares, and `secret` values never enter the journal. Slice 13 builds the marks of §3.2 and §6, the explicit grant of a marked field to an adapter, and the manifest.
+
+### N.1 What slice 13 adds
+
+| Added in slice 13 | Still waits |
+|---|---|
+| `card: Text secret`, `address: Text personal`: marks on attributes | per-customer keys for personal data, so that erasure works |
+| a secret is kept out of the unit, the journal, the log, the trace and explanations; the unit holds a reference | a production secret store (Vault, a KMS) |
+| `allow ⟨adapter⟩ to receive ⟨Kind⟩'s ⟨attr⟩[, …]`: a marked field is sent only where it is granted | masking in adapters' own logs |
+| personal values masked in the trace, explanations and the service's reads | |
+| the manifest: `suture build` prints, and writes beside the program file, what each adapter receives (with its marks) and may answer, the roles and what is admitted | |
+| a served program keeps its secrets in `secrets.json` in the state directory, readable only by its user | |
+
+### N.2 Semantics that slice 13 settles
+
+1. **Marks.** An attribute may be marked `secret` or `personal`, after its type and before a default or formula: `address: Text personal = customer's address`. Only a `Text` attribute can be secret. A list, a reference or a set cannot be marked.
+2. **A secret is never compared.** A rule, a condition (of a need, a `uses`, an `admit`, a definition, a goal or a reaction), a preference, a decision's scope and a total cannot read a secret. A formula can copy a secret only into another secret. A secret cannot be sourced, and a pool cannot be keyed by it. Each is a compile error naming the attribute.
+3. **A marked field is granted.** An effect whose `sends` reads a secret or personal attribute needs `allow ⟨adapter⟩ to receive ⟨Kind⟩'s ⟨attr⟩`, naming the effect's adapter and the attribute as the kind declares it. Without it, the effect is a compile error that says what to write. A grant that no effect uses is a warning. An adapter whose answer sets a secret attribute (`reports issued with token`) needs no grant: it is the source of the value.
+4. **A secret is held by reference.** When a secret value comes in (with a new entity, a change or an answer), the runtime keeps it in its secret store and puts a reference (`secret:⟨n⟩`, numbered in arrival order) in the unit. Steps, the journal, the log, the trace and explanations only ever see the reference, shown as `(secret)`. Only a request posted to an adapter that was granted the field carries the value itself.
+5. **Personal values are masked** as `(personal)` in the trace, in explanations and in the service's `/units`, `/trace` and `/pending` reads. They are kept as they are in the unit and the log, which replay needs. A request to a granted adapter carries the value.
+6. **The secret store.** A scenario or `suture run` keeps secrets in memory. `suture serve` keeps them in `⟨state⟩/secrets.json`, created with mode 0600 and synced before the log line that refers to them is written. A restart reads it back. A log line whose reference is missing from the store is an error at replay.
+7. **The manifest** is derived from the program: for each adapter, what it receives (`Payment.amount`, `Order.card (secret)`), what it may answer, with the data each answer carries; then the roles and what is admitted. `suture build` prints it and writes it as `⟨module⟩-v⟨n⟩.manifest`, for the security review of a deploy.
+
+### N.3 Acceptance
+
+- A rule, condition, preference or formula reading a secret is refused, as is a secret that is not `Text`.
+- An effect sending a marked field without a grant is refused, with the `allow` line to write.
+- A secret given at creation reaches the granted adapter, and appears nowhere else: not in the unit, the log, the trace or the explanation. A restart reads it back from `secrets.json`.
+- A personal value is masked in the trace and explanations, and sent to its granted adapter.
+- `suture build` prints and writes the manifest.
