@@ -10,16 +10,18 @@ Suture is a v0 prototype: a Rust compiler and runtime, a guide whose every examp
 
 Suture is not infrastructure, and it does not replace your databases or providers. It replaces the code in the middle: the services written to coordinate steps, call providers, retry, compensate, check permissions, keep a state machine per entity and log what happened. Today, that code is most of a backend team's work.
 
-![Where Suture fits: infrastructure deploys it; Suture holds the business logic; it reaches outside services through adapters, decision models through `decide`, and takes admitted inputs from callers](docs/architecture.svg)
+![Suture runs as pods in a Kubernetes cluster that Terraform provisions. Its runtime pods sit in the middle and link every other pod: platform services, your services and adapters, the ingress, and decision models served by vLLM or SGLang on a GPU node pool](docs/architecture.svg)
 
-| Layer | Who does it | What it is responsible for |
+Everything stands on the same base: Terraform provisions the cluster and its CPU and GPU node pools, and Kubernetes schedules every pod. Suture's runtime pods, with their journal on a persistent volume, are the one place that links all the others:
+
+| Around Suture | Runs as | Linked by |
 |---|---|---|
-| infrastructure | Terraform, Kubernetes, your cloud | machines, networks, deploying and scaling the runtime |
-| outside services | databases, caches, secret managers, Prometheus, payment, mail and carrier providers | storing data, holding secrets, metrics, the actual work in the world |
-| **business logic** | **Suture** | what has to happen, in which order, under which rules, by whom, until which goal, and what to do when something fails |
-| decision models | an inference engine such as vLLM or SGLang, or a hosted API | picking among allowed options where the program asks for it |
+| callers: apps, staff tools, partner systems | outside, through the ingress | `admit`: only admitted inputs get in |
+| platform services: PostgreSQL, Redis, Vault, Prometheus | pods | `source` for facts; API keys from Vault as environment variables; metrics and alerts out |
+| your services, and adapters to payment, mail and carrier providers | pods, which call out | `effect`, with a deadline and the outcomes it may report |
+| decision models | vLLM or SGLang pods on GPU nodes, or a hosted API | `decide`: pick one of the options the rules allow |
 
-The program talks to all of these only through declared boundaries: an `effect` or a `source` names an adapter, a `decide` names a model, and an `admit` names a role. Nothing else leaves the runtime, so the program says, in one place, everything the system does and with whom.
+Suture links services; it does not prompt a model. There are no prompts and no generated code. A model only ever picks among options the rules already allow, every pick is checked and journaled, and with every model off, `prefer` decides and the system still runs. The compute engines are the motor for those picks, not the logic.
 
 In v0, adapters and models are played by scenarios (or registered in Rust), and model backends can call a real API. A long-running host with a durable journal, an input API and real adapters is the next slice.
 
