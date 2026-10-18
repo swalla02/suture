@@ -155,8 +155,8 @@ impl FileJournal {
         let (records, keep) = committed_prefix(&bytes)?;
         if let Some(Record::Header { format, .. }) = records.first()
             && *format > FORMAT {
-                return Err(JournalError::Format(format!("journal format {format} is newer than this build's {FORMAT}")));
-            }
+            return Err(JournalError::Format(format!("journal format {format} is newer than this build's {FORMAT}")));
+        }
         if keep != bytes.len() {
             file.set_len(keep as u64)?;
             file.sync_all()?;

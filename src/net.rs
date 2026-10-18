@@ -150,8 +150,8 @@ impl<'s> NetBuilder<'s> {
         for s in slots {
             if let Slot::Var(v) = s
                 && v.0 >= n {
-                    return Err(NetError::UnknownVar(v.0));
-                }
+                return Err(NetError::UnknownVar(v.0));
+            }
         }
         for (a, b) in &self.data.links {
             for v in [a, b] {

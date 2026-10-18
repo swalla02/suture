@@ -38,6 +38,8 @@ Each unit has one owner among the live pods, chosen by a hash of its label. Only
 
 A pod beats every second, writing the time into `pods/⟨name⟩`. A pod whose last beat is 10 seconds old is no longer live: its units go to the others, which post their waiting requests. A pod that stops cleanly removes its file, and its units move at once.
 
+A pod that cannot write the log stops taking inputs and stops beating, so its units go to the others; restart it, and it replays the log.
+
 During a handover, two pods may both post the same request. A request carries its key (chapter 17), and an adapter must answer the same key once. This was already so across a restart.
 
 ## Timers

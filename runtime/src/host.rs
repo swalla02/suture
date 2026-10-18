@@ -878,8 +878,8 @@ impl Host {
         for g in self.prog.globals.clone() {
             if self.unit(&g).is_none()
                 && let Err(e) = self.create(&g, &g, &[]) {
-                    first_error.get_or_insert(e);
-                }
+                first_error.get_or_insert(e);
+            }
         }
         first_error.map_or(Ok(()), Err)
     }
@@ -982,8 +982,8 @@ impl Host {
             let within = self.prog.goals.get(g as usize).and_then(|x| x.within_secs);
             if let Some(secs) = within
                 && self.goal_timers.insert((label.to_string(), g)) {
-                    self.schedule(self.now + secs, Timer::Goal(label.to_string(), g));
-                }
+                self.schedule(self.now + secs, Timer::Goal(label.to_string(), g));
+            }
         }
         Ok(())
     }

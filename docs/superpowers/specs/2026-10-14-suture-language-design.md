@@ -1377,3 +1377,5 @@ Slice 11 serves a program as one process. Slice 14 runs it as several pods over 
 - A secret given to one pod reaches its adapter through the pod that owns its unit.
 - A timer that falls due fires once, whichever pods tick.
 - A line cut short by a pod that crashed is cut off by the next pod to take the lock.
+
+**O.2.10 Review updates.** Every request, not only a read, catches up with the log first, so an input is read against the units and the program other pods made. A pod whose write failed takes nothing, serves nothing and stops beating, so its units go to the others; it comes back only by restarting and replaying the log. A pod forgets the requests it posted for units it no longer owns, so it posts them again if they come back. A pod beats while it posts, so a run of slow posts does not let its beat lapse.

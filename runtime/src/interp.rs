@@ -816,8 +816,8 @@ fn answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[(Strin
     }
     if success
         && let Some((name, _)) = effect.data.iter().find(|(n, _)| !data.iter().any(|(d, _)| d == n)) {
-            return Err(refuse(format!("the answer is missing {name}")));
-        }
+        return Err(refuse(format!("the answer is missing {name}")));
+    }
     let mut t = u.root.clone();
     {
         let n = node_at_mut(&mut t, &at);
@@ -1598,8 +1598,8 @@ fn fetch_due(u: &mut Unit, id: &str) {
     let Some(key) = id.strip_suffix(":again") else { return };
     if let Some((at, attr)) = find_fetch(u, key, false)
         && let Some(f) = node_at_mut(&mut u.root, &at).fetched.get_mut(&attr) {
-            f.failed = false;
-        }
+        f.failed = false;
+    }
 }
 
 /// Records each goal with a deadline the first time the root matches its

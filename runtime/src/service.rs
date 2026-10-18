@@ -273,23 +273,31 @@ impl Service {
     /// Runs `f` holding the log's lock, after reading what other pods
     /// appended (appendix O.2.1). It may be held again inside `f`.
     fn locked<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, String>) -> Result<T, String> {
+        // A pod whose write failed holds an input the log does not: it must
+        // not build on the log any more, only restart and replay it.
+        if let Some(why) = &self.broken {
+            return Err(format!("the log could not be written ({why}), so this pod takes nothing until it restarts"));
+        }
         if self.held == 0
             && let Some(l) = &self.lock {
-                l.lock().map_err(|e| format!("the log's lock: {e}"))?;
-            }
+            l.lock().map_err(|e| format!("the log's lock: {e}"))?;
+        }
         self.held += 1;
         let r = if self.held == 1 { self.catch_up(true) } else { Ok(()) }.and_then(|_| f(self));
         self.held -= 1;
         if self.held == 0
             && let Some(l) = &self.lock {
-                let _ = l.unlock();
-            }
+            let _ = l.unlock();
+        }
         r
     }
 
     /// Reads what other pods appended to the log, so a read sees every
     /// input taken before it (appendix O.2.2).
     pub fn refresh(&mut self) -> Result<(), String> {
+        if let Some(why) = &self.broken {
+            return Err(format!("the log could not be written ({why}), so this pod serves nothing until it restarts"));
+        }
         if self.held > 0 {
             return Ok(());
         }
@@ -579,6 +587,12 @@ impl Service {
 
     /// Fires the timers that fell due by Unix time `now`, as one `pass` (appendix L.2.4).
     pub fn tick(&mut self, now: u64) -> Result<Vec<String>, String> {
+        // A broken pod stops beating, so its units go to the others.
+        if let Some(why) = &self.broken {
+            let why = why.clone();
+            self.leave();
+            return Err(format!("the log could not be written ({why}), so this pod takes nothing until it restarts"));
+        }
         self.beat(now)?;
         let elapsed = self.elapsed(now);
         // A clock that stepped back waits until it is past the runtime clock
@@ -689,9 +703,9 @@ impl Service {
         // The secrets a line refers to are on disk before the line is.
         if self.host.secrets.len() != self.kept_secrets
             && let Err(e) = self.keep_secrets() {
-                self.broken = Some(e.clone());
-                return Err(format!("the secret store could not be written ({e}), so no input is taken until the service restarts"));
-            }
+            self.broken = Some(e.clone());
+            return Err(format!("the secret store could not be written ({e}), so no input is taken until the service restarts"));
+        }
         let Some(log) = self.log.as_mut() else { return Ok(()) };
         let mut text = String::new();
         for r in records {
@@ -742,13 +756,24 @@ impl Service {
     /// adapter, if `adapters.json` names it. A reply with an outcome is the
     /// answer; anything else leaves the request waiting (appendix L.2.8).
     pub fn post_new(&mut self, now: u64) -> Result<(), String> {
+        if self.broken.is_some() {
+            return Ok(());
+        }
         // A pod posts the requests of its own units only (appendix O.2.5).
         let pods = self.pods(now);
+        // A request whose unit went to another pod, or that is answered, is
+        // forgotten, so it is posted again if its unit comes back (O.2.6).
+        let keep: BTreeSet<String> = self.host.pending().into_iter().filter(|a| owner(&a.label, &pods) == Some(&self.pod)).map(|a| a.key.clone()).collect();
+        self.posted.retain(|k| keep.contains(k));
+        self.retry.retain(|k, _| keep.contains(k));
+        let began = std::time::Instant::now();
         loop {
             let due = |k: &String| self.retry.get(k).is_none_or(|at| *at <= now);
             let mine = |a: &Ask| owner(&a.label, &pods) == Some(&self.pod);
             let next = self.host.pending().into_iter().find(|a| self.adapters.contains_key(&a.adapter) && !self.posted.contains(&a.key) && due(&a.key) && mine(a)).cloned();
             let Some(ask) = next else { return Ok(()) };
+            // A long run of slow posts does not let this pod's beat lapse.
+            self.beat(now + began.elapsed().as_secs())?;
             self.posted.insert(ask.key.clone());
             self.retry.remove(&ask.key);
             let failed = |s: &mut Service, why: String| {

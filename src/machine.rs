@@ -624,8 +624,8 @@ impl Machine {
         for &(a, b) in conns {
             if let (Some(ta), Some(tb)) = (self.port_type(net, a), self.port_type(net, b))
                 && !self.prog.sig.compatible(ta, tb) {
-                    return Err((self.describe_ep(net, a), self.describe_ep(net, b)));
-                }
+                return Err((self.describe_ep(net, a), self.describe_ep(net, b)));
+            }
         }
         Ok(())
     }
@@ -732,8 +732,8 @@ impl Machine {
     pub fn inject(&mut self, inj: Injection) -> Result<InjectReceipt, InjectError> {
         if let Some(k) = &inj.key
             && let Some(&seq) = self.keys.get(k) {
-                return Ok(InjectReceipt { seq, new_holes: vec![], duplicate: true });
-            }
+            return Ok(InjectReceipt { seq, new_holes: vec![], duplicate: true });
+        }
         let seq = self.inject_seq;
         let plan = self.plan_inject(&inj, seq)?;
         let new_holes = plan.created.iter().map(|(v, h, _)| (*v, *h)).collect();
@@ -780,8 +780,8 @@ impl Machine {
         for l in &labels {
             if let Some(h) = self.graph.hole_by_label(l)
                 && !consumed.contains(&h) {
-                    return Err(InjectError::LabelInUse(l.to_string()));
-                }
+                return Err(InjectError::LabelInUse(l.to_string()));
+            }
         }
         let ext: Vec<ExtKind> = targets
             .iter()

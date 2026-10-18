@@ -121,6 +121,36 @@ fn each_request_is_posted_by_its_owner_and_moves_when_a_pod_stops() {
     assert_eq!(a.pods(later), ["a"]);
     let again: BTreeSet<String> = fa.0.borrow().iter().cloned().collect();
     assert_eq!(again, all, "a posts b's waiting requests");
+    // b comes back and takes its units again, then stops: a posts them once more.
+    let back = later + 1;
+    b.tick(back).unwrap();
+    a.tick(back).unwrap();
+    fa.0.borrow_mut().clear();
+    let gone = back + service::BEAT_SECS + 1;
+    a.tick(gone).unwrap();
+    let theirs: BTreeSet<String> = all.iter().filter(|k| service::owner(k.split('/').next().unwrap(), &pods).map(String::as_str) == Some("b")).cloned().collect();
+    assert_eq!(fa.0.borrow().iter().cloned().collect::<BTreeSet<_>>(), theirs, "a forgot what it posted for units it gave up");
+}
+
+#[test]
+fn an_input_is_read_against_what_other_pods_made() {
+    let p = tickets();
+    let dir = state("http");
+    let mut a = open(&p, &dir, "a", T0);
+    let mut b = open(&p, &dir, "b", T0);
+    setup(&p, &mut a);
+    let sat = world(&p, "Session", "Sat", json!({ "show": "Hamlet", "day": "Saturday", "seats": 100 }));
+    assert_eq!(a.input(sat, T0 + 1).unwrap().refused, None);
+    let req = suture_runtime::http::Request {
+        method: "POST".into(),
+        path: "/inputs".into(),
+        query: String::new(),
+        headers: vec![("suture-caller".into(), "box Kim".into())],
+        body: br#"{"change": {"target": "Sat", "attr": "seats", "value": 90}}"#.to_vec(),
+    };
+    let (status, body) = suture_runtime::http::handle(&mut b, &req, None, T0 + 2);
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(b.host.unit("Sat").unwrap().root.attrs.get("seats"), Some(&suture_runtime::state::Val::Count(90)));
 }
 
 #[test]

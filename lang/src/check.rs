@@ -346,8 +346,8 @@ fn across(p: &Program, from: &str, of: &NounPhrase) -> Option<(String, Option<St
         (Head::It | Head::Each(_) | Head::The(_), [w]) => {
             if let Head::Each(k) | Head::The(k) = &of.head
                 && k != from {
-                    return None;
-                }
+                return None;
+            }
             if plural_kind(p, from, w).is_some() {
                 return None;
             }
@@ -987,9 +987,9 @@ impl Checker {
         let kind = p.kinds.iter_mut().find(|k| k.name == part).expect("declared kinds are compiled");
         if let Some(o) = &kind.owner
             && o.kind != owner {
-                self.errors.push(err(at, format!("{part} is already a part of {}; a part has one owner", o.kind)));
-                return false;
-            }
+            self.errors.push(err(at, format!("{part} is already a part of {}; a part has one owner", o.kind)));
+            return false;
+        }
         kind.owner = Some(OwnerRef { attr: refs[0].to_string(), kind: owner.to_string() });
         true
     }
@@ -1349,14 +1349,14 @@ impl Checker {
         for d in &src.decides {
             if let Some(point) = &d.point
                 && !points.iter().any(|c| c.name == *point) {
-                    let msg = match point.split_once("'s ") {
-                        Some((k, x)) if p.source_of(k, x).is_some() => format!("{point} has one source, so there is no choice to decide"),
-                        Some(_) => format!("{point} has no sources, so there is no choice to decide"),
-                        None => format!("no `uses`, slot or source picks {}, so there is no choice to decide", a(point)),
-                    };
-                    self.errors.push(err(&d.at, msg));
-                    continue;
-                }
+                let msg = match point.split_once("'s ") {
+                    Some((k, x)) if p.source_of(k, x).is_some() => format!("{point} has one source, so there is no choice to decide"),
+                    Some(_) => format!("{point} has no sources, so there is no choice to decide"),
+                    None => format!("no `uses`, slot or source picks {}, so there is no choice to decide", a(point)),
+                };
+                self.errors.push(err(&d.at, msg));
+                continue;
+            }
             let scope = match &d.scope {
                 None => None,
                 Some(w) => match p.kinds.iter().find(|k| k.plural == *w || k.name == *w) {
@@ -1749,9 +1749,9 @@ impl Checker {
             for a in &r.actions {
                 if let Some((_, End::Node(k))) = self.np(p, &r.at, &r.kind, &a.target)
                     && p.source_of(&k, &a.attr).is_some() {
-                        self.errors.push(err(&r.at, format!("{k}.{} comes from its source; a reaction cannot set it", a.attr)));
-                        continue;
-                    }
+                    self.errors.push(err(&r.at, format!("{k}.{} comes from its source; a reaction cannot set it", a.attr)));
+                    continue;
+                }
                 match self.np(p, &r.at, &r.kind, &a.target) {
                     Some((target, End::Node(k) | End::Ref(k))) if through_ref(&target) || matches!(target.steps.last(), Some(Step::Attr(_))) => {
                         self.errors.push(err(&r.at, format!("`{}` is a shared {k}; a reaction changes only its own unit", show(&a.target))));
@@ -1858,9 +1858,9 @@ impl Checker {
                 }
                 if let Admitted::Change { kind, attr } = &what
                     && let Some(why) = unchangeable(p, kind, attr) {
-                        self.errors.push(err(&a.at, format!("`admit {}`: {why}", a.source)));
-                        continue;
-                    }
+                    self.errors.push(err(&a.at, format!("`admit {}`: {why}", a.source)));
+                    continue;
+                }
                 self.caller = Some(caller.clone());
                 let cond = match &a.cond {
                     Some(c) => match self.cond(p, &a.at, &k, c) {
@@ -2139,9 +2139,9 @@ impl Checker {
         }
         if let (false, Head::Each(k)) = (scoped, &np.head)
             && k != from {
-                self.errors.push(err(at, format!("`each {k}`: this sentence is about {}", a(from))));
-                return None;
-            }
+            self.errors.push(err(at, format!("`each {k}`: this sentence is about {}", a(from))));
+            return None;
+        }
         if let (false, Head::The(k)) = (scoped, &np.head) {
             // The subject, else an owner of that kind, else the subject's or
             // an owner's unique attribute of that kind (appendix F.2.4). A

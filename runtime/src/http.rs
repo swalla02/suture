@@ -66,10 +66,11 @@ fn decoded(path: &str) -> String {
 pub fn handle(svc: &mut Service, req: &Request, operator: Option<&str>, now: u64) -> (u16, Value) {
     let error = |status: u16, msg: String| (status, json!({ "error": msg }));
     // A read first catches up with what other pods appended (appendix O.2.2).
-    if req.method == "GET"
-        && let Err(e) = svc.refresh() {
-            return error(500, e);
-        }
+    // Any request first catches up with what other pods appended, so an
+    // input is read against the units and the program they made (appendix O.2.2).
+    if let Err(e) = svc.refresh() {
+        return error(503, e);
+    }
     match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/health") => (200, json!({ "ok": true, "module": svc.host.prog.module, "version": svc.host.prog.version, "pod": svc.pod, "pods": svc.pods(now) })),
         ("GET", "/pending") => {

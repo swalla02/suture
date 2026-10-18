@@ -131,8 +131,8 @@ fn step(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {
         let saved = c.clone();
         if let Ok(short) = short_expect(c)
             && c.at_end() {
-                return Ok(short);
-            }
+            return Ok(short);
+        }
         *c = saved;
         return expect_cond(c);
     }
@@ -152,26 +152,26 @@ fn step(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {
     }
     if c.is_word("model")
         && let Some(Tok::Str(model)) = c.peek_at(1) {
-            let model = model.clone();
-            c.next();
-            c.next();
-            let answers = if c.eat_word("declines") {
-                vec![ModelAnswer::Decline]
-            } else if c.eat_word("is") {
-                c.expect_word("late")?;
-                vec![ModelAnswer::Late]
-            } else {
-                c.expect_word("picks")?;
-                let mut picks = vec![ModelAnswer::Pick(c.word()?)];
-                while c.eat_sym(',') {
-                    c.expect_word("then")?;
-                    picks.push(ModelAnswer::Pick(c.word()?));
-                }
-                picks
-            };
-            c.expect_end()?;
-            return Ok(ScenarioStep::Model { model, answers });
-        }
+        let model = model.clone();
+        c.next();
+        c.next();
+        let answers = if c.eat_word("declines") {
+            vec![ModelAnswer::Decline]
+        } else if c.eat_word("is") {
+            c.expect_word("late")?;
+            vec![ModelAnswer::Late]
+        } else {
+            c.expect_word("picks")?;
+            let mut picks = vec![ModelAnswer::Pick(c.word()?)];
+            while c.eat_sym(',') {
+                c.expect_word("then")?;
+                picks.push(ModelAnswer::Pick(c.word()?));
+            }
+            picks
+        };
+        c.expect_end()?;
+        return Ok(ScenarioStep::Model { model, answers });
+    }
     let by = if c.is_word("a") || c.is_word("an") || matches!(c.peek_at(1), Some(Tok::Word(w)) if w == "answers") {
         None
     } else {
