@@ -208,3 +208,15 @@ scenario "a return item for a unit of another order is refused":
   and    staff Sam authorizes a new Rma A1 with order O1 and location L1
   and    staff Sam authorizes a new Item I1 with rma A1 and unit U2
            is refused at the gate
+
+scenario "an item in transit is accepted, and received when it arrives":
+  given  a Customer Ada with name Ada
+  and    a Location L1 with name Main
+  when   staff Sam adds a new Order O1 with customer Ada and number R100
+  and    staff Sam adds a new Unit U1 with order O1, number U100 and price 30 EUR
+  and    staff Sam authorizes a new Rma A1 with order O1 and location L1
+  and    staff Sam authorizes a new Item I1 with rma A1 and unit U1
+  and    staff Sam forwards I1
+  expect I1 is accepted
+  when   staff Sam receives I1
+  expect I1's Restock is sent

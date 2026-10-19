@@ -17,14 +17,14 @@ kind Unit     { order: Order, number: Text, price: Money, discount: Money = 0 EU
 kind Rma      { order: Order, location: Location, cancelled: Bool = no }
 kind Item     { rma: Rma, unit: Unit, preferred: Text = "none",
                 amount: Money = unit's price - unit's discount,
-                received: Bool = no, given: Bool = no, lost: Bool = no, wrong: Bool = no, short: Bool = no,
+                received: Bool = no, given: Bool = no, lost: Bool = no, wrong: Bool = no, short: Bool = no, transit: Bool = no,
                 expired: Bool = no, approved: Bool = no, refused: Bool = no, reimbursing: Bool = no }
 kind Inspection { item: Item }
 kind Refund   { item: Item, amount: Money = item's amount }
 kind Credit   { item: Item, amount: Money = item's amount }
 kind Restock  { item: Item }
 
-define: an Item is back when it is received or it is given or it is lost or it is wrong or it is short
+define: an Item is back when it is received or it is given or it is lost or it is wrong or it is short or it is transit
 define: an Item is cancelled when its rma is cancelled and it is not back and it is not expired
 define: an Item is awaiting when it is not back and it is not expired and it is not cancelled
 define: an Item is recent when its Inspection's created - its unit's order's created is less than 365 days
@@ -69,6 +69,7 @@ admit give Item by staff where the Item is awaiting
 admit lose Item by staff where the Item is awaiting
 admit mismatch Item by staff where the Item is awaiting
 admit shortship Item by staff where the Item is awaiting
+admit forward Item by staff where the Item is awaiting
 admit expire Item by staff where the Item is awaiting
 admit accept Item by staff where the Item is not rejected
 admit reject Item by staff where the Item is not rejected
@@ -81,6 +82,7 @@ when a staff gives an Item: the Item is given
 when a staff loses an Item: the Item is lost
 when a staff mismatches an Item: the Item is wrong
 when a staff shortships an Item: the Item is short
+when a staff forwards an Item: the Item is transit
 when a staff expires an Item: the Item is expired
 when a staff accepts an Item: the Item is approved and the Item is not refused
 when a staff rejects an Item: the Item is refused and the Item is not approved
