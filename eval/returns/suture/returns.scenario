@@ -1,0 +1,200 @@
+-- Behaviours from Solidus's specs (core/spec/models/spree/return_item_spec.rb,
+-- reimbursement/reimbursement_type_engine_spec.rb, return_authorization_spec.rb,
+-- return_item/eligibility_validator/*), against simulated payments, store
+-- credits and stock.
+scenario "a received item is accepted, and refunded to the original payment":
+  given  a Customer Ada with name Ada
+  and    a Location L1 with name Main
+  when   staff Sam adds a new Order O1 with customer Ada and number R100
+  and    staff Sam adds a new Unit U1 with order O1, number U100 and price 30 EUR
+  and    staff Sam authorizes a new Rma A1 with order O1 and location L1
+  and    staff Sam authorizes a new Item I1 with rma A1 and unit U1
+  and    staff Sam receives I1
+  expect I1 is accepted
+  when   staff Sam reimburses I1
+  expect I1's Refund is sent
+  when   payments answers refunded
+  expect I1 is reimbursed
+
+scenario "an item is refunded less its share of the order's promotions":
+  given  a Customer Ada with name Ada
+  and    a Location L1 with name Main
+  when   staff Sam adds a new Order O1 with customer Ada and number R100
+  and    staff Sam adds a new Unit U1 with order O1, number U100, price 30 EUR and discount 3 EUR
+  and    staff Sam authorizes a new Rma A1 with order O1 and location L1
+  and    staff Sam authorizes a new Item I1 with rma A1 and unit U1
+  expect I1's amount is 27 EUR
+
+scenario "past 90 days since shipping, the item is paid back in store credit":
+  given  a Customer Ada with name Ada
+  and    a Location L1 with name Main
+  when   staff Sam adds a new Order O1 with customer Ada and number R100
+  and    staff Sam adds a new Unit U1 with order O1, number U100 and price 30 EUR
+  and    staff Sam authorizes a new Rma A1 with order O1 and location L1
+  and    staff Sam authorizes a new Item I1 with rma A1 and unit U1
+  and    staff Sam receives I1
+  and    91 days pass
+  and    staff Sam reimburses I1
+  and    1 minute passes
+  expect I1's Credit is sent
+  when   credits answers credited
+  expect I1 is reimbursed
+
+scenario "a preferred store credit is used within the window too":
+  given  a Customer Ada with name Ada
+  and    a Location L1 with name Main
+  when   staff Sam adds a new Order O1 with customer Ada and number R100
+  and    staff Sam adds a new Unit U1 with order O1, number U100 and price 30 EUR
+  and    staff Sam authorizes a new Rma A1 with order O1 and location L1
+  and    staff Sam authorizes a new Item I1 with rma A1, unit U1 and preferred credit
+  and    staff Sam receives I1
+  and    staff Sam reimburses I1
+  and    1 minute passes
+  expect I1's Credit is sent
+
+scenario "an item received more than 365 days after the order completed is rejected":
+  given  a Customer Ada with name Ada
+  and    a Location L1 with name Main
+  when   staff Sam adds a new Order O1 with customer Ada and number R100
+  and    staff Sam adds a new Unit U1 with order O1, number U100 and price 30 EUR
+  and    staff Sam authorizes a new Rma A1 with order O1 and location L1
+  and    staff Sam authorizes a new Item I1 with rma A1 and unit U1
+  and    366 days pass
+  and    staff Sam receives I1
+  expect I1 is rejected
+  when   staff Sam reimburses I1
+           is refused at the gate
+  when   staff Sam accepts I1
+           is refused at the gate
+
+scenario "an item accepted by staff before it arrives stays accepted":
+  given  a Customer Ada with name Ada
+  and    a Location L1 with name Main
+  when   staff Sam adds a new Order O1 with customer Ada and number R100
+  and    staff Sam adds a new Unit U1 with order O1, number U100 and price 30 EUR
+  and    staff Sam authorizes a new Rma A1 with order O1 and location L1
+  and    staff Sam authorizes a new Item I1 with rma A1 and unit U1
+  and    staff Sam accepts I1
+  and    366 days pass
+  and    staff Sam receives I1
+  expect I1 is accepted
+  expect I1 is not rejected
+
+scenario "a rejected item is never reimbursed":
+  given  a Customer Ada with name Ada
+  and    a Location L1 with name Main
+  when   staff Sam adds a new Order O1 with customer Ada and number R100
+  and    staff Sam adds a new Unit U1 with order O1, number U100 and price 30 EUR
+  and    staff Sam authorizes a new Rma A1 with order O1 and location L1
+  and    staff Sam authorizes a new Item I1 with rma A1 and unit U1
+  and    staff Sam rejects I1
+  and    staff Sam receives I1
+  expect I1 is rejected
+  when   staff Sam reimburses I1
+           is refused at the gate
+
+scenario "a received item is restocked at a location that restocks":
+  given  a Customer Ada with name Ada
+  and    a Location L1 with name Main
+  when   staff Sam adds a new Order O1 with customer Ada and number R100
+  and    staff Sam adds a new Unit U1 with order O1, number U100 and price 30 EUR
+  and    staff Sam authorizes a new Rma A1 with order O1 and location L1
+  and    staff Sam authorizes a new Item I1 with rma A1 and unit U1
+  and    staff Sam receives I1
+  expect I1's Restock is sent
+
+scenario "no restock at a location that does not restock, or for an untracked unit":
+  given  a Customer Ada with name Ada
+  and    a Location L1 with name Main and restocks no
+  and    a Location L2 with name Side
+  when   staff Sam adds a new Order O1 with customer Ada and number R100
+  and    staff Sam adds a new Unit U1 with order O1, number U100 and price 30 EUR
+  and    staff Sam adds a new Unit U2 with order O1, number U200, price 30 EUR and tracked no
+  and    staff Sam authorizes a new Rma A1 with order O1 and location L1
+  and    staff Sam authorizes a new Rma A2 with order O1 and location L2
+  and    staff Sam authorizes a new Item I1 with rma A1 and unit U1
+  and    staff Sam authorizes a new Item I2 with rma A2 and unit U2
+  and    staff Sam receives I1
+  and    staff Sam receives I2
+  expect I1's Restock is not sent
+  expect I2 has no Restock
+
+scenario "an item lost in transit is accepted without a restock, and can still be received":
+  given  a Customer Ada with name Ada
+  and    a Location L1 with name Main
+  when   staff Sam adds a new Order O1 with customer Ada and number R100
+  and    staff Sam adds a new Unit U1 with order O1, number U100 and price 30 EUR
+  and    staff Sam authorizes a new Rma A1 with order O1 and location L1
+  and    staff Sam authorizes a new Item I1 with rma A1 and unit U1
+  and    staff Sam loses I1
+  expect I1 is accepted
+  expect I1 has no Restock
+  when   staff Sam gives I1
+           is refused at the gate
+  when   staff Sam receives I1
+  expect I1's Restock is sent
+
+scenario "the items of a cancelled authorization are cancelled and cannot be received":
+  given  a Customer Ada with name Ada
+  and    a Location L1 with name Main
+  when   staff Sam adds a new Order O1 with customer Ada and number R100
+  and    staff Sam adds a new Unit U1 with order O1, number U100 and price 30 EUR
+  and    staff Sam authorizes a new Rma A1 with order O1 and location L1
+  and    staff Sam authorizes a new Item I1 with rma A1 and unit U1
+  and    staff Sam changes A1's cancelled to yes
+  expect I1 is cancelled
+  when   staff Sam receives I1
+           is refused at the gate
+
+scenario "an order with nothing shipped cannot be authorized for return":
+  given  a Customer Ada with name Ada
+  and    a Location L1 with name Main
+  when   staff Sam adds a new Order O1 with customer Ada, number R100 and shipped no
+  and    staff Sam authorizes a new Rma A1 with order O1 and location L1
+           is refused at the gate
+
+scenario "an unshipped unit waits for staff to decide, who may accept it":
+  given  a Customer Ada with name Ada
+  and    a Location L1 with name Main
+  when   staff Sam adds a new Order O1 with customer Ada and number R100
+  and    staff Sam adds a new Unit U1 with order O1, number U100, price 30 EUR and shipped no
+  and    staff Sam authorizes a new Rma A1 with order O1 and location L1
+  and    staff Sam authorizes a new Item I1 with rma A1 and unit U1
+  and    staff Sam receives I1
+  expect I1 is undecided
+  expect I1 is not rejected
+  when   staff Sam accepts I1
+  expect I1 is accepted
+
+scenario "an item of an order that is not complete is rejected":
+  given  a Customer Ada with name Ada
+  and    a Location L1 with name Main
+  when   staff Sam adds a new Order O1 with customer Ada, number R100 and complete no
+  and    staff Sam adds a new Unit U1 with order O1, number U100 and price 30 EUR
+  and    staff Sam authorizes a new Rma A1 with order O1 and location L1
+  and    staff Sam authorizes a new Item I1 with rma A1 and unit U1
+  and    staff Sam receives I1
+  expect I1 is rejected
+
+scenario "a preferred refund past 90 days is not paid at all":
+  given  a Customer Ada with name Ada
+  and    a Location L1 with name Main
+  when   staff Sam adds a new Order O1 with customer Ada and number R100
+  and    staff Sam adds a new Unit U1 with order O1, number U100 and price 30 EUR
+  and    staff Sam authorizes a new Rma A1 with order O1 and location L1
+  and    staff Sam authorizes a new Item I1 with rma A1, unit U1 and preferred refund
+  and    staff Sam receives I1
+  and    91 days pass
+  and    staff Sam reimburses I1
+  and    1 minute passes
+  expect I1 has no Refund
+  expect I1's Credit is not sent
+
+scenario "a cancelled authorization stays cancelled":
+  given  a Customer Ada with name Ada
+  and    a Location L1 with name Main
+  when   staff Sam adds a new Order O1 with customer Ada and number R100
+  and    staff Sam authorizes a new Rma A1 with order O1 and location L1
+  and    staff Sam changes A1's cancelled to yes
+  and    staff Sam changes A1's cancelled to no
+           is refused at the gate
