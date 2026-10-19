@@ -941,13 +941,16 @@ pub fn duration(secs: u64) -> String {
 }
 
 /// Applies the `when` reactions to an outcome (spec §3.3).
-/// Applies the reactions to an outcome, or with the caller's `role` to an
-/// admitted event: only those that name that role (appendix G.2.4).
-#[allow(clippy::too_many_arguments)]
 /// An admitted event's caller: its role, its unit if the role has a kind,
 /// and the data the event carries.
 type Sent<'a> = (&'a str, Option<&'a str>, &'a [(String, Val)]);
 
+/// The caller's unit and the data, for an event's actions (appendix Q.2.3).
+type Given<'a> = (Option<&'a str>, &'a [(String, Val)]);
+
+/// Applies the reactions to an outcome, or with the caller's `role` to an
+/// admitted event: only those that name that role (appendix G.2.4).
+#[allow(clippy::too_many_arguments)]
 fn react(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize], kind: &str, outcome: &str, event: Option<Sent>, notes: &mut Vec<String>) {
     let fits = |r: &&suture_lang::ir::Reaction| match event {
         None => r.by.is_empty(),
@@ -960,7 +963,7 @@ fn react(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize], kind: &st
 
 /// Applies actions at the node at `at`: a reaction's, or a source's
 /// `otherwise` (appendix I.2.6).
-fn apply(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize], actions: &[Action], event: Option<(Option<&str>, &[(String, Val)])>, notes: &mut Vec<String>) {
+fn apply(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize], actions: &[Action], event: Option<Given>, notes: &mut Vec<String>) {
     let (caller, data) = event.unwrap_or((None, &[]));
     {
         for a in actions {
