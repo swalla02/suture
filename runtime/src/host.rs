@@ -233,6 +233,13 @@ impl Host {
         }
         let part = part.unwrap_or_default().to_string();
         let msg = Msg::Event { verb: by.verb.clone(), by: format!("{} {}", by.role, by.name), part, data, facts };
+        let limit = self.machine.program().limits.max_payload_bytes;
+        let bytes = stamped(self.clock(), &msg.to_value()).encoded_len();
+        if bytes > limit {
+            let why = format!("the event would carry {bytes} bytes, and a message carries at most {limit}");
+            self.trace.push(format!("{target:<3} refused: {why}"));
+            return Err(format!("refused: {why}"));
+        }
         self.fits(&interp::step_at(&self.prog, &unit, &msg, self.clock()).unit)?;
         self.tell(target, &msg)?;
         let refused = self.unit(target).and_then(|u| u.notes.iter().find_map(|n| n.strip_prefix("refused ")?.split_once(": refused by rule ").map(|(_, r)| r.to_string())));
@@ -279,6 +286,8 @@ impl Host {
                 self.trace.push(format!("{target:<3} change refused: {r} would break rule {}", rule.name));
                 return Err(format!("refused by rule {}: {} (in {r})", rule.name, rule.paraphrase));
             }
+            // A reader keeps a copy of the changed facts, so it grows too.
+            self.fits(&after)?;
         }
         // Bindings already waiting get the change first, in arrival order
         // (appendix F.2.9); then each reader, in the order it started reading.

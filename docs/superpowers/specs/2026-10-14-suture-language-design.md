@@ -1504,7 +1504,7 @@ Four small gaps found along the way, each of which let a program or an input go 
 ### T.2 Semantics that slice 19 settles
 
 1. **Durations.** Every duration a program or a scenario names, in any unit, is at most 100 years (3 153 600 000 seconds). Larger ones, and ones whose seconds overflow, are compile errors that name the duration. The runtime adds durations to its clock without wrapping.
-2. **Unit size.** A unit is one payload, so it must fit the machine's payload limit (§A, 4096 bytes). A creation, an admitted change and an admitted event are checked as the unit would be after their step: one that would not fit is refused, `refused: ⟨label⟩ would hold ⟨n⟩ bytes, and a unit holds at most 4096`, and nothing is created or changed.
+2. **Unit size.** A unit is one payload, so it must fit the machine's payload limit (§A, 4096 bytes). A creation, an admitted change and an admitted event are checked as the unit would be after their step: one that would not fit is refused, `refused: ⟨label⟩ would hold ⟨n⟩ bytes, and a unit holds at most 4096`, and nothing is created or changed. A change is checked in every unit that carries the changed facts too, and an event's message, with its data, must fit the limit as well. The unit counts its carried facts and the notes of its last step.
 3. **Checked once.** `attempts` must be at least 1. A choice (a slot, or a kind picked with `uses`, per `for a ⟨element⟩`) has at most one `prefer`; a second is an error naming the first's line. A kind's plural may be neither another kind's plural nor another kind's name, so `all ⟨Plural⟩` and the like name one kind; a kind may be its own plural (`kind Sheep (plural Sheep)`).
 
 ### T.3 Acceptance

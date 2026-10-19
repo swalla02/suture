@@ -10,7 +10,7 @@ Suture v0 is a prototype. Everything earlier in this guide runs and is tested. T
 - **Resolutions are few.** A rule over totals (`per-group` or `global`) cannot apply from a version, and a value cannot be migrated by a formula; change the rule, or give the attribute a default. A changed formula keeps the values it gave on live units.
 - **Totals are not checked at a deploy.** A new or tighter total (`per-group` or `global`) is checked from the next take on; a renamed `checked globally` total starts again from zero.
 - **Whole seconds.** The clock and every timer count whole seconds.
-- **Small units.** A unit, with its parts and lists, holds at most 4096 bytes. An input that would make one larger is refused before anything changes; an answer that would is a step fault, kept in the journal, and the unit keeps its state.
+- **Small units.** A unit, with its parts, lists, carried facts and the trace notes of its last step, holds at most 4096 bytes. An input that would make one larger is refused before anything changes; an answer that would is a step fault, kept in the journal, and the unit keeps its state.
 - **HTTP only.** The service speaks plain HTTP/1.1, one request per connection, with a `Content-Length` body, and leaves TLS to the gateway in front of it. Adapters are reached over HTTP through `curl`.
 - **One request at a time.** Inputs, reads, timers, adapter posts and model asks take turns, so a slow adapter holds up the service for as long as its post takes (at most 10 seconds), and a slow model for its `within`. Models are asked after the input's step, so the input's own answer does not wait for them.
 - **No `suture test`.** Tests run through `cargo test` and `suture run`.

@@ -87,3 +87,25 @@ fn a_duration_is_at_most_a_hundred_years() {
     let rule = errors("module m version 1, currency EUR\nkind Box { wait: Duration }\nrule long: every Box's wait is at most 99999999999999 weeks\n");
     assert!(rule.contains("is too long: a duration is at most 100 years"), "{rule}");
 }
+
+#[test]
+fn a_change_that_would_make_a_reader_too_large_is_refused_and_changes_nothing() {
+    let p = prog("module library version 1, currency EUR
+role librarian
+kind Member { name: Text, bio: Text, suspended: Bool = no }
+kind Loan   { member: Member, memo: Text, open: Bool = yes }
+rule suspended: no Loan whose member is suspended is open
+admit add a new Member or Loan by librarian
+admit change Member's bio by librarian
+");
+    let mut h = Host::new(p);
+    let by = |verb: &str| Caller { role: "librarian".into(), name: "Lu".into(), verb: verb.into() };
+    h.input_new(Some(&by("adds")), "Member", "Ada", &[("name".into(), Val::Text("Ada".into())), ("bio".into(), Val::Text("short".into()))], &[]).unwrap();
+    h.input_new(Some(&by("adds")), "Loan", "L1", &[("member".into(), Val::Ref("Ada".into())), ("memo".into(), Val::Text("m".repeat(1700)))], &[]).unwrap();
+    let (ada, loan) = (h.unit("Ada"), h.unit("L1"));
+    // Ada fits with the new bio, but L1, which carries it, would not.
+    let e = h.input_change(Some(&by("changes")), "Ada", "bio", Val::Text("b".repeat(1820))).unwrap_err();
+    assert!(e.starts_with("refused: L1 would hold "), "{e}");
+    assert_eq!((h.unit("Ada"), h.unit("L1")), (ada, loan));
+    assert!(h.machine.faults().is_empty());
+}
