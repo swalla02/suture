@@ -97,8 +97,9 @@ pub enum MediaMode {
     Omit,
 }
 
-/// How much media content one choice may send, by default: 8 MiB.
-pub const MAX_MEDIA_SENT: usize = 8 * 1024 * 1024;
+/// How much media content one choice may send: 6 MiB, so that the request,
+/// in base64, stays within the 10 MB line that curl reads its body from.
+pub const MAX_MEDIA_SENT: usize = 6 * 1024 * 1024;
 
 /// A fact as a backend gets it: media with its content when inlined.
 fn sent(v: &Val, c: &Choice, mode: MediaMode) -> Value {
@@ -312,7 +313,11 @@ pub fn load(text: &str, mut transport: impl FnMut() -> Box<dyn Transport>) -> Re
         };
         let max_media_bytes = match cfg.get("max_media_bytes") {
             None => MAX_MEDIA_SENT,
-            Some(x) => x.as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(|| err("`max_media_bytes` must be a whole number".into()))?,
+            Some(x) => x
+                .as_u64()
+                .and_then(|n| usize::try_from(n).ok())
+                .filter(|n| *n <= MAX_MEDIA_SENT)
+                .ok_or_else(|| err(format!("`max_media_bytes` must be a whole number, at most {MAX_MEDIA_SENT}")))?,
         };
         let backend = text("backend")?.unwrap_or_else(|| "jev".into());
         let allowed: &[&str] = match backend.as_str() {

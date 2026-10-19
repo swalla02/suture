@@ -484,7 +484,7 @@ A backend gets each piece of media among the facts as an object, with its conten
 "photo": { "media": "image/png", "bytes": 48213, "sha256": "9f2c…", "base64": "iVBORw0KGgo…" }
 ```
 
-Two settings in `models.json` change that. `"media": "omit"` sends the reference alone, for a model that reads media from somewhere else. `"max_media_bytes"` caps how much content one choice sends, 8 MiB by default. If a choice has more media than that, or media the store does not hold, the model is not asked and `prefer` picks:
+Two settings in `models.json` change that. `"media": "omit"` sends the reference alone, for a model that reads media from somewhere else. `"max_media_bytes"` caps how much content one choice sends: 6 MiB by default, and at most, so that the request stays within what curl reads. If a choice has more media than that, or media the store does not hold, the model is not asked and `prefer` picks:
 
 ```text
       choice: Repair for C1?Outcome#1 by prefer (model "assessor@1" failed: the media is 9437184 bytes, over the 8388608 this model takes)

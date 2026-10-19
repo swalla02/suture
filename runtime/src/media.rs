@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
@@ -75,30 +76,42 @@ impl Store {
         }
         let hash = sha256(&data);
         let bytes = data.len() as u64;
+        // The content is the identity: kept once, with the type it was first kept as.
+        if let Some(kept) = self.get(&hash) {
+            return Ok(Val::Media { sha256: hash, mime: kept.mime, bytes });
+        }
         match &self.dir {
             Some(dir) => {
                 let path = dir.join(&hash);
-                if !path.exists() {
-                    // Written whole, then renamed, so another pod never reads half of it.
-                    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-                    let tmp = dir.join(format!(".{hash}.tmp"));
-                    let file = format!("{mime}\n");
-                    let write = || -> std::io::Result<()> {
-                        use std::io::Write;
-                        let mut f = std::fs::File::create(&tmp)?;
-                        f.write_all(file.as_bytes())?;
-                        f.write_all(&data)?;
-                        f.sync_all()?;
-                        std::fs::rename(&tmp, &path)
-                    };
-                    write().map_err(|e| format!("{}: {e}", path.display()))?;
+                // Written whole under a name of its own, then renamed, so another
+                // pod never reads half of it, nor two writers share a file.
+                std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+                static WRITES: AtomicU64 = AtomicU64::new(0);
+                let tmp = dir.join(format!(".{hash}.{}.{}.tmp", std::process::id(), WRITES.fetch_add(1, Ordering::Relaxed)));
+                let file = format!("{mime}\n");
+                let write = || -> std::io::Result<()> {
+                    use std::io::Write;
+                    let mut f = std::fs::File::create(&tmp)?;
+                    f.write_all(file.as_bytes())?;
+                    f.write_all(&data)?;
+                    f.sync_all()?;
+                    std::fs::rename(&tmp, &path)
+                };
+                if let Err(e) = write() {
+                    let _ = std::fs::remove_file(&tmp);
+                    // Another writer may have kept the same content meanwhile.
+                    let Some(kept) = self.get(&hash) else { return Err(format!("{}: {e}", path.display())) };
+                    return Ok(Val::Media { sha256: hash, mime: kept.mime, bytes });
                 }
+                // Whoever renamed last, the type is the one now kept.
+                let mime = self.get(&hash).map_or_else(|| mime.to_string(), |b| b.mime);
+                Ok(Val::Media { sha256: hash, mime, bytes })
             }
             None => {
                 self.mem.insert(hash.clone(), Blob { mime: mime.to_string(), data: Arc::new(data) });
+                Ok(Val::Media { sha256: hash, mime: mime.to_string(), bytes })
             }
         }
-        Ok(Val::Media { sha256: hash, mime: mime.to_string(), bytes })
     }
 
     /// The media with this hash, if it is kept and its content still has it.
@@ -147,6 +160,14 @@ mod tests {
         std::fs::write(dir.join(h), b"image/png\nnot png").unwrap();
         assert!(s.get(h).is_none(), "content that no longer has its hash is not given out");
         assert!(s.put("Image/PNG", vec![]).is_err());
+        // Corrupt content is replaced; the same content keeps its first type.
+        let again = s.put("image/png", b"png".to_vec()).unwrap();
+        assert!(s.holds(&again));
+        assert_eq!(s.put("image/jpeg", b"png".to_vec()).unwrap(), again);
+        let mut mem = Store::default();
+        let first = mem.put("image/png", b"x".to_vec()).unwrap();
+        assert_eq!(mem.put("text/plain", b"x".to_vec()).unwrap(), first);
+        assert!(std::fs::read_dir(&dir).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().ends_with(".tmp")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
