@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use crate::explain::explain_at;
+use crate::media::MAX_MEDIA_BYTES;
+use crate::state::Val;
 use crate::service::{self, Record, Service, Who};
 use suture_lang::ir::{third_person, Admitted};
 
@@ -106,6 +108,19 @@ pub fn handle(svc: &mut Service, req: &Request, operator: Option<&str>, now: u64
                 Err(e) => error(400, e),
             }
         }
+        ("POST", "/media") => {
+            if req.header("suture-caller").is_none_or(|c| c.trim().split_once(' ').is_none()) {
+                return error(401, "media needs the header `Suture-Caller: <role> <name>`, which the gateway sets".into());
+            }
+            let Some(mime) = req.header("content-type").map(|m| m.split(';').next().unwrap_or_default().trim().to_ascii_lowercase()) else {
+                return error(400, "media needs a `Content-Type` such as image/png".into());
+            };
+            match svc.host.media.put(&mime, req.body.clone()) {
+                Ok(Val::Media { sha256, mime, bytes }) => (200, json!({ "sha256": sha256, "mime": mime, "bytes": bytes })),
+                Ok(_) => error(500, "the store gave no media".into()),
+                Err(e) => error(400, e),
+            }
+        }
         ("POST", "/world" | "/answers") => {
             match (operator, req.header("authorization").and_then(|a| a.strip_prefix("Bearer "))) {
                 (None, _) => return error(403, "operator requests are refused: SUTURE_OPERATOR_TOKEN is not set".into()),
@@ -118,7 +133,7 @@ pub fn handle(svc: &mut Service, req: &Request, operator: Option<&str>, now: u64
                 Err(e) => error(400, e),
             }
         }
-        (_, "/health" | "/pending" | "/trace" | "/inputs" | "/world" | "/answers") => error(405, format!("{} is not allowed on {}", req.method, req.path)),
+        (_, "/health" | "/pending" | "/trace" | "/inputs" | "/world" | "/answers" | "/media") => error(405, format!("{} is not allowed on {}", req.method, req.path)),
         (_, p) if p.starts_with("/units/") => error(405, format!("{} is not allowed on {}", req.method, req.path)),
         (_, p) => error(404, format!("no such path: {p}")),
     }
@@ -213,7 +228,7 @@ pub fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
         let rest = DEADLINE.checked_sub(start.elapsed()).filter(|d| !d.is_zero()).ok_or("the request took too long to arrive")?;
         s.set_read_timeout(Some(rest)).map_err(|e| e.to_string())
     };
-    let mut r = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?.take((MAX_HEADERS + MAX_BODY) as u64));
+    let mut r = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?.take((MAX_HEADERS + MAX_MEDIA_BYTES) as u64));
     let mut head = 0;
     let mut line = vec![];
     let mut req = Request::default();
@@ -253,8 +268,10 @@ pub fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
         return Err("a body must be sent with a Content-Length, not a Transfer-Encoding".into());
     }
     let len = req.header("content-length").map_or(Ok(0), |n| n.parse::<usize>().map_err(|_| "a bad Content-Length"))?;
-    if len > MAX_BODY {
-        return Err("the body is too large".into());
+    // Media is sent whole, so its body may be larger (appendix V.2.2).
+    let max = if req.path == "/media" { MAX_MEDIA_BYTES } else { MAX_BODY };
+    if len > max {
+        return Err(format!("the body is too large: at most {max} bytes"));
     }
     req.body = vec![0; len];
     let mut got = 0;

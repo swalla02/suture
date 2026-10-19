@@ -38,6 +38,20 @@ pub struct Choice {
     pub options: Vec<Option_>,
     /// The module's currency, to show amounts.
     pub currency: String,
+    /// The content of the media among the facts and the options, by hash,
+    /// as far as the store has it (appendix V.2.3).
+    pub media: BTreeMap<String, crate::media::Blob>,
+}
+
+impl Choice {
+    /// The hashes of the media among the facts and the options, each once.
+    pub fn media_named(&self) -> Vec<&str> {
+        let vals = self.facts.iter().chain(self.options.iter().flat_map(|o| o.attrs.iter())).map(|(_, v)| v);
+        let mut out: Vec<&str> = vals.filter_map(|v| if let Val::Media { sha256, .. } = v { Some(sha256.as_str()) } else { None }).collect();
+        out.sort();
+        out.dedup();
+        out
+    }
 }
 
 /// One option: a candidate's name and attributes, an alternative's kind, or

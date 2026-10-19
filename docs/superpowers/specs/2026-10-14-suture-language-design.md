@@ -1536,3 +1536,31 @@ Slice 14 made pods (`suture serve --pod`), but nothing packaged them, and a stop
 - `suture serve` sent `SIGTERM` exits with status 0, prints `stopped; pod a left`, and leaves no `pods/a`.
 - Two containers of the image over one volume are one service: an input to one is read from the other, both are healthy, and `docker stop` on one hands its units to the other at once.
 - The Kubernetes manifest passes `kubectl apply --dry-run=client`.
+
+## Appendix V. Prototype slice 21: media for decision models (2026-10-19)
+
+Decision models chose from text and numbers only. This slice lets them see images, sounds, videos and documents. They still only choose among the options (§J, the model class): they never generate, and what a program means never depends on media.
+
+### V.1 What slice 21 adds
+
+| Added in slice 21 | Still waits |
+|---|---|
+| the type `Media`, held in a unit as a reference: SHA-256, media type, size | media in sentences, formulas, keys or `sends` (by design: only models see media) |
+| a media store, in memory or in `⟨state⟩/media`, shared by the pods | removing media from the store |
+| `POST /media`, then the reference in an input; `file "…"` in scenarios | streaming uploads; a body over 8 MiB |
+| media inlined in base64 for Jev and custom backends, or sent as a reference with `"media": "omit"`; `max_media_bytes` | scores or yes/no questions about media, beside picks |
+
+### V.2 Semantics that slice 21 settles
+
+1. **The type.** `Media` is an attribute type, and an event's data may have it. No path that ends at a Media value may appear in a sentence, a formula, a pool key, a `prefer` or a `sends`; that is a compile error. It may be marked `personal`, not `secret`. It has no literal in a program and no default.
+2. **The store.** A Media value is `{sha256, mime, bytes}`. The content is kept once, by its hash: in memory for scenarios and `Service::in_memory`, in `⟨state⟩/media/⟨sha256⟩` for a served program, written whole and renamed, so every pod reads it. Reading checks the hash, so content that changed on disk is not given out. A served input that names media the store does not hold, or holds with another type or size, is refused before it is logged. `POST /media` takes up to 8 MiB with a `Content-Type` and a `Suture-Caller`, and answers the reference. Replay never reads the store: units hold references, and model answers are journaled.
+3. **Models.** Before a model is asked, the host attaches the content of every Media value among the chooser's facts and the options' attributes (`Choice::media`), as far as the store has it. Marked facts are left out as before (§N), so a personal photo is never shown. A backend in `inline` mode sends each as `{"media", "bytes", "sha256", "base64"}`; in `omit` mode without `base64`. If an inline backend is missing content, or the content is over `max_media_bytes` (8 MiB by default), it fails without posting, and `prefer` picks, with the reason in the trace.
+4. **Scenarios.** `file "⟨name⟩"` is a literal in scenarios only. It is read relative to the scenario file's directory, and its type comes from the extension: `.png`, `.jpg`/`.jpeg`, `.gif`, `.webp`, `.mp3`, `.wav`, `.ogg`, `.mp4`, `.webm`, `.pdf`, `.txt`. A missing file or an unknown extension fails the step.
+
+### V.3 Acceptance
+
+- In a scenario, a Claim with `photo file "wreck.png"` (content saying "total") is written off by a model that reads the photo, and one with `file "dent.png"` repaired; the trace shows only the reference.
+- `rule …: no Claim whose photo is "x" …`, `sends the claim's photo` and `where the scan is "x"` on Media data are compile errors.
+- A personal photo is not given to the model, which declines; `prefer` picks.
+- Served: `POST /media` without a `Content-Type` is a 400; with one, the content is kept by its hash; an input naming unknown media is refused with 409 and not logged; the model picks at the next tick; the log holds the hash and not the content; a restart without model or media replays to the same unit.
+- The Jev request carries the photo with its base64; `omit` leaves the base64 out; missing content or content over `max_media_bytes` fails without posting.

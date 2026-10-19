@@ -6,6 +6,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use base64::Engine;
 use serde_json::{json, Map, Value};
 
 use crate::choice::{Answer, Backend, Choice};
@@ -65,9 +66,11 @@ impl Transport for Curl {
     }
 }
 
-/// A fact as JSON: text and numbers as such, amounts and times as shown.
+/// A fact as JSON: text and numbers as such, amounts and times as shown,
+/// and media by its reference.
 pub fn fact(v: &Val, currency: &str) -> Value {
     match v {
+        Val::Media { sha256, mime, bytes } => json!({ "media": mime, "sha256": sha256, "bytes": bytes }),
         Val::Text(s) | Val::Ref(s) => json!(s),
         Val::Bool(b) => json!(b),
         Val::Count(n) => json!(n),
@@ -84,13 +87,52 @@ fn shown(v: &Val, currency: &str) -> String {
     }
 }
 
-fn facts(xs: &[(String, Val)], currency: &str) -> Value {
-    Value::Object(xs.iter().map(|(k, v)| (k.clone(), fact(v, currency))).collect())
+/// Whether a backend is sent the content of media, or only its reference
+/// (appendix V.2.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MediaMode {
+    /// The content, in base64, beside the reference.
+    Inline,
+    /// The reference alone: type, size and hash.
+    Omit,
+}
+
+/// How much media content one choice may send, by default: 8 MiB.
+pub const MAX_MEDIA_SENT: usize = 8 * 1024 * 1024;
+
+/// A fact as a backend gets it: media with its content when inlined.
+fn sent(v: &Val, c: &Choice, mode: MediaMode) -> Value {
+    let mut out = fact(v, &c.currency);
+    if let (Val::Media { sha256, .. }, MediaMode::Inline) = (v, mode)
+        && let Some(b) = c.media.get(sha256)
+    {
+        out["base64"] = json!(base64::engine::general_purpose::STANDARD.encode(b.data.as_slice()));
+    }
+    out
+}
+
+fn facts(xs: &[(String, Val)], c: &Choice, mode: MediaMode) -> Value {
+    Value::Object(xs.iter().map(|(k, v)| (k.clone(), sent(v, c, mode))).collect())
 }
 
 /// The state both formats send: who chooses, with their facts.
-fn state(c: &Choice) -> Value {
-    json!({ "unit": c.unit, "chooser": c.chooser, "facts": facts(&c.facts, &c.currency) })
+fn state(c: &Choice, mode: MediaMode) -> Value {
+    json!({ "unit": c.unit, "chooser": c.chooser, "facts": facts(&c.facts, c, mode) })
+}
+
+/// Why a choice cannot be sent with its media: content the store does not
+/// have, or more of it than the backend takes. The model is then not asked,
+/// and `prefer` picks (appendix V.2.3).
+fn media_unsent(c: &Choice, mode: MediaMode, max: usize) -> Option<String> {
+    if mode == MediaMode::Omit {
+        return None;
+    }
+    let mut total = 0;
+    for h in c.media_named() {
+        let Some(b) = c.media.get(h) else { return Some(format!("the media sha256 {} is not in the media store", &h[..12])) };
+        total += b.data.len();
+    }
+    (total > max).then(|| format!("the media is {total} bytes, over the {max} this model takes"))
 }
 
 fn key_from(env: Option<&str>) -> Result<Option<String>, String> {
@@ -115,12 +157,22 @@ pub struct Jev {
     pub key_env: Option<String>,
     /// Below this confidence, the pick is not used.
     pub min_confidence: Option<f64>,
+    pub media: MediaMode,
+    pub max_media_bytes: usize,
     pub transport: Box<dyn Transport>,
 }
 
 impl Jev {
     pub fn new(transport: Box<dyn Transport>) -> Jev {
-        Jev { url: JEV_URL.into(), model: JEV_MODEL.into(), key_env: Some(JEV_KEY_ENV.into()), min_confidence: None, transport }
+        Jev {
+            url: JEV_URL.into(),
+            model: JEV_MODEL.into(),
+            key_env: Some(JEV_KEY_ENV.into()),
+            min_confidence: None,
+            media: MediaMode::Inline,
+            max_media_bytes: MAX_MEDIA_SENT,
+            transport,
+        }
     }
 
     /// The request (docs.typesafe.ai/api): the chooser as the state, and a
@@ -132,7 +184,10 @@ impl Jev {
             .options
             .iter()
             .map(|o| {
-                let desc = if o.attrs.is_empty() {
+                // An option's media goes with its facts, as an option has no description of media.
+                let desc = if o.attrs.iter().any(|(_, v)| matches!(v, Val::Media { .. })) {
+                    facts(&o.attrs, c, self.media)
+                } else if o.attrs.is_empty() {
                     Value::Null
                 } else {
                     json!(o.attrs.iter().map(|(k, v)| format!("{k} {}", shown(v, &c.currency))).collect::<Vec<_>>().join(", "))
@@ -149,7 +204,7 @@ impl Jev {
         );
         json!({
             "model": self.model,
-            "state": state(c),
+            "state": state(c, self.media),
             "questions": { "pick": { "type": "choice", "instructions": instructions, "criteria": criteria } },
         })
     }
@@ -164,6 +219,9 @@ impl Jev {
 
 impl Backend for Jev {
     fn decide(&mut self, c: &Choice, within: Duration) -> Answer {
+        if let Some(why) = media_unsent(c, self.media, self.max_media_bytes) {
+            return Answer::Failed(why);
+        }
         let key = match key_from(self.key_env.as_deref()) {
             Ok(k) => k,
             Err(e) => return Answer::Failed(e),
@@ -186,13 +244,15 @@ pub struct Custom {
     pub pick: String,
     pub confidence: Option<String>,
     pub min_confidence: Option<f64>,
+    pub media: MediaMode,
+    pub max_media_bytes: usize,
     pub transport: Box<dyn Transport>,
 }
 
 impl Custom {
     pub fn request(&self, c: &Choice) -> Value {
-        let options: Vec<Value> = c.options.iter().map(|o| json!({ "label": o.label, "facts": facts(&o.attrs, &c.currency) })).collect();
-        json!({ "point": c.point, "state": state(c), "options": options })
+        let options: Vec<Value> = c.options.iter().map(|o| json!({ "label": o.label, "facts": facts(&o.attrs, c, self.media) })).collect();
+        json!({ "point": c.point, "state": state(c, self.media), "options": options })
     }
 
     pub fn read(&self, answer: &Value) -> Answer {
@@ -206,6 +266,9 @@ impl Custom {
 
 impl Backend for Custom {
     fn decide(&mut self, c: &Choice, within: Duration) -> Answer {
+        if let Some(why) = media_unsent(c, self.media, self.max_media_bytes) {
+            return Answer::Failed(why);
+        }
         let key = match key_from(self.key_env.as_deref()) {
             Ok(k) => k,
             Err(e) => return Answer::Failed(e),
@@ -242,10 +305,19 @@ pub fn load(text: &str, mut transport: impl FnMut() -> Box<dyn Transport>) -> Re
             None => None,
             Some(x) => Some(x.as_f64().filter(|c| (0.0..=1.0).contains(c)).ok_or_else(|| err("`min_confidence` must be a number from 0 to 1".into()))?),
         };
+        let media = match text("media")?.as_deref() {
+            None | Some("inline") => MediaMode::Inline,
+            Some("omit") => MediaMode::Omit,
+            Some(other) => return Err(err(format!("`media` is \"inline\" or \"omit\", not \"{other}\""))),
+        };
+        let max_media_bytes = match cfg.get("max_media_bytes") {
+            None => MAX_MEDIA_SENT,
+            Some(x) => x.as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(|| err("`max_media_bytes` must be a whole number".into()))?,
+        };
         let backend = text("backend")?.unwrap_or_else(|| "jev".into());
         let allowed: &[&str] = match backend.as_str() {
-            "jev" => &["backend", "url", "model", "key_env", "min_confidence"],
-            "custom" => &["backend", "url", "key_env", "pick", "confidence", "min_confidence"],
+            "jev" => &["backend", "url", "model", "key_env", "min_confidence", "media", "max_media_bytes"],
+            "custom" => &["backend", "url", "key_env", "pick", "confidence", "min_confidence", "media", "max_media_bytes"],
             other => return Err(err(format!("unknown backend `{other}`; use \"jev\" or \"custom\""))),
         };
         if let Some(k) = cfg.keys().find(|k| !allowed.contains(&k.as_str())) {
@@ -257,11 +329,13 @@ pub fn load(text: &str, mut transport: impl FnMut() -> Box<dyn Transport>) -> Re
             j.model = text("model")?.unwrap_or(j.model);
             j.key_env = text("key_env")?.or(j.key_env);
             j.min_confidence = min_confidence;
+            j.media = media;
+            j.max_media_bytes = max_media_bytes;
             Box::new(j)
         } else {
             let url = text("url")?.ok_or_else(|| err("a custom backend needs a `url`".into()))?;
             let pick = text("pick")?.ok_or_else(|| err("a custom backend needs `pick`, a JSON pointer such as \"/result/pick\"".into()))?;
-            Box::new(Custom { url, key_env: text("key_env")?, pick, confidence: text("confidence")?, min_confidence, transport: transport() })
+            Box::new(Custom { url, key_env: text("key_env")?, pick, confidence: text("confidence")?, min_confidence, media, max_media_bytes, transport: transport() })
         };
         out.push((name.clone(), b));
     }

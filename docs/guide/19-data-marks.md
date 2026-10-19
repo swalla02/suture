@@ -74,7 +74,7 @@ A secret never enters a unit. When an input carries one, the runtime puts the va
 
 - The trace, explanations and `GET /units/⟨label⟩` show a secret as `(secret)` and a personal value as `(personal)`.
 - `GET /pending` masks them too, unless it carries the operator token: an adapter polling for its requests receives what it was granted.
-- Decision models receive no marked facts.
+- Decision models receive no marked facts. A `Media` attribute can be marked `personal` (not `secret`), and is then not shown to models either.
 
 ```text
 O1  placed: customer Ada, card (secret), total 80 EUR

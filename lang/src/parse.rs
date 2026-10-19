@@ -112,6 +112,7 @@ fn type_name(c: &mut Cursor) -> Result<TypeName, Error> {
         "Count" => TypeName::Count,
         "Time" => TypeName::Time,
         "Duration" => TypeName::Duration,
+        "Media" => TypeName::Media,
         "set" => {
             c.expect_word("of")?;
             TypeName::Set(c.kind_name()?)

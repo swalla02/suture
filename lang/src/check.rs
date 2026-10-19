@@ -223,6 +223,9 @@ enum End {
     Set(String),
 }
 
+/// Why no sentence reads media (appendix V.2.1).
+const MEDIA_READ: &str = "only a decision model sees media; a sentence, a formula, a key or a `sends` cannot read it, so that what a program means never depends on it";
+
 /// Whether a path goes through a reference, to another unit's carried facts.
 fn through_ref(path: &Path) -> bool {
     path.steps.iter().any(|s| matches!(s, Step::Ref(_) | Step::Bound(_) | Step::Cand))
@@ -296,6 +299,7 @@ fn value_type(t: &TypeName) -> Option<Ty> {
         TypeName::Count => Some(Ty::Count),
         TypeName::Time => Some(Ty::Time),
         TypeName::Duration => Some(Ty::Duration),
+        TypeName::Media => Some(Ty::Media),
         TypeName::Kind(_) | TypeName::List(_) | TypeName::Set(_) => None,
     }
 }
@@ -877,6 +881,10 @@ impl Checker {
             Literal::Duration(secs) => (Lit::Duration(*secs), Ty::Duration),
             Literal::Set(_) => {
                 self.errors.push(err(at, "a set of names is written only in scenarios"));
+                return None;
+            }
+            Literal::File(_) => {
+                self.errors.push(err(at, "a media file is given only in scenarios and inputs"));
                 return None;
             }
             Literal::Money { cents, currency: c } if c == currency => (Lit::Money(*cents), Ty::Money),
@@ -2166,6 +2174,10 @@ impl Checker {
                 self.errors.push(err(at, format!("`the {}`: `the {w}` is a value the event carries; nothing follows it", np.steps.join("'s "))));
                 return None;
             }
+            if *ty == Ty::Media {
+                self.errors.push(err(at, format!("`the {w}` is media; {MEDIA_READ}")));
+                return None;
+            }
             return Some((Path { steps: vec![Step::Data(w.clone())] }, End::Value(*ty)));
         }
         if let (Some(ck), Head::It, Some(w)) = (self.caller.clone(), &np.head, np.steps.first()) {
@@ -2275,6 +2287,10 @@ impl Checker {
                     }
                     (_, Some(next)) => {
                         self.errors.push(err(at, format!("`{}`: {w} is a value, so it has no `{next}`", show(np))));
+                        return None;
+                    }
+                    (Ty::Media, None) => {
+                        self.errors.push(err(at, format!("`{}`: {}'s {w} is media; {MEDIA_READ}", show(np), kind.name)));
                         return None;
                     }
                     (ty, None) => {

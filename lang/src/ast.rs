@@ -21,6 +21,8 @@ pub enum TypeName {
     Set(String),
     Time,
     Duration,
+    /// An image, a sound, a video or a document (appendix V.2.1).
+    Media,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,6 +35,9 @@ pub enum Literal {
     Duration(i64),
     /// `{DE, FR}`: the names of shared entities, in scenarios only.
     Set(Vec<String>),
+    /// `file "dent.png"`: a media file beside the scenario, in scenarios only
+    /// (appendix V.2.4).
+    File(String),
 }
 
 /// `it`, `its x`, `the Order`, `the order's total`, `its form's order's total`.

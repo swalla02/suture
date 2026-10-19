@@ -41,7 +41,10 @@ Suture v0 is a prototype. Everything earlier in this guide runs and is tested. T
 | a formula, a `becomes`, or a total's filter that stays fresh over a sourced fact | read the sourced fact in the rule itself |
 | prefetching | facts are fetched when a step waits on them |
 | keys from anywhere but an environment variable | `models.json` names the variable with `key_env` |
-| a model that sees the whole unit | it sees the entity that chooses, with its own facts, and the options with theirs |
+| a model that sees the whole unit | it sees the entity that chooses, with its own facts, and the options with theirs; put the media a model needs on the entity that chooses |
+| media in sentences, formulas, keys or `sends` | only decision models see media; a sentence reads a Text or a Count about it, given with the media |
+| removing media from the store | media is kept as long as the state directory is |
+| sending media to adapters | send a Text that names where the adapter finds it |
 | two `decide`s with a `whose` at the same rank, even when their conditions exclude each other | give one of them a nearer scope or a choice point |
 
 ## By design, never

@@ -8,6 +8,8 @@ use crate::sentence::{literal, state_word};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Scenario {
+    /// The file it was read from: `file "…"` is read beside it (appendix V.2.4).
+    pub file: String,
     pub title: String,
     pub steps: Vec<ScenarioStep>,
     pub line: usize,
@@ -111,7 +113,7 @@ pub fn parse_scenarios(file: &str, src: &str) -> Result<Vec<Scenario>, Error> {
             steps.push(step(&mut c, &mut given)?);
             c.expect_end()?;
         }
-        out.push(Scenario { title, steps, line: st.line });
+        out.push(Scenario { file: file.to_string(), title, steps, line: st.line });
     }
     Ok(out)
 }

@@ -40,11 +40,11 @@ apply rule ⟨name⟩ to ⟨Kinds⟩ created from version ⟨n⟩
 allow ⟨adapter⟩ to receive ⟨Kind⟩'s ⟨attr⟩[, ⟨Kind⟩'s ⟨attr⟩…]
 ```
 
-**Types:** `Text`, `Bool`, `Count`, `Money`, `Duration`, `Time`, `⟨Kind⟩`, `list of ⟨Kind⟩`, `set of ⟨Kind⟩`. Built-in: `created: Time`.
+**Types:** `Text`, `Bool`, `Count`, `Money`, `Duration`, `Time`, `Media`, `⟨Kind⟩`, `list of ⟨Kind⟩`, `set of ⟨Kind⟩`. Built-in: `created: Time`.
 
 **Marks:** after the type, `secret` (Text only, no default) or `personal`: `card: Text secret` (chapter 19).
 
-**Literals:** `"text"`, `yes`/`no`, `3`, `9.99 EUR`, `30 seconds` (also minutes, hours, days, weeks). A duration is at most 100 years.
+**Literals:** `"text"`, `yes`/`no`, `3`, `9.99 EUR`, `30 seconds` (also minutes, hours, days, weeks). A duration is at most 100 years. In scenarios, `file "dent.png"` gives media, read beside the scenario file.
 
 **Checked once:** `attempts` and `candidates` are at least 1; no two kinds share a plural, and no plural is another kind's name; a choice has one `prefer` (one per `for a ⟨element⟩`).
 

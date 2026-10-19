@@ -4,7 +4,8 @@
 use crate::ast::*;
 use crate::lex::{Cursor, Error, Tok};
 
-/// A literal, if one is next: `"text"`, `3`, `120 EUR`, `12.50 EUR`, `yes`, `no`.
+/// A literal, if one is next: `"text"`, `3`, `120 EUR`, `12.50 EUR`, `yes`,
+/// `no`, and in scenarios `file "dent.png"`.
 pub fn literal(c: &mut Cursor) -> Result<Option<Literal>, Error> {
     match c.peek() {
         Some(Tok::Str(s)) => {
@@ -45,6 +46,11 @@ pub fn literal(c: &mut Cursor) -> Result<Option<Literal>, Error> {
         Some(Tok::Word(w)) if w == "no" || w == "false" => {
             c.next();
             Ok(Some(Literal::Bool(false)))
+        }
+        Some(Tok::Word(w)) if w == "file" && matches!(c.peek_at(1), Some(Tok::Str(_))) => {
+            c.next();
+            let Some(Tok::Str(path)) = c.next() else { unreachable!("peeked") };
+            Ok(Some(Literal::File(path.clone())))
         }
         _ => Ok(None),
     }

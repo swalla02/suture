@@ -23,6 +23,9 @@ pub enum Val {
     /// A secret Text, by its number in the secret store: the value itself
     /// never enters a unit (appendix N.2.4).
     Secret(u64),
+    /// Media, by the SHA-256 of its content: the content itself never enters
+    /// a unit, and is kept in the media store (appendix V.2.2).
+    Media { sha256: String, mime: String, bytes: u64 },
 }
 
 impl Val {
@@ -46,6 +49,7 @@ impl Val {
             Val::Set(_) => Ty::Set,
             Val::Time(_) => Ty::Time,
             Val::Duration(_) => Ty::Duration,
+            Val::Media { .. } => Ty::Media,
         }
     }
 
@@ -63,6 +67,7 @@ impl Val {
             Val::Time(t) => time_text(*t),
             Val::Duration(d) => suture_lang::readback::duration_text(*d),
             Val::Secret(_) => "(secret)".into(),
+            Val::Media { sha256, mime, bytes } => format!("({mime}, {bytes} bytes, sha256 {})", &sha256[..sha256.len().min(12)]),
         }
     }
 
@@ -77,6 +82,7 @@ impl Val {
             Val::Time(t) => Value::tuple([Value::from(6i64), Value::from(*t)]),
             Val::Duration(d) => Value::tuple([Value::from(7i64), Value::from(*d)]),
             Val::Secret(n) => Value::tuple([Value::from(8i64), Value::from(*n as i64)]),
+            Val::Media { sha256, mime, bytes } => Value::tuple([Value::from(9i64), Value::tuple([text(sha256), text(mime), Value::from(*bytes as i64)])]),
         }
     }
 
@@ -92,6 +98,10 @@ impl Val {
             6 => Val::Time(int(x)?),
             7 => Val::Duration(int(x)?),
             8 => Val::Secret(u64::try_from(int(x)?).map_err(|e| e.to_string())?),
+            9 => {
+                let [sha256, mime, bytes] = fields::<3>(x, "media")?;
+                Val::Media { sha256: string(sha256)?, mime: string(mime)?, bytes: u64::try_from(int(bytes)?).map_err(|e| e.to_string())? }
+            }
             t => return Err(format!("unknown value tag {t}")),
         })
     }

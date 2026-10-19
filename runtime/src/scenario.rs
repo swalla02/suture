@@ -5,7 +5,10 @@ use suture_lang::ir::Program;
 use suture_lang::scenario::{Caller, ModelAnswer, Refused, Scenario, ScenarioStep};
 
 use crate::choice::Scripted;
+use std::path::Path;
+
 use crate::host::Host;
+use crate::media::{mime_of, Store};
 use crate::interp::{duration, holds, in_state};
 use crate::state::Val;
 
@@ -34,18 +37,20 @@ pub fn run_with(prog: &Program, sc: &Scenario, setup: impl FnOnce(&mut Host)) ->
     let mut host = Host::new(prog.clone());
     setup(&mut host);
     let mut failures = vec![];
+    // `file "…"` is read beside the scenario's file (appendix V.2.4).
+    let base = Path::new(&sc.file).parent().map(Path::to_path_buf).unwrap_or_default();
     for (i, step) in sc.steps.iter().enumerate() {
         let result = match step {
             ScenarioStep::Create { kind, name, attrs, items, by, given, refused } => {
-                let created = create(prog, &mut host, kind, name, attrs, items, (!*given).then_some(by.as_ref()));
+                let created = create(prog, &mut host, &base, kind, name, attrs, items, (!*given).then_some(by.as_ref()));
                 refusal(&mut host, name, refused.as_ref(), created, "it was created")
             }
             ScenarioStep::Event { by, target, part, data, refused } => {
-                let r = values(prog, data).and_then(|d| host.input_event(Some(by), target, part.as_deref(), &d));
+                let r = values(prog, &mut host.media, &base, data).and_then(|d| host.input_event(Some(by), target, part.as_deref(), &d));
                 refusal(&mut host, target, refused.as_ref(), r, "it was admitted")
             }
             ScenarioStep::Change { by, target, attr, value, refused } => {
-                let r = values(prog, &[(attr.clone(), value.clone())]).and_then(|v| host.input_change(Some(by), target, attr, v[0].1.clone()));
+                let r = values(prog, &mut host.media, &base, &[(attr.clone(), value.clone())]).and_then(|v| host.input_change(Some(by), target, attr, v[0].1.clone()));
                 refusal(&mut host, target, refused.as_ref(), r, "it was changed")
             }
             ScenarioStep::Model { model, .. } if !prog.decisions.iter().any(|d| d.model.as_ref() == Some(model)) => {
@@ -74,7 +79,7 @@ pub fn run_with(prog: &Program, sc: &Scenario, setup: impl FnOnce(&mut Host)) ->
                 Ok(())
             }
             ScenarioStep::Answer { adapter, outcome, data, target } => {
-                values(prog, data).and_then(|v| host.answer(adapter, outcome, &v, target.as_deref()))
+                values(prog, &mut host.media, &base, data).and_then(|v| host.answer(adapter, outcome, &v, target.as_deref()))
             }
             ScenarioStep::Expect { name, state, negated } => {
                 let r = expect(&host, name, None, state, *negated);
@@ -123,16 +128,18 @@ fn refusal(host: &mut Host, name: &str, refused: Option<&Refused>, r: Result<(),
 
 /// A creation with its list elements, named in the singular (`a line`).
 /// `gated` holds the caller of an input; a `given` passes no gate.
+#[allow(clippy::too_many_arguments)] // a scenario's creation, with where its files are
 fn create(
     prog: &Program,
     host: &mut Host,
+    base: &Path,
     kind: &str,
     name: &str,
     attrs: &[(String, Literal)],
     items: &[(String, Vec<(String, Literal)>)],
     gated: Option<Option<&Caller>>,
 ) -> Result<(), String> {
-    let given = values(prog, attrs)?;
+    let given = values(prog, &mut host.media, base, attrs)?;
     let mut elements = vec![];
     for (one, pairs) in items {
         let list = prog
@@ -140,7 +147,7 @@ fn create(
             .iter()
             .find(|l| l.owner == kind && l.singulars().contains(one))
             .ok_or_else(|| format!("{kind} has no list whose element is called {one}"))?;
-        elements.push((list.name.clone(), values(prog, pairs)?));
+        elements.push((list.name.clone(), values(prog, &mut host.media, base, pairs)?));
     }
     match gated {
         Some(by) => host.input_new(by, kind, name, &given, &elements),
@@ -148,7 +155,7 @@ fn create(
     }
 }
 
-fn values(prog: &Program, pairs: &[(String, Literal)]) -> Result<Vec<(String, Val)>, String> {
+fn values(prog: &Program, media: &mut Store, base: &Path, pairs: &[(String, Literal)]) -> Result<Vec<(String, Val)>, String> {
     pairs
         .iter()
         .map(|(k, l)| {
@@ -167,6 +174,12 @@ fn values(prog: &Program, pairs: &[(String, Literal)]) -> Result<Vec<(String, Va
                 Literal::Money { cents, currency } if *currency == prog.currency => Val::Money(*cents),
                 Literal::Money { currency, .. } => {
                     return Err(format!("{k}: an amount in {currency} is not in this module's currency, {}", prog.currency));
+                }
+                Literal::File(name) => {
+                    let mime = mime_of(name).ok_or_else(|| format!("{k}: file \"{name}\": name a .png, .jpg, .gif, .webp, .mp3, .wav, .ogg, .mp4, .webm, .pdf or .txt file"))?;
+                    let path = base.join(name);
+                    let data = std::fs::read(&path).map_err(|e| format!("{k}: file \"{name}\": {}: {e}", path.display()))?;
+                    media.put(mime, data).map_err(|e| format!("{k}: file \"{name}\": {e}"))?
                 }
             };
             Ok((k.clone(), v))

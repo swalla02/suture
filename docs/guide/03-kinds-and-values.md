@@ -42,6 +42,7 @@ A `kind` lists attributes as `name: Type`, separated by commas. A long kind can 
 | `Money` | amounts in the module's currency, exact to the cent | `10 EUR`, `9.99 EUR` |
 | `Duration` | lengths of time | `30 seconds`, `5 minutes`, `2 hours`, `3 days`, `1 week` |
 | `Time` | instants from the runtime's clock | (none: times come from `created` and the clock) |
+| `Media` | an image, a sound, a video or a document, for decision models only (chapter 15) | `file "dent.png"`, in scenarios |
 | a kind name | a reference to one entity | the entity's name, in scenarios |
 | `list of K` | entities of kind K given together with this one | `and a line with …`, in scenarios |
 | `set of K` | references to several entities of kind K | `{DE, FR}`, in scenarios |

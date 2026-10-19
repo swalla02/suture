@@ -215,7 +215,7 @@ fn scan_grammar() -> Vec<String> {
             }
         }
     }
-    for t in ["Text", "Bool", "Count", "Money", "Duration", "Time", "secret", "personal", "yes", "no", "true", "false"] {
+    for t in ["Text", "Bool", "Count", "Money", "Duration", "Time", "Media", "secret", "personal", "yes", "no", "true", "false"] {
         out.push(t.to_string());
     }
     out.sort();

@@ -271,6 +271,8 @@ impl Service {
             .and_then(|t| serde_json::from_str(&t).map_err(|e| format!("{}: {e}", shown(&first))))?;
         let mut svc = Service::in_memory(&prog, now);
         svc.state = Some(state.to_path_buf());
+        // Media is kept beside the log, where every pod reaches it (appendix V.2.2).
+        svc.host.media = crate::media::Store::in_dir(state.join("media"));
         setup(&mut svc.host);
         svc.host.secrets = Self::read_secrets(state)?;
         svc.kept_secrets = svc.host.secrets.len();
@@ -520,6 +522,8 @@ impl Service {
         }
         let mut svc = Service::in_memory(prog, now);
         svc.state = Some(state.to_path_buf());
+        // Media is kept beside the log, where every pod reaches it (appendix V.2.2).
+        svc.host.media = crate::media::Store::in_dir(state.join("media"));
         setup(&mut svc.host);
         {
             // The program first, then the log, each synced, then the directory:
@@ -666,6 +670,12 @@ impl Service {
     pub fn input(&mut self, r: Record, now: u64) -> Result<Applied, String> {
         if let Some(why) = &self.broken {
             return Err(format!("the log could not be written ({why}), so no input is taken until the service restarts"));
+        }
+        // Media must be in the store before an input names it, so a model can
+        // see it; such an input is refused before it is logged (appendix V.2.2).
+        if let Some(Val::Media { sha256, mime, .. }) = values_of(&r).into_iter().find(|v| !self.host.media.holds(v)) {
+            let why = format!("there is no {mime} with sha256 {sha256} in the media store; send it to POST /media first");
+            return Ok(Applied { trace: vec![], refused: Some(why) });
         }
         let elapsed = self.elapsed(now);
         let (from, refused) = self.locked(|s| {
@@ -911,6 +921,14 @@ pub fn from_json(v: &Value, ty: Option<Ty>, currency: &str) -> Result<Val, Strin
             Ok(Val::Set(names))
         }
         (None, Value::String(s)) => Ok(money(s).unwrap_or_else(|_| Val::Text(s.clone()))),
+        (Some(Ty::Media), Value::Object(o)) => {
+            let sha256 = o.get("sha256").and_then(Value::as_str).filter(|h| h.len() == 64 && h.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)));
+            let mime = o.get("mime").and_then(Value::as_str).filter(|m| crate::media::valid_mime(m));
+            match (sha256, mime, o.get("bytes").and_then(Value::as_u64), o.len()) {
+                (Some(h), Some(m), Some(b), 3) => Ok(Val::Media { sha256: h.into(), mime: m.into(), bytes: b }),
+                _ => Err(format!("{v} is not {}", ty_name(Ty::Media))),
+            }
+        }
         (Some(Ty::Money), _) => Err(format!("an amount is text such as \"80 {currency}\", not {v}")),
         (Some(t), _) => Err(format!("{v} is not {}", ty_name(t))),
         (None, _) => Err(format!("{v} is not a value")),
@@ -927,6 +945,7 @@ fn ty_name(t: Ty) -> &'static str {
         Ty::Set => "a list of names",
         Ty::Time => "a time in seconds",
         Ty::Duration => "a duration in seconds",
+        Ty::Media => "media, as POST /media gives it: {\"sha256\", \"mime\", \"bytes\"}",
     }
 }
 
@@ -979,4 +998,21 @@ pub fn items_json(prog: &Program, kind: &str, v: Option<&Value>) -> Result<Items
 pub fn answer_data(prog: &Program, ask: &Ask, v: &Value) -> Result<Vec<(String, Val)>, String> {
     let kind = ask.kind.split(['~', '@']).next().unwrap_or(&ask.kind);
     attrs_json(prog, kind, Some(v))
+}
+
+/// The values an input carries.
+fn values_of(r: &Record) -> Vec<&Val> {
+    fn attrs(a: &[(String, Val)]) -> Vec<&Val> {
+        a.iter().map(|(_, v)| v).collect()
+    }
+    match r {
+        Record::World { attrs: a, items, .. } | Record::New { attrs: a, items, .. } => {
+            let mut out = attrs(a);
+            out.extend(items.iter().flat_map(|(_, xs)| xs.iter().map(|(_, v)| v)));
+            out
+        }
+        Record::Event { data, .. } | Record::Answer { data, .. } => attrs(data),
+        Record::Change { value, .. } => vec![value],
+        _ => vec![],
+    }
 }

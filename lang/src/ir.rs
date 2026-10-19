@@ -287,6 +287,8 @@ pub enum Ty {
     Time,
     /// Seconds.
     Duration,
+    /// Media, held by the hash of its content (appendix V.2.1).
+    Media,
 }
 
 /// A literal value; money is in cents of the module's currency.

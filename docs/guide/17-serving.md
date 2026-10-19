@@ -82,6 +82,21 @@ The answer is 200 with the trace lines the input caused, 409 with `refused` when
 | `Duration`, `Time` | an integer number of seconds |
 | a reference | the entity's label: `"Hamlet"` |
 | a set | a list of labels: `["EU", "UK"]` |
+| `Media` | the reference `POST /media` gave: `{"sha256": "…", "mime": "image/png", "bytes": 48213}` |
+
+### Media
+
+Media is sent before the input that names it. `POST /media` takes the content as its body, at most 8 MiB, with its `Content-Type` and the caller's `Suture-Caller` header, and keeps it in `⟨state⟩/media`, by the SHA-256 of the content:
+
+```sh
+curl -s -X POST localhost:7878/media -H 'Suture-Caller: adjuster Ann' -H 'Content-Type: image/png' --data-binary @dent.png
+```
+
+```text
+{"bytes": 48213, "mime": "image/png", "sha256": "9f2c…"}
+```
+
+The input then gives that object as the attribute's value. An input that names media the store does not hold is refused, and not logged. The log holds only the reference, so a restart replays without the media.
 
 ## Adapters
 

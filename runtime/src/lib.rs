@@ -8,6 +8,7 @@ pub mod host;
 pub mod http;
 pub mod interp;
 pub mod kernel;
+pub mod media;
 pub mod scenario;
 pub mod service;
 pub mod state;

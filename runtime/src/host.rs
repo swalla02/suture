@@ -58,6 +58,8 @@ pub struct Host {
     pub replay: VecDeque<(String, Answer)>,
     /// The secret store: each secret value by its number (appendix N.2.4).
     pub secrets: BTreeMap<u64, String>,
+    /// The media store: the content of every `Media` value (appendix V.2.2).
+    pub media: crate::media::Store,
     /// Whether a model is asked after the step that needs it, not in it
     /// (appendix S.2.2). The service defers; scenarios ask at once.
     pub defer_models: bool,
@@ -163,6 +165,7 @@ impl Host {
             model_answers: vec![],
             replay: VecDeque::new(),
             secrets: BTreeMap::new(),
+            media: crate::media::Store::default(),
         };
         // One unit holds each total `checked globally` (appendix F.2.13).
         for g in h.prog.globals.clone() {
@@ -460,6 +463,7 @@ impl Host {
             facts: unmarked(&prog, facts),
             options: options.iter().map(|o| Option_ { label: o.label.clone(), attrs: unmarked(&prog, o.root.attrs.clone().into_iter().collect()) }).collect(),
             currency: prog.currency.clone(),
+            media: BTreeMap::new(),
         };
         if self.defer_models {
             self.defer(model, choice, within, Chooses::Bind { hole, decide: d.clone(), pool: key.to_string() });
@@ -499,8 +503,17 @@ impl Host {
     /// applying it: the caller logs it and applies it with [`Host::model_answer`].
     pub fn ask_model_now(&mut self, key: &str) -> Option<Answer> {
         let a = self.asking.iter().find(|a| a.choice.key == key)?;
-        let (model, choice, within) = (a.model.clone(), a.choice.clone(), a.within);
+        let (model, within) = (a.model.clone(), a.within);
+        let choice = self.with_media(&a.choice);
         Some(self.models.ask(&model, &choice, within))
+    }
+
+    /// The choice with the content of its media, read from the store just
+    /// before the model is asked (appendix V.2.3).
+    fn with_media(&self, c: &Choice) -> Choice {
+        let mut c = c.clone();
+        c.media = c.media_named().into_iter().filter_map(|h| Some((h.to_string(), self.media.get(h)?))).collect();
+        c
     }
 
     /// A deferred model's answer (appendix S.2.2). The options are gathered
@@ -549,7 +562,10 @@ impl Host {
         let names: Vec<&str> = c.options.iter().map(|o| o.label.as_str()).collect();
         let answer = match self.replay.front() {
             Some((k, _)) if *k == c.key => self.replay.pop_front().expect("a front").1,
-            _ => self.models.ask(model, c, within),
+            _ => {
+                let c = self.with_media(c);
+                self.models.ask(model, &c, within)
+            }
         };
         self.model_answers.push((c.key.clone(), answer.clone()));
         resolve(model, &names, &answer, within)
@@ -576,6 +592,7 @@ impl Host {
             facts: unmarked(&self.prog, facts),
             options: options.iter().map(|o| Option_ { label: o.clone(), attrs: vec![] }).collect(),
             currency: self.prog.currency.clone(),
+            media: BTreeMap::new(),
         };
         if self.defer_models {
             self.defer(ask.adapter.clone(), c, within, Chooses::Ask { hole, ask: ask.clone() });

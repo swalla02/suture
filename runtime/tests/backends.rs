@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 use suture_lang::scenario::parse_scenarios;
-use suture_runtime::backend::{self, Custom, Jev, Transport};
+use suture_runtime::backend::{self, Custom, Jev, MediaMode, Transport, MAX_MEDIA_SENT};
 use suture_runtime::choice::{Answer, Backend, Choice, Option_};
 use suture_runtime::scenario::run;
 use suture_runtime::state::Val;
@@ -46,6 +46,7 @@ fn choice() -> Choice {
             Option_ { label: "Fast".into(), attrs: vec![("fee".into(), Val::Money(900)), ("zone".into(), Val::Text("EU".into()))] },
         ],
         currency: "EUR".into(),
+        media: Default::default(),
     }
 }
 
@@ -110,6 +111,8 @@ fn a_custom_format_reads_the_pick_at_its_pointer() {
         pick: "/result/pick".into(),
         confidence: Some("/result/p".into()),
         min_confidence: Some(0.5),
+        media: MediaMode::Inline,
+        max_media_bytes: MAX_MEDIA_SENT,
         transport: Box::new(fake.clone()),
     };
     assert_eq!(c.decide(&choice(), Duration::from_secs(1)), Answer::Picked("Cheap".into()));
@@ -163,4 +166,52 @@ decide Carrier with model \"carriers@1\" within 500 milliseconds
     let t = r.host.trace.join("\n");
     assert!(t.contains("choice: Fast for O1/Shipment#1@Carrier by model \"carriers@1\" (of Cheap, Fast)"), "{t}");
     assert_eq!(fake.sent.borrow()[0].3, Duration::from_millis(500));
+}
+
+fn with_photo(store_has_it: bool) -> Choice {
+    let mut c = choice();
+    let mut store = suture_runtime::media::Store::default();
+    let photo = store.put("image/png", b"\x89PNG dent".to_vec()).unwrap();
+    let Val::Media { sha256, .. } = &photo else { panic!() };
+    if store_has_it {
+        c.media.insert(sha256.clone(), store.get(sha256).unwrap());
+    }
+    c.facts.push(("photo".into(), photo));
+    c
+}
+
+#[test]
+fn media_goes_to_the_model_with_its_content_or_as_a_reference_only() {
+    let fake = Fake::new(Ok(jev_answer("Fast", 0.9)));
+    let mut j = Jev::new(Box::new(fake.clone()));
+    j.key_env = None;
+    assert_eq!(j.decide(&with_photo(true), Duration::from_secs(1)), Answer::Picked("Fast".into()));
+    let photo = fake.sent.borrow()[0].2["state"]["facts"]["photo"].clone();
+    assert_eq!(photo["media"], "image/png");
+    assert_eq!(photo["bytes"], 9);
+    assert_eq!(photo["sha256"], suture_runtime::media::sha256(b"\x89PNG dent"));
+    assert_eq!(photo["base64"], "iVBORyBkZW50");
+    j.media = MediaMode::Omit;
+    j.decide(&with_photo(false), Duration::from_secs(1));
+    let photo = fake.sent.borrow()[1].2["state"]["facts"]["photo"].clone();
+    assert!(photo.get("base64").is_none() && photo["media"] == "image/png", "{photo}");
+}
+
+#[test]
+fn media_the_model_cannot_be_sent_leaves_the_choice_to_prefer_without_asking() {
+    let fake = Fake::new(Ok(jev_answer("Fast", 0.9)));
+    let mut j = Jev::new(Box::new(fake.clone()));
+    j.key_env = None;
+    assert!(matches!(j.decide(&with_photo(false), Duration::from_secs(1)), Answer::Failed(e) if e.contains("is not in the media store")));
+    j.max_media_bytes = 4;
+    assert!(matches!(j.decide(&with_photo(true), Duration::from_secs(1)), Answer::Failed(e) if e.contains("the media is 9 bytes, over the 4 this model takes")));
+    assert!(fake.sent.borrow().is_empty(), "the model is not asked");
+}
+
+#[test]
+fn models_json_sets_how_media_is_sent() {
+    let named = backend::load(r#"{"a@1": {"media": "omit", "max_media_bytes": 10}}"#, || Box::new(Fake::new(Ok(json!({}))))).unwrap();
+    assert_eq!(named.len(), 1);
+    let e = backend::load(r#"{"a@1": {"media": "all"}}"#, || Box::new(Fake::new(Ok(json!({}))))).err().unwrap();
+    assert!(e.contains("`media` is \"inline\" or \"omit\""), "{e}");
 }

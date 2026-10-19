@@ -450,3 +450,44 @@ For another API, `"backend": "custom"` posts the same state with the options as 
 `url` and `pick` are required; `key_env`, `confidence` and `min_confidence` are optional. Anything else, an unknown field among them, is an error when the file is read, before any scenario runs. For a format that JSON pointers cannot reach, implement `Backend` in Rust.
 
 Whatever the backend, the model only ever picks among the options it is offered. Its pick is checked, journaled, and still subject to every rule.
+
+## Media
+
+A model can look at an image, listen to a recording or read a document before it picks. Give the entity that chooses, or the options, an attribute of type `Media`:
+
+```text
+kind Claim    { photo: Media, note: Text }
+kind Repair   { claim: Claim }
+kind Writeoff { claim: Claim }
+Claim   needs Outcome
+Outcome is    Repair or Writeoff
+prefer Outcome: Repair, then Writeoff
+decide Outcome with model "assessor@1"
+```
+
+A unit holds only a reference to the media: its type, its size and the SHA-256 of its content. The content is kept in the media store, once, by that hash. So the trace shows the reference:
+
+```text
+C1  placed: note "door", photo (image/png, 48213 bytes, sha256 9f2c41d07a1b)
+      choice: Repair for C1?Outcome#1 by model "assessor@1" (of Repair, Writeoff)
+```
+
+No sentence, formula, pool key or `sends` can read media: what the program means never depends on it, and a model still only picks among the options. In scenarios, `file "dent.png"` gives media, read from beside the scenario file; the type comes from the extension (`.png`, `.jpg`, `.gif`, `.webp`, `.mp3`, `.wav`, `.ogg`, `.mp4`, `.webm`, `.pdf`, `.txt`). A served program takes media through `POST /media` (chapter 17).
+
+```text
+when adjuster Ann files a new Claim C1 with photo file "dent.png" and note "door"
+```
+
+A backend gets each piece of media among the facts as an object, with its content in base64:
+
+```text
+"photo": { "media": "image/png", "bytes": 48213, "sha256": "9f2c…", "base64": "iVBORw0KGgo…" }
+```
+
+Two settings in `models.json` change that. `"media": "omit"` sends the reference alone, for a model that reads media from somewhere else. `"max_media_bytes"` caps how much content one choice sends, 8 MiB by default. If a choice has more media than that, or media the store does not hold, the model is not asked and `prefer` picks:
+
+```text
+      choice: Repair for C1?Outcome#1 by prefer (model "assessor@1" failed: the media is 9437184 bytes, over the 8388608 this model takes)
+```
+
+A model from Rust finds the content in `Choice::media`, by hash.
