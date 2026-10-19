@@ -1,4 +1,4 @@
-use suture_lang::ir::{Cond, Lit, Num, Op, Path, Program, Step};
+use suture_lang::ir::{Body, Cond, Lit, Num, Op, Path, Program, Step};
 use suture_lang::{compile, compile_dir};
 
 fn shop() -> Program {
@@ -152,9 +152,29 @@ fn slot_mistakes_are_errors() {
 }
 
 #[test]
-fn has_a_slot_is_an_error() {
-    let e = errors("kind O { }\nkind A { o: O }\nkind B { o: O }\nO needs D\nD is A or B\nprefer D: A, then B\ndefine: an O is going when it has a D\n");
-    assert!(e.iter().any(|m| m.contains("D is a slot; name an alternative")), "{e:?}");
+fn has_a_slot_means_any_of_its_alternatives() {
+    // Slice 22 (appendix W.2.2).
+    let base = "module m version 1, currency EUR\nkind O { }\nkind A { o: O, n: Count }\nkind B { o: O, n: Count }\nO needs D\nD is A or B\nprefer D: A, then B\n";
+    let effects = "effect send A via x within 1 day\n  sends its n\n  marks sent\n  reports ok\neffect send B via y within 1 day\n  sends its n\n  marks sent\n  reports ok\n";
+    let p = compile(&[("m.st".to_string(), format!("{base}{effects}define: an O is going when it has a D\nrule r: no O has a D that is sent\n"))]).unwrap_or_else(|e| panic!("{e:?}"));
+    let has = |part: &str, state: Option<&str>| Cond::Has { node: Path { steps: vec![] }, part: part.into(), state: state.map(String::from), negated: false };
+    assert_eq!(p.defines[0].cond, Cond::Or(vec![has("A", None), has("B", None)]));
+    assert_eq!(p.rules[0].body, Body::No { pred: Cond::Or(vec![has("A", Some("sent")), has("B", Some("sent"))]), unless: None });
+    assert_eq!(p.rules[0].paraphrase, "no o ever has a d (an a or a b) that is sent");
+    // A state every alternative must have.
+    let e = errors(&format!("{}effect send A via x within 1 day\n  sends its n\n  marks sent\n  reports ok\nrule r: no O has a D that is sent\n", base.trim_start_matches("module m version 1, currency EUR\n")));
+    assert!(e.iter().any(|m| m.contains("sent")), "{e:?}");
+}
+
+#[test]
+fn a_that_after_several_kinds_is_about_each() {
+    let base = "module m version 1, currency EUR\nkind O { }\nkind A { o: O, n: Count }\nkind B { o: O, n: Count }\nO needs A, B\n";
+    let effects = "effect send A via x within 1 day\n  sends its n\n  marks sent\n  reports ok\neffect send B via y within 1 day\n  sends its n\n  marks sent\n  reports ok\n";
+    let p = compile(&[("m.st".to_string(), format!("{base}{effects}rule r: no O has an A or a B that is sent\nrule s: no O has an A that is done or a B that is sent\n"))]).unwrap_or_else(|e| panic!("{e:?}"));
+    let has = |part: &str, state: &str| Cond::Has { node: Path { steps: vec![] }, part: part.into(), state: Some(state.into()), negated: false };
+    assert_eq!(p.rules[0].body, Body::No { pred: Cond::Or(vec![has("A", "sent"), has("B", "sent")]), unless: None });
+    assert_eq!(p.rules[1].body, Body::No { pred: Cond::Or(vec![has("A", "done"), has("B", "sent")]), unless: None });
+    assert_eq!(p.rules[0].paraphrase, "no o ever has an a or a b that is sent");
 }
 
 const NUMS: &str = "kind Order { total: Money, fee: Money = 0 EUR, items: Count = 1 }
@@ -292,4 +312,15 @@ fn review_list_elements_have_ordinary_singulars() {
     let names = |l: &str| p.lists.iter().find(|x| x.name == l).unwrap().singulars();
     assert!(names("entries").contains(&"entry".to_string()));
     assert!(names("boxes").contains(&"box".to_string()) && names("boxes").contains(&"case".to_string()));
+}
+
+#[test]
+fn taking_a_count_names_the_total_after_the_kind_that_takes() {
+    // Slice 22 (appendix W.2.3).
+    let base = "kind Garage { region: Text, bays: Count }\nkind Claim { region: Text }\nkind Repair { claim: Claim }\nClaim needs Repair\n";
+    let p = compile(&[("t.st".to_string(), format!("module t version 1, currency EUR\n{base}Repair uses a Garage where the Garage's region is the Claim's region, taking 1\nrule bays: the total repairs taken from each Garage is at most its bays\n"))])
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!(p.bindings[0].taking.as_ref().map(|t| t.name.as_str()), Some("repairs"));
+    let e = errors(&format!("{base}Repair uses a Garage where the Garage's region is the Claim's region, taking 2 EUR\n"));
+    assert!(e.iter().any(|m| m.contains("or take a count, as in `taking 1`")), "{e:?}");
 }

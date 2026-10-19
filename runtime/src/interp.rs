@@ -1508,6 +1508,17 @@ fn sources_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut 
     false
 }
 
+/// Whether a live part of the unit waits on a rule that reads `kind`'s
+/// `attr` (appendix W.2.1): what `sources_pass` fetches for.
+fn needed(prog: &Program, u: &Unit, kind: &str, attr: &str) -> bool {
+    positions(&u.root).into_iter().any(|at| {
+        let n = node_at(&u.root, &at);
+        let idle = n.status == Status::Idle;
+        let waits = n.held.values().chain(n.waiting.iter().filter(|_| idle));
+        n.status != Status::Failed && waits.into_iter().any(|name| prog.rules.iter().any(|r| r.name == *name && r.sources.iter().any(|(k, a)| k == kind && a == attr)))
+    })
+}
+
 /// A fetch's answer (appendix I.2.2): the value is recorded as fetched now,
 /// or the fetch fails. A malformed answer is refused and asked again.
 fn fetch_answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[(String, Val)], now: i64, out: &mut Out) -> Result<(), String> {
@@ -1551,6 +1562,15 @@ fn fetch_deadline(prog: &Program, u: &mut Unit, key: &str, now: i64, out: &mut O
     let Some((at, attr)) = find_fetch(u, key, true) else { return Err(format!("ignored a deadline for {key}: no open fetch")) };
     let n = node_at(&u.root, &at);
     let src = via(prog, &n.kind, &attr, &n.fetched[&attr]);
+    if !needed(prog, u, &n.kind, &attr) {
+        // Nothing waits on it any more, say its part was withdrawn: no more
+        // sends, and a late answer finds no open fetch.
+        let f = node_at_mut(&mut u.root, &at).fetched.entry(attr.clone()).or_default();
+        f.sends = 0;
+        f.n += 1;
+        u.notes.push(format!("{attr}: no step waits on it any more: stopped asking {}", src.adapter));
+        return Ok(());
+    }
     let f = node_at_mut(&mut u.root, &at).fetched.entry(attr.clone()).or_default();
     if f.sends < prog.attempts {
         f.sends += 1;

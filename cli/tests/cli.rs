@@ -96,6 +96,16 @@ fn build_lists_who_decides_a_slot() {
     let (ok, out) = suture(&["build", dir.to_str().unwrap()]);
     assert!(ok, "{out}");
     assert!(out.contains("slots:\n  Application's Return: Courier, then Locker\n    decided by: model \"routing@1\" within 500 ms; otherwise `prefer Return`"), "{out}");
+    // What the runtime does without the program saying so (appendix W.2.4).
+    assert!(out.contains("    moves on to the first one not yet tried, in this order, when one fails on its last of 3 attempts, or times out;"), "{out}");
+}
+
+#[test]
+fn build_says_when_a_source_is_asked() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/credit");
+    let (ok, out) = suture(&["build", dir]);
+    assert!(ok, "{out}");
+    assert!(out.contains("read by rule credit; asked only when a Payment would be sent"), "{out}");
 }
 
 #[test]

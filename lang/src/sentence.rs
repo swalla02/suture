@@ -271,29 +271,33 @@ pub fn predicate(c: &mut Cursor, left: Num) -> Result<Cond, Error> {
         } else {
             return Err(c.error(format!("expected `a`, `an` or `no` after `has`, found {}", c.found())));
         };
-        let kind = c.kind_name()?;
-        let state = if c.eat_word("that") {
-            c.expect_word("is")?;
-            Some(state_word(c)?)
-        } else {
-            None
+        let that = |c: &mut Cursor| -> Result<Option<String>, Error> {
+            if c.eat_word("that") {
+                c.expect_word("is")?;
+                return Ok(Some(state_word(c)?));
+            }
+            Ok(None)
         };
-        let first = Cond::Has { owner: left.clone(), negated, kind, state };
-        if !negated && c.is_word("or") && (word_at(c, 1, "a") || word_at(c, 1, "an")) {
+        let kind = c.kind_name()?;
+        let mut each = vec![(kind, that(c)?)];
+        while !negated && c.is_word("or") && (word_at(c, 1, "a") || word_at(c, 1, "an")) {
             c.expect_word("or")?;
             if !c.eat_word("a") {
                 c.expect_word("an")?;
             }
             let kind = c.kind_name()?;
-            let state = if c.eat_word("that") {
-                c.expect_word("is")?;
-                Some(state_word(c)?)
-            } else {
-                None
-            };
-            return Ok(Cond::Or(vec![first, Cond::Has { owner: left, negated: false, kind, state }]));
+            each.push((kind, that(c)?));
         }
-        return Ok(first);
+        // `has a Writeoff or a Cash that is sent`: the last `that` is about each
+        // of them, unless another has one of its own (appendix W.2.2).
+        let last = each.last().and_then(|(_, s)| s.clone());
+        if each.len() > 1 && each[..each.len() - 1].iter().all(|(_, s)| s.is_none()) {
+            for e in &mut each {
+                e.1 = last.clone();
+            }
+        }
+        let mut has: Vec<Cond> = each.into_iter().map(|(kind, state)| Cond::Has { owner: left.clone(), negated, kind, state }).collect();
+        return Ok(if has.len() == 1 { has.remove(0) } else { Cond::Or(has) });
     }
     if !(c.eat_word("is") || c.eat_word("are")) {
         return Err(c.error(format!("expected `is`, found {}", c.found())));

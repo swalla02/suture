@@ -57,7 +57,7 @@ fn cond_formula(p: &Program, kind: &str, v: &str, c: &Cond) -> String {
         }
         Cond::State { node, state, negated } => format!("{} is {}{state}", path_formula(p, kind, v, node), not(*negated)),
         Cond::Has { node, part, state, negated } => {
-            let x = element_var(part, kind);
+            let x = element_var(part, v);
             let filter = state.as_ref().map_or_else(String::new, |s| format!(" where {x} is {s}"));
             let inner = format!("exists({x} in {}.{part}{filter})", path_formula(p, kind, v, node));
             if *negated { format!("not {inner}") } else { inner }
@@ -88,8 +88,37 @@ fn cond_words(p: &Program, kind: &str, c: &Cond) -> String {
             format!("{} {} {}", num_words(p, kind, set), if *negated { "does not contain" } else { "contains" }, num_words(p, kind, item))
         }
         Cond::And(cs) => cs.iter().map(|c| cond_words(p, kind, c)).collect::<Vec<_>>().join(" and "),
-        Cond::Or(cs) => cs.iter().map(|c| cond_words(p, kind, c)).collect::<Vec<_>>().join(" or "),
+        Cond::Or(cs) => match has_any(p, kind, cs) {
+            Some(words) => words,
+            None => cs.iter().map(|c| cond_words(p, kind, c)).collect::<Vec<_>>().join(" or "),
+        },
     }
+}
+
+/// `has a writeoff or a cash that is sent`, and for every alternative of a
+/// slot, `has an outcome (a repair, a writeoff or a cash) that is sent`.
+fn has_any(p: &Program, kind: &str, cs: &[Cond]) -> Option<String> {
+    let Some(Cond::Has { node, state, negated: false, .. }) = cs.first() else { return None };
+    let mut parts = vec![];
+    for c in cs {
+        match c {
+            Cond::Has { node: n, part, state: s, negated: false } if n == node && s == state => parts.push(part.clone()),
+            _ => return None,
+        }
+    }
+    let a = |w: &str| if w.starts_with(|c: char| "aeiou".contains(c)) { format!("an {w}") } else { format!("a {w}") };
+    let listed: Vec<String> = parts.iter().map(|k| a(&words_of_kind(k))).collect();
+    let listed = match listed.split_last() {
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
+        None => return None,
+    };
+    let that = state.as_ref().map_or_else(String::new, |s| format!(" that is {s}"));
+    let whole = match p.slots.iter().find(|s| s.alternatives == parts) {
+        Some(slot) => format!("{} ({listed})", a(&words_of_kind(&slot.name))),
+        None => listed,
+    };
+    Some(format!("{} has {whole}{that}", path_words(p, kind, node)))
 }
 
 fn not(negated: bool) -> &'static str {
@@ -419,6 +448,27 @@ pub fn source_line(p: &Program, s: &crate::ir::Source) -> String {
     let otherwise = if several { format!("if it fails, the next source is asked; {otherwise}") } else { otherwise };
     let readers: Vec<&str> = p.rules.iter().filter(|r| r.sources.iter().any(|(k, a)| *k == s.kind && *a == s.attr)).map(|r| r.name.as_str()).collect();
     let read = if readers.is_empty() { "no rule reads it, so it is never fetched".to_string() } else { format!("read by rule{} {}", if readers.len() == 1 { "" } else { "s" }, readers.join(", ")) };
+    // When it is asked (appendix W.2.4): only once a step those rules hold back would go ahead.
+    let mut steps: Vec<(String, String)> = vec![];
+    for r in p.rules.iter().filter(|r| readers.contains(&r.name.as_str())) {
+        if let Body::No { pred, .. } = &r.body {
+            held_steps(pred, &mut steps);
+        }
+    }
+    // `a Repair, a Writeoff or a Cash would be sent`: one phrase per state.
+    let mut states: Vec<(String, Vec<String>)> = vec![];
+    for (part, state) in steps {
+        match states.iter_mut().find(|(s, _)| *s == state) {
+            Some((_, parts)) => parts.push(part),
+            None => states.push((state, vec![part])),
+        }
+    }
+    let phrases: Vec<String> = states.into_iter().map(|(state, parts)| format!("{} would be {state}", or_list(&parts))).collect();
+    let read = match phrases.is_empty() {
+        true if readers.is_empty() => read,
+        true => format!("{read}; asked only when a step they hold back would go ahead"),
+        false => format!("{read}; asked only when {}", or_list(&phrases)),
+    };
     format!(
         "{}'s {} from {} within {} (sends {}); {trusted}; {otherwise}; {read}",
         s.kind,
@@ -546,4 +596,41 @@ pub fn words_of_kind(k: &str) -> String {
         out.extend(ch.to_lowercase());
     }
     out
+}
+
+/// `(a Repair, sent)`: the steps a rule's `no … has a K that is S` holds back.
+fn held_steps(c: &Cond, out: &mut Vec<(String, String)>) {
+    match c {
+        Cond::Has { part, state, negated: false, .. } => {
+            let a = if part.starts_with(|c: char| "AEIOU".contains(c)) { "an" } else { "a" };
+            let step = (format!("{a} {part}"), state.clone().unwrap_or_else(|| "added".into()));
+            if !out.contains(&step) {
+                out.push(step);
+            }
+        }
+        Cond::And(cs) | Cond::Or(cs) => cs.iter().for_each(|c| held_steps(c, out)),
+        _ => {}
+    }
+}
+
+/// `x`, `x or y`, `x, y or z`.
+fn or_list(xs: &[String]) -> String {
+    match xs.split_last() {
+        None => String::new(),
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
+    }
+}
+
+/// How a slot moves on, for `suture build`'s `slots:` section (appendix W.2.4):
+/// what the runtime does without the program saying so.
+pub fn slot_policy(p: &Program, s: &crate::ir::Slot) -> String {
+    let mut when = vec![format!("one fails on its last of {} attempts, or times out", p.attempts)];
+    for (alt, patience) in s.alternatives.iter().zip(&s.patience) {
+        if let Some(secs) = patience {
+            when.push(format!("{alt} has waited {} without going out", duration_text(*secs as i64)));
+        }
+    }
+    when.push("a rule on facts that never change refuses one".into());
+    format!("moves on to the first one not yet tried, in this order, when {}; one that went out is never given up for time alone", when.join("; when "))
 }

@@ -101,12 +101,15 @@ fn build(dir: &Path) -> Result<bool, String> {
             }
         }
     }
-    if !prog.decisions.is_empty() && !prog.slots.is_empty() {
+    if !prog.slots.is_empty() {
         println!("\nslots:");
         for s in &prog.slots {
             println!("  {}'s {}: {}", s.owner, s.name, s.alternatives.join(", then "));
-            let fallback = format!("otherwise `prefer {}`", s.name);
-            println!("    decided by: {}", suture_lang::readback::handlers_for(&prog, &s.name, &s.owner, fallback).join("; "));
+            if !prog.decisions.is_empty() {
+                let fallback = format!("otherwise `prefer {}`", s.name);
+                println!("    decided by: {}", suture_lang::readback::handlers_for(&prog, &s.name, &s.owner, fallback).join("; "));
+            }
+            println!("    {}", suture_lang::readback::slot_policy(&prog, s));
         }
     }
     if !prog.roles.is_empty() || !prog.admits.is_empty() {

@@ -316,3 +316,21 @@ fn two_recovery_actions_both_apply() {
 ",
     );
 }
+
+#[test]
+fn a_fetch_nothing_waits_on_any_more_stops() {
+    // Slice 22 (appendix W.2.1): a cancelled order's payment is gone, so its
+    // credit is not asked for again, and a late answer is ignored.
+    let p = prog(&format!("{CREDIT}admit cancel Order by staff\nwhen a staff cancels an Order: the Order is cancelled\n"));
+    let r = scenario(
+        &p,
+        "  when   staff Sam places a new Order O1 with customer Ada and total 50 EUR
+  and    staff Sam cancels O1
+  and    6 seconds pass
+",
+    );
+    let t = &r.host.trace;
+    assert!(has(t, "O1  credit: no step waits on it any more: stopped asking bureau"), "{}", t.join("\n"));
+    assert!(!has(t, "asking again"), "{}", t.join("\n"));
+    assert!(!has(t, "using 0 EUR instead"), "{}", t.join("\n"));
+}

@@ -1198,13 +1198,16 @@ impl Checker {
                     self.scope = Some(Scope { cand: String::new(), it_is_cand: false, elem: elem.clone() });
                     let name = match n {
                         ast::Num::Np(np) => np.steps.last().cloned(),
+                        // `taking 1`: a count, named after the kind that takes it, so
+                        // `the total repairs taken from each Garage` (appendix W.2.3).
+                        ast::Num::Lit(ast::Literal::Count(_)) => p.kind(&u.subject).map(|k| k.plural.to_lowercase()),
                         _ => None,
                     };
                     let t = self.num(p, &u.at, &u.subject, n);
                     match (name, t) {
                         (Some(name), Some((amount, ty @ (Ty::Money | Ty::Count)))) => Some(Some(Taking { name, amount, ty, period: None })),
                         (None, Some(_)) => {
-                            self.errors.push(err(&u.at, format!("`taking {}`: name the attribute taken, as in `taking the line's quantity`", show_num(n))));
+                            self.errors.push(err(&u.at, format!("`taking {}`: name the attribute taken, as in `taking the line's quantity`, or take a count, as in `taking 1`", show_num(n))));
                             None
                         }
                         (_, Some((_, ty))) => {
@@ -2365,10 +2368,21 @@ impl Checker {
                         return None;
                     }
                 };
-                if p.slot(kind).is_some() {
-                    let first = p.slot(kind).map(|s| s.alternatives[0].clone()).unwrap_or_default();
-                    self.errors.push(err(at, format!("`has a {kind}`: {kind} is a slot; name an alternative (`has a {first}`) or say `its {kind} is done`")));
-                    return None;
+                if let Some(slot) = p.slot(kind) {
+                    // `has a Outcome that is sent`: any of its alternatives, so a rule
+                    // about the slot holds each one, however many there are (appendix W.2.2).
+                    if !p.has_part(&k, &slot.alternatives[0]) {
+                        self.errors.push(err(at, format!("{} does not need {}", a(&k), a(kind))));
+                        return None;
+                    }
+                    let mut each = vec![];
+                    for alt in &slot.alternatives {
+                        if let Some(s) = state {
+                            self.state(p, at, alt, s)?;
+                        }
+                        each.push(Cond::Has { node: node.clone(), part: alt.clone(), state: state.clone(), negated: *negated });
+                    }
+                    return Some(if *negated { Cond::And(each) } else { Cond::Or(each) });
                 }
                 if !p.has_part(&k, kind) {
                     self.errors.push(err(at, format!("{} does not need {}", a(&k), a(kind))));
