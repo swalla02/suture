@@ -47,6 +47,8 @@ rule reports:  the number of each Grant's Reports is at most 1
 | `for each ⟨Kind⟩ and ⟨period⟩, ⟨bound⟩` | a bound for each entity and calendar period | below |
 | `⟨num with all ⟨Kinds⟩⟩ ⟨comparison⟩ ⟨num⟩, checked globally` | a bound over the whole system | below |
 
+**Rules over a slot.** A rule may name a slot where it would name a kind: `no Claim has an Outcome that is sent unless its score is less than 70` holds back a Repair, a Writeoff and a Cash alike, and an alternative added to `Outcome` later is under it with no change. Every alternative must have the state named. To cover only some, list them: `no Claim has a Writeoff or a Cash that is sent unless …`, where the last `that` is about each. The read-back lists what the slot stands for: `no claim ever has an outcome (a repair, a writeoff or a cash) that is sent unless …`.
+
 `unless` is the usual way to say "only after": `no Grant has an Award that is sent unless it is approved` means an award may go out only once the grant is approved. Since `sent` is the award's mark, the runtime holds the request back until then.
 
 ## Read-backs

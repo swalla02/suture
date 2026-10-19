@@ -13,7 +13,7 @@ kind ⟨Kind⟩ [(plural ⟨Plural⟩)] { ⟨attr⟩: ⟨Type⟩ [= ⟨literal o
 
 ⟨Kind⟩ needs ⟨Kind or Slot⟩[, …] [while ⟨cond⟩]
 ⟨Slot⟩ is ⟨Kind⟩ or ⟨Kind⟩[ or …]
-⟨Kind⟩ uses a ⟨Kind⟩ [per ⟨element⟩] where ⟨cond⟩[, taking ⟨num⟩]
+⟨Kind⟩ uses a ⟨Kind⟩ [per ⟨element⟩] where ⟨cond⟩[, taking ⟨num⟩ | taking ⟨count⟩]
 
 effect ⟨verb⟩ ⟨Kind⟩ via ⟨adapter⟩ within ⟨duration⟩
   sends    ⟨np⟩[, ⟨np⟩…]

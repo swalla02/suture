@@ -97,6 +97,8 @@ In a `prefer`, `the Driver` and `it` are the candidate. A `uses … per item` is
 
 `taking the Parcel's weight` records an amount against the chosen entity. The amount is named after the last attribute: here `weight`, so the driver keeps a running total read as `the total weight taken from …`. A rule about that total is **per-group**: one running total per driver, checked by the driver.
 
+`taking 1` counts instead: each chosen entity takes one, and the total is named after the taking kind's plural. `Repair uses a Garage where …, taking 1` is read as `the total repairs taken from each Garage`, so `rule bays: the total repairs taken from each Garage is at most its bays` gives a garage at most `bays` repairs at a time. Only a count may be taken this way; an amount such as `taking 5 EUR` is an error.
+
 A binding with no `taking` is granted unless a rule of the candidate refuses it.
 
 ## Waiting and waking

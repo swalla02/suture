@@ -1564,3 +1564,34 @@ Decision models chose from text and numbers only. This slice lets them see image
 - A personal photo is not given to the model, which declines; `prefer` picks.
 - Served: `POST /media` without a `Content-Type` is a 400; with one, the content is kept by its hash; an input naming unknown media is refused with 409 and not logged; the model picks at the next tick; the log holds the hash and not the content; a restart without model or media replays to the same unit.
 - The Jev request carries the photo with its base64; `omit` leaves the base64 out; missing content or content over `max_media_bytes` fails without posting.
+
+## Appendix W. Prototype slice 22: what the claims evaluation asked for (2026-10-19)
+
+The claims comparison (eval/claims/RESULTS.md) found one bug and three gaps. Change 2, a third outcome, cost Suture more than plain Rust, because every rule named one kind. This slice fixes those four things.
+
+### W.1 What slice 22 adds
+
+| Added in slice 22 | Still waits |
+|---|---|
+| a fetch nobody waits on stops | the explanation of a waiting step naming the fetch it waits for |
+| `has a ⟨Slot⟩ [that is ⟨state⟩]`, and a last `that` shared by `has a A or a B` | a slot through a path (`its Outcome's …`) |
+| `taking 1`, named after the taking kind's plural | taking a constant amount (`taking 5 EUR`) |
+| read-backs: when each source is asked, and how each slot moves on | |
+
+### W.2 Semantics that slice 22 settles
+
+1. **Stopping a fetch.** When a fetch's deadline passes, the runtime first checks whether any node that has not failed still needs the value: a rule that reads the source holds the node back, or the node is idle and waits on such a rule. If none does, the fetch ends with no more sends and no `otherwise`, and the trace says `⟨attr⟩: no step waits on it any more: stopped asking ⟨adapter⟩`. A later step that needs the value fetches it again as usual.
+2. **Rules over a slot.** `⟨np⟩ has a ⟨Slot⟩ [that is ⟨state⟩]` compiles to `has a ⟨A⟩ … or has a ⟨B⟩ …` over the slot's alternatives, and `has no ⟨Slot⟩` to `has no ⟨A⟩ and has no ⟨B⟩`. The state is checked against each alternative, and one alternative without it is a compile error. Strictness, sources and held steps follow from the expanded condition. In `has a A or a B that is S`, the last `that` applies to each kind, unless an earlier kind has its own `that`. The paraphrase reads `has an outcome (a repair, a writeoff or a cash) that is sent`.
+3. **Taking a count.** `taking ⟨count literal⟩` is allowed. The running total is named after the taking kind's plural in lower case (`repairs`), and read as `the total repairs taken from each Garage`. Any other literal is an error that suggests `taking 1`.
+4. **Read-backs.**
+   - A `sourcing:` line ends with `asked only when ⟨a K⟩ would be ⟨state⟩`, grouped by state, from the `no … has a K that is S` of the rules that read it. It says `asked only when a step they hold back would go ahead` when no such step can be named.
+   - Each slot in `slots:` is listed with or without decision models. It also states the policy the runtime applies: it moves on to the first alternative not yet tried, in `prefer` order, after the last of `attempts` failures or a timeout, after each alternative's patience, or when a rule on facts that never change refuses one; and one that went out is never given up for time alone.
+
+### W.3 Acceptance
+
+- A cancelled order whose credit fetch times out does not ask the bureau again.
+- `no O has a D that is sent` over a slot `D is A or B` compiles to an `or` over A and B, and its paraphrase names both. A state that only A has is an error.
+- `no O has an A or a B that is sent` applies `sent` to both, and `an A that is done or a B that is sent` keeps each state.
+- `taking 1` names the total `repairs`, and `taking 2 EUR` is an error.
+- `suture build` on examples/credit says `asked only when a Payment would be sent`. A slot's read-back states its attempts.
+- The claims workflow uses `taking 1` and one fraud rule over `Outcome`, and its thirteen scenarios pass.

@@ -101,6 +101,7 @@ prefer Return: Courier, then Collection after 3 days
 - A slot is needed like a part: `Application needs Return`.
 - A slot is `done` when its current alternative is done, and `failed` when it has failed on its last alternative.
 - In sentences, `its Return` reads the current alternative's state. You cannot go further through a slot (`its Return's …`); name the alternative instead (`its Courier's …`).
+- `has a Return [that is …]` means any of its alternatives, so a rule about the slot covers every alternative, including one added later (chapter 7).
 
 ### Which alternative, and when to move on
 

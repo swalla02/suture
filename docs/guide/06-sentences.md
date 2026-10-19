@@ -76,7 +76,8 @@ A relation such as `its Callbacks` includes **every entity that counts**: from i
 | `⟨num⟩ is at most ⟨num⟩`, `is at least`, `is more than`, `is less than` | comparison |
 | `⟨np⟩ contains ⟨np⟩`, `⟨np⟩ does not contain ⟨np⟩` | set membership (also `contain`, after a plural) |
 | `⟨np⟩ has a ⟨Kind⟩ [that ⟨cond⟩]` | at least one counting entity of that kind |
-| `⟨np⟩ has a ⟨Kind⟩ or a ⟨Kind⟩` | at least one of either |
+| `⟨np⟩ has a ⟨Kind⟩ or a ⟨Kind⟩ [that is ⟨state⟩]` | at least one of either; a last `that` is about each, unless an earlier kind has its own |
+| `⟨np⟩ has a ⟨Slot⟩ [that is ⟨state⟩]` | at least one of the slot's alternatives, whichever it is |
 | `⟨np⟩ has no ⟨Kind⟩ [that ⟨cond⟩]` | none |
 | `⟨cond⟩ and ⟨cond⟩`, `⟨cond⟩ or ⟨cond⟩` | both, either |
 

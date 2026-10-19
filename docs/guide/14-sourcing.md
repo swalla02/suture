@@ -89,7 +89,10 @@ A rule that reads a sourced fact, directly or through a `define`, is **strict**.
 
 - a value is fetched when a step waits on a strict rule that reads it, and the value is missing or too old for that rule;
 - one fetch at a time per value; a fetch that is open is not repeated;
-- when the answer comes, the step is checked again, with the new value.
+- when the answer comes, the step is checked again, with the new value;
+- a fetch that nothing waits on any more stops: when a timeout comes and no step that the fact's rules hold back is still waiting (the order was cancelled, or the payment already went out), the source is not asked again, and the trace says `credit: no step waits on it any more: stopped asking bureau`.
+
+`suture build` says when each source is asked: `read by rule credit; asked only when a Payment would be sent`.
 
 So the order of a unit's rules matters only for the trace: a step waits on the first rule it would break. Here the payment waits on `credit` first, so the credit is fetched while the order also waits for approval:
 
