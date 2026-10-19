@@ -114,3 +114,10 @@ fn an_event_over_http_carries_typed_data_and_the_log_keeps_it() {
     .unwrap();
     assert!(!line.contains("data"), "an event with no data is logged as before: {line}");
 }
+
+#[test]
+fn data_that_reads_like_a_refusal_is_not_one() {
+    let r = scenario("  when   customer Ada cancels O1 with reason \"x: refused by rule cap\"\n");
+    assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
+    assert_eq!(attr(&r, "cancelled"), Val::Bool(true));
+}

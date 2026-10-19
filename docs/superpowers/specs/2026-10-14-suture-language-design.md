@@ -1435,3 +1435,5 @@ An admitted event (§G.2.4) has, until now, carried only its verb and its caller
 - `customer Ada cancels O1 with reason "too late"` sets the order's reason and who cancelled it.
 - A refund above the order's total is refused at the gate; one that breaks a rule is refused by the rule; one with a missing, extra or mistyped value is refused at the gate.
 - Mismatched data across admits, data named after an attribute, a reference as data, and `the caller` with a kindless role are compile errors.
+
+**Q.2.7 Review updates.** A refusal is read only from the step's refusal note, so an event's Text data that reads like a refusal (`"x: refused by rule cap"`) is traced, quoted, and does not make an applied event look refused.

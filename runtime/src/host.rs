@@ -164,7 +164,7 @@ impl Host {
             self.carry(&Val::Ref(by.name.clone()), &mut facts);
         }
         self.tell(target, &Msg::Event { verb: by.verb.clone(), by: format!("{} {}", by.role, by.name), data, facts })?;
-        let refused = self.unit(target).and_then(|u| u.notes.iter().find_map(|n| n.split_once(": refused by rule ").map(|(_, r)| r.to_string())));
+        let refused = self.unit(target).and_then(|u| u.notes.iter().find_map(|n| n.strip_prefix("refused ")?.split_once(": refused by rule ").map(|(_, r)| r.to_string())));
         match refused {
             Some(r) => Err(format!("refused by rule {r}")),
             None => Ok(()),
@@ -191,7 +191,7 @@ impl Host {
         self.gate(by, fits, &format!("{target}'s {attr} to {}", interp::shown(&self.prog, attr, &value)), &unit)?;
         let who = by.map_or(String::new(), |c| format!("{} {}", c.role, c.name));
         let msg = Msg::Change { attr: attr.to_string(), value, by: who };
-        let refusal = |u: &Unit| u.notes.iter().find_map(|n| n.split_once(": refused by rule ").map(|(_, r)| r.to_string()));
+        let refusal = |u: &Unit| u.notes.iter().find_map(|n| n.strip_prefix("refused ")?.split_once(": refused by rule ").map(|(_, r)| r.to_string()));
         let after = interp::step_at(&self.prog, &unit, &msg, self.clock()).unit;
         if let Some(r) = refusal(&after) {
             self.trace.push(format!("{target:<3} {}", after.notes.join("; ")));
