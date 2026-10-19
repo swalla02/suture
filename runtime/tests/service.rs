@@ -10,7 +10,6 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use suture_lang::ir::{Program, Ty};
 use suture_runtime::backend::Transport;
-use suture_runtime::choice::Answer;
 use suture_runtime::service::{self, Adapter, Record, Service, Who};
 use suture_runtime::state::Val;
 
@@ -159,9 +158,12 @@ fn a_model_asked_while_the_clock_catches_up_is_logged_too() {
     let mut s = Service::open(&p, &dir, T0, model(asked.clone(), vec!["Courier", "Locker"])).unwrap();
     s.input(world(&p, "Applicant", "Ada", json!({ "name": "Ada" })), T0).unwrap();
     s.input(world(&p, "Application", "A1", json!({ "applicant": "Ada" })), T0).unwrap();
+    // A served program asks its models after the step, as it ticks (appendix S.2.2).
+    s.tick(T0).unwrap();
     // Three days on, the courier's patience runs out as the clock catches up
     // before this input, and the model picks the slot's next alternative.
     s.input(world(&p, "Applicant", "Bo", json!({ "name": "Bo" })), T0 + 3 * 86_400).unwrap();
+    s.tick(T0 + 3 * 86_400).unwrap();
     assert_eq!(asked.borrow().len(), 2);
     let unit = s.host.unit("A1");
     drop(s);
@@ -208,15 +210,17 @@ fn model_answers_come_from_the_log_on_replay() {
         s.input(world(&p, "Carrier", l, json!({ "name": l, "zone": "EU", "fee": fee })), T0).unwrap();
     }
     s.input(world(&p, "Order", "O1", json!({ "zone": "EU" })), T0).unwrap();
+    assert_eq!(*asked.borrow(), 0, "the model is asked after the step");
+    s.tick(T0).unwrap();
     assert_eq!(*asked.borrow(), 1);
     let trace = s.host.trace.clone();
     drop(s);
     let log = std::fs::read_to_string(dir.join("log.jsonl")).unwrap();
-    assert!(log.contains("{\"model\":{\"key\":\"O1/Shipment#1@Carrier\",\"answer\":{\"Picked\":\"Fast\"}}}"), "{log}");
+    assert!(log.contains("{\"decided\":{\"key\":\"O1/Shipment#1@Carrier\",\"answer\":{\"Picked\":\"Fast\"}}}"), "{log}");
     let s = Service::open(&p, &dir, T0, model(asked.clone())).unwrap();
     assert_eq!(*asked.borrow(), 1, "replay does not ask the model again");
     assert_eq!(s.host.trace, trace);
-    assert_eq!(s.host.model_answers, [("O1/Shipment#1@Carrier".to_string(), Answer::Picked("Fast".into()))]);
+    assert!(s.host.unit("O1").unwrap().root.parts[0].binds.values().any(|b| format!("{b:?}").contains("Fast")));
 }
 
 #[test]
@@ -325,4 +329,27 @@ fn values_follow_the_attribute_type() {
     assert_eq!(v(json!("hello"), None), Ok(Val::Text("hello".into())));
     let e = service::adapters(r#"{"payments": {"url": "u", "token": "x"}}"#).err().unwrap();
     assert_eq!(e, "adapters.json: payments: unknown field `token`; use \"url\" and \"key_env\"");
+}
+
+#[test]
+fn a_log_whose_inputs_asked_models_in_their_step_replays_so() {
+    let p = suture_lang::compile(&[("shop.st".to_string(), SHOP.to_string())]).unwrap_or_else(|e| panic!("{e:?}"));
+    let dir = state("models-in-step");
+    // A log written before models were asked after the step (appendix S.2.2).
+    let inline = |h: &mut suture_runtime::host::Host| {
+        h.defer_models = false;
+        h.models.register("carriers@1", Box::new(|_| Some("Fast".into())));
+    };
+    let mut s = Service::open(&p, &dir, T0, inline).unwrap();
+    for (l, fee) in [("Cheap", "5 EUR"), ("Fast", "9 EUR")] {
+        s.input(world(&p, "Carrier", l, json!({ "name": l, "zone": "EU", "fee": fee })), T0).unwrap();
+    }
+    s.input(world(&p, "Order", "O1", json!({ "zone": "EU" })), T0).unwrap();
+    let unit = s.host.unit("O1");
+    drop(s);
+    assert!(std::fs::read_to_string(dir.join("log.jsonl")).unwrap().contains("{\"model\":"));
+    let s = Service::open(&p, &dir, T0, |_| {}).unwrap();
+    assert_eq!(s.host.unit("O1"), unit);
+    assert!(s.host.model_asks().is_empty());
+    assert!(s.host.defer_models);
 }

@@ -58,6 +58,35 @@ pub struct Host {
     pub replay: VecDeque<(String, Answer)>,
     /// The secret store: each secret value by its number (appendix N.2.4).
     pub secrets: BTreeMap<u64, String>,
+    /// Whether a model is asked after the step that needs it, not in it
+    /// (appendix S.2.2). The service defers; scenarios ask at once.
+    pub defer_models: bool,
+    /// The choices put to a model and not answered yet, in the order asked.
+    asking: Vec<Asking>,
+}
+
+/// A choice waiting for its model's answer (appendix S.2.2).
+struct Asking {
+    model: String,
+    choice: Choice,
+    within: u64,
+    to: Chooses,
+}
+
+/// Where a deferred model's answer goes.
+enum Chooses {
+    /// A binding's choice, with its hole and pool key.
+    Bind { hole: HoleId, decide: Decide, pool: String },
+    /// A slot's or a source's choice, with its request's hole.
+    Ask { hole: HoleId, ask: Ask },
+}
+
+/// What gathering a binding's candidates came to.
+enum Gathered {
+    /// The pick, and how it was made.
+    Pick(String, String),
+    /// A model was asked, and answers later.
+    Asked,
 }
 
 /// A binding waiting on its pool key, with its choice's hole.
@@ -67,6 +96,22 @@ struct Waiter {
     decide: Decide,
     kind: String,
     key: String,
+}
+
+/// The pick a model's answer comes to, among `names`, best first, and how it
+/// was made. Whatever goes wrong leaves the pick to `prefer`, and says why
+/// (appendix K.2.5).
+fn resolve(model: &str, names: &[&str], answer: &Answer, within: u64) -> (String, String) {
+    let how = match answer {
+        Answer::Picked(p) if names.contains(&p.as_str()) => return (p.clone(), format!(" by model \"{model}\" (of {})", names.join(", "))),
+        Answer::Picked(p) => format!("model \"{model}\" picked {p}, which it was not offered"),
+        Answer::Declined => format!("model \"{model}\" declined"),
+        Answer::Unknown => format!("model \"{model}\" is not available"),
+        Answer::Late => format!("model \"{model}\" did not answer within {within} ms"),
+        Answer::Unsure(x) => format!("model \"{model}\" was unsure, at {x:.2}"),
+        Answer::Failed(e) => format!("model \"{model}\" failed: {e}"),
+    };
+    (names[0].to_string(), format!(" by prefer ({how})"))
 }
 
 /// A pool key as the host indexes it.
@@ -82,6 +127,8 @@ enum Timer {
     Goal(String, u32),
     /// A slot's patience, for a unit (appendix D.3.5).
     Patience(String, String),
+    /// A deferred model's deadline, by choice key (appendix S.2.2).
+    Model(String),
 }
 
 impl Host {
@@ -103,6 +150,8 @@ impl Host {
             pools: BTreeMap::new(),
             waiters: vec![],
             to_wake: VecDeque::new(),
+            defer_models: false,
+            asking: vec![],
             woken: BTreeSet::new(),
             gate: vec![],
             readers: BTreeMap::new(),
@@ -340,8 +389,9 @@ impl Host {
         let b = self.prog.bindings.get(d.binding as usize).ok_or("a choice for an unknown binding")?;
         let kind = b.target.clone();
         let key = self.pool_key(&u, &d);
-        match self.gather(&u, &d, &key) {
-            Some((label, how)) => self.pick(hole, &label, &d, &how),
+        match self.gather(&u, &d, &key, hole) {
+            Some(Gathered::Pick(label, how)) => self.pick(hole, &label, &d, &how),
+            Some(Gathered::Asked) => Ok(()),
             None => {
                 self.waiters.push(Waiter { hole, decide: d.clone(), kind, key });
                 self.post(&d.label, &Msg::Waiting { key: d.key() })
@@ -363,16 +413,14 @@ impl Host {
     /// The pick among the pool's candidates for this key, if any, and how it
     /// was made: by `prefer`, or by the model that handles the choice, which
     /// may pick only among the options (appendix J.2.4).
-    fn gather(&mut self, u: &Unit, d: &Decide, key: &str) -> Option<(String, String)> {
+    fn gather(&mut self, u: &Unit, d: &Decide, key: &str, hole: HoleId) -> Option<Gathered> {
         let prog = self.prog.clone();
         let b = prog.bindings.get(d.binding as usize)?;
-        let labels = self.pools.get(&(b.target.clone(), b.key_attr.clone()))?.get(key)?.clone();
-        let candidates = labels.iter().filter(|l| !d.skip.contains(l)).filter_map(|l| self.unit(l)).collect::<Vec<_>>();
-        let options = interp::options(&prog, u, d, candidates.into_iter());
+        let options = self.options(u, d, key);
         let first = options.first()?.label.clone();
         // With one option there is no choice, and no model is asked (appendix K.2.2).
         let model = interp::handler(&prog, u, d).and_then(|h| Some((h.model.clone()?, h.within_ms))).filter(|_| options.len() > 1);
-        let Some((model, within)) = model else { return Some((first, String::new())) };
+        let Some((model, within)) = model else { return Some(Gathered::Pick(first, String::new())) };
         let (chooser, facts) = interp::chooser(&prog, u, d).unwrap_or_default();
         let choice = Choice {
             point: b.target.clone(),
@@ -383,7 +431,84 @@ impl Host {
             options: options.iter().map(|o| Option_ { label: o.label.clone(), attrs: unmarked(&prog, o.root.attrs.clone().into_iter().collect()) }).collect(),
             currency: prog.currency.clone(),
         };
-        Some(self.consult(&model, &choice, within))
+        if self.defer_models {
+            self.defer(model, choice, within, Chooses::Bind { hole, decide: d.clone(), pool: key.to_string() });
+            return Some(Gathered::Asked);
+        }
+        let (pick, how) = self.consult(&model, &choice, within);
+        Some(Gathered::Pick(pick, how))
+    }
+
+    /// The pool's candidates for a binding that its filter lets through,
+    /// best first under `prefer`.
+    fn options(&self, u: &Unit, d: &Decide, key: &str) -> Vec<Unit> {
+        let Some(b) = self.prog.bindings.get(d.binding as usize) else { return vec![] };
+        let Some(labels) = self.pools.get(&(b.target.clone(), b.key_attr.clone())).and_then(|p| p.get(key)) else { return vec![] };
+        let candidates = labels.iter().filter(|l| !d.skip.contains(l)).filter_map(|l| self.unit(l)).collect::<Vec<_>>();
+        interp::options(&self.prog, u, d, candidates.into_iter())
+    }
+
+    /// Puts a choice to its model after the step: the service asks it, and
+    /// its answer comes back as an input. If none comes within the model's
+    /// deadline, `prefer` picks (appendix S.2.2).
+    fn defer(&mut self, model: String, choice: Choice, within: u64, to: Chooses) {
+        self.trace.push(format!("      choice for {}: model \"{model}\" is asked", choice.key));
+        let secs = within.div_ceil(1000).max(1);
+        self.schedule(self.now + secs, Timer::Model(choice.key.clone()));
+        self.asking.retain(|a| a.choice.key != choice.key);
+        self.asking.push(Asking { model, choice, within, to });
+    }
+
+    /// The choices waiting for a model, as (key, unit), in the order asked.
+    pub fn model_asks(&self) -> Vec<(String, String)> {
+        self.asking.iter().map(|a| (a.choice.key.clone(), a.choice.unit.clone())).collect()
+    }
+
+    /// Asks the model of a waiting choice, and gives its answer without
+    /// applying it: the caller logs it and applies it with [`Host::model_answer`].
+    pub fn ask_model_now(&mut self, key: &str) -> Option<Answer> {
+        let a = self.asking.iter().find(|a| a.choice.key == key)?;
+        let (model, choice, within) = (a.model.clone(), a.choice.clone(), a.within);
+        Some(self.models.ask(&model, &choice, within))
+    }
+
+    /// A deferred model's answer (appendix S.2.2). The options are gathered
+    /// again, since the world may have moved on since it was asked: a pick
+    /// that is no longer an option leaves the choice to `prefer`.
+    pub fn model_answer(&mut self, key: &str, answer: &Answer) -> Result<(), String> {
+        let Some(i) = self.asking.iter().position(|a| a.choice.key == key) else {
+            self.trace.push(format!("      model answer for {key} ignored: nothing waits for it"));
+            return Ok(());
+        };
+        let a = self.asking.remove(i);
+        match a.to {
+            Chooses::Bind { hole, decide, pool } => {
+                let Some(u) = self.unit(&decide.label) else { return Ok(()) };
+                let options = self.options(&u, &decide, &pool);
+                let names: Vec<&str> = options.iter().map(|o| o.label.as_str()).collect();
+                if names.is_empty() {
+                    let kind = self.prog.bindings.get(decide.binding as usize).map(|b| b.target.clone()).unwrap_or_default();
+                    self.waiters.push(Waiter { hole, decide: decide.clone(), kind, key: pool });
+                    self.post(&decide.label, &Msg::Waiting { key: decide.key() })?;
+                } else {
+                    let (pick, how) = resolve(&a.model, &names, answer, a.within);
+                    self.pick(hole, &pick, &decide, &how)?;
+                }
+            }
+            Chooses::Ask { hole, ask } => {
+                let options = self.unit(&ask.label).and_then(|u| interp::choice_of(&u, &ask.key)).map(|(_, _, o)| o);
+                match options {
+                    None => self.answer_model(hole, &[])?,
+                    Some(options) => {
+                        let names: Vec<&str> = options.iter().map(String::as_str).collect();
+                        let (pick, how) = resolve(&a.model, &names, answer, a.within);
+                        self.answer_model(hole, &[("pick".into(), Val::Text(pick.clone()))])?;
+                        self.trace.push(format!("      choice: {pick} for {}{how}", ask.key));
+                    }
+                }
+            }
+        }
+        self.pump()
     }
 
     /// The model's pick among the choice's options, which come best first, and
@@ -396,16 +521,7 @@ impl Host {
             _ => self.models.ask(model, c, within),
         };
         self.model_answers.push((c.key.clone(), answer.clone()));
-        let how = match answer {
-            Answer::Picked(p) if names.contains(&p.as_str()) => return (p, format!(" by model \"{model}\" (of {})", names.join(", "))),
-            Answer::Picked(p) => format!("model \"{model}\" picked {p}, which it was not offered"),
-            Answer::Declined => format!("model \"{model}\" declined"),
-            Answer::Unknown => format!("model \"{model}\" is not available"),
-            Answer::Late => format!("model \"{model}\" did not answer within {within} ms"),
-            Answer::Unsure(x) => format!("model \"{model}\" was unsure, at {x:.2}"),
-            Answer::Failed(e) => format!("model \"{model}\" failed: {e}"),
-        };
-        (names[0].to_string(), format!(" by prefer ({how})"))
+        resolve(model, &names, &answer, within)
     }
 
     /// A slot's or a source's choice put to a model (appendix K.2.3–K.2.4):
@@ -430,6 +546,10 @@ impl Host {
             options: options.iter().map(|o| Option_ { label: o.clone(), attrs: vec![] }).collect(),
             currency: self.prog.currency.clone(),
         };
+        if self.defer_models {
+            self.defer(ask.adapter.clone(), c, within, Chooses::Ask { hole, ask: ask.clone() });
+            return Ok(());
+        }
         let (pick, how) = self.consult(&ask.adapter, &c, within);
         self.answer_model(hole, &[("pick".into(), Val::Text(pick.clone()))])?;
         self.trace.push(format!("      choice: {pick} for {}{how}", ask.key));
@@ -492,11 +612,16 @@ impl Host {
                 i += 1;
                 continue;
             }
-            match self.gather(&requester, &fresh, &w.key) {
-                Some((pick, how)) => {
+            match self.gather(&requester, &fresh, &w.key, w.hole) {
+                Some(Gathered::Pick(pick, how)) => {
                     self.waiters.remove(i);
                     self.woken.insert(w.decide.key());
                     self.pick(w.hole, &pick, &fresh, &how)?;
+                    return Ok(true);
+                }
+                Some(Gathered::Asked) => {
+                    self.waiters.remove(i);
+                    self.woken.insert(w.decide.key());
                     return Ok(true);
                 }
                 None => i += 1,
@@ -733,6 +858,12 @@ impl Host {
                 self.trace.push(format!("      {}: no answer within {}   ({})", ask.adapter, duration(within), ask.key));
                 self.expired.push(ask);
                 self.pump()
+            }
+            Timer::Model(key) => {
+                if !self.asking.iter().any(|a| a.choice.key == key) {
+                    return Ok(());
+                }
+                self.model_answer(&key, &Answer::Late)
             }
             Timer::Goal(label, goal) => {
                 let Some(unit) = self.unit(&label) else { return Ok(()) };

@@ -324,6 +324,16 @@ scenario "a late model leaves the return to prefer":
 
 The deadline is part of the program, like the model's name. The journal holds the answer, or its absence, so replay never waits.
 
+### Served programs ask after the step
+
+In a scenario, a model is asked in the step that needs it. A served program (chapter 17) does not hold the step up for it. The choice waits, and the trace says so:
+
+```text
+      choice for O1/Shipment#1@Carrier: model "carriers@1" is asked
+```
+
+The input is answered at once. The service then asks the model as it ticks, and logs its answer as an input of its own. If no answer has been logged when the deadline runs out, `prefer` picks, as for a late model. The options are gathered again when the answer arrives, so a pick that stopped being an option meanwhile is left to `prefer` as well. With pods (chapter 20), the pod that owns the unit asks its model.
+
 ## Sources
 
 An attribute with more than one source (chapter 14) is a choice point named `K's a`: the model picks which source to ask.

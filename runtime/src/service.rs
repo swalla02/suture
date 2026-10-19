@@ -56,6 +56,8 @@ pub enum Record {
     Answer { adapter: String, outcome: String, key: Option<String>, target: Option<String>, data: Vec<(String, Val)> },
     /// A model's answer to the choice with this key, given while the input before it applied.
     Model { key: String, answer: Answer },
+    /// A model's answer to a choice asked after its step (appendix S.2.2).
+    Decided { key: String, answer: Answer },
     /// The program was deployed in this version, kept as `program-v⟨n⟩.json` (appendix M.2.6).
     Deploy { version: u32 },
 }
@@ -198,8 +200,11 @@ fn synced(path: &Path, text: &str) -> std::io::Result<()> {
 impl Service {
     /// A service with no log: for tests, and for trying a program out.
     pub fn in_memory(prog: &Program, now: u64) -> Service {
+        let mut host = Host::new(prog.clone());
+        // A served program asks its models after the step (appendix S.2.2).
+        host.defer_models = true;
         Service {
-            host: Host::new(prog.clone()),
+            host,
             started: now,
             log: None,
             adapters: BTreeMap::new(),
@@ -565,9 +570,13 @@ impl Service {
                 _ => unreachable!(),
             }).collect();
             let skip = self.host.replay.len();
+            // An input logged with its model answers asked them in its step.
+            let defer = self.host.defer_models;
+            self.host.defer_models = defer && skip == 0;
             // A reference missing from the secret store is an error (appendix N.2.6).
             let sealed = self.seal(records[i].clone()).map_err(|e| format!("{}: {e}", path.display()))?;
             let applied = self.apply(&sealed);
+            self.host.defer_models = defer;
             if let Record::Deploy { version } = &records[i] {
                 // A deploy that cannot be made again would replay the rest under the wrong program.
                 if self.host.prog.version != *version {
@@ -603,6 +612,8 @@ impl Service {
             return Err(format!("the log could not be written ({why}), so this pod takes nothing until it restarts"));
         }
         self.beat(now)?;
+        // Models first: their deadlines are timers too (appendix S.2.2).
+        let asked = self.ask_models(now)?;
         let elapsed = self.elapsed(now);
         // A clock that stepped back waits until it is past the runtime clock
         // again. Another pod may have fired the timers already (appendix O.2.7).
@@ -619,7 +630,34 @@ impl Service {
         // Posts that failed are tried again.
         let from = self.host.trace.len();
         self.post_new(now)?;
-        Ok([fired, self.host.trace[from..].to_vec()].concat())
+        Ok([asked, fired, self.host.trace[from..].to_vec()].concat())
+    }
+
+    /// Asks the models of this pod's waiting choices, one at a time, and
+    /// logs and applies each answer as an input (appendix S.2.2). The clock
+    /// does not move first, so an answer given in time is not overtaken by
+    /// its own deadline.
+    fn ask_models(&mut self, now: u64) -> Result<Vec<String>, String> {
+        let mut out = vec![];
+        if self.broken.is_some() {
+            return Ok(out);
+        }
+        let pods = self.pods(now);
+        let mut asked = BTreeSet::new();
+        loop {
+            self.refresh()?;
+            let mine = |l: &String| owner(l, &pods) == Some(&self.pod);
+            let next = self.host.model_asks().into_iter().find(|(k, l)| mine(l) && !asked.contains(k));
+            let Some((key, _)) = next else { return Ok(out) };
+            asked.insert(key.clone());
+            let Some(answer) = self.host.ask_model_now(&key) else { continue };
+            out.extend(self.locked(|s| {
+                let from = s.host.trace.len();
+                s.applied(Record::Decided { key: key.clone(), answer: answer.clone() })?;
+                Ok(s.host.trace[from..].to_vec())
+            })?);
+            self.beat(now)?;
+        }
     }
 
     /// Applies an input at Unix time `now`: the clock moves on first; then
@@ -746,6 +784,7 @@ impl Service {
             Record::Answer { adapter, outcome, key: Some(key), data, .. } => h.answer_key(adapter, outcome, data, key),
             Record::Answer { adapter, outcome, target, data, .. } => h.answer(adapter, outcome, data, target.as_deref()),
             Record::Model { .. } => Ok(()),
+            Record::Decided { key, answer } => h.model_answer(key, answer),
             Record::Deploy { version } => {
                 let prog = match self.programs.get(version) {
                     Some(p) => p.clone(),

@@ -11,7 +11,7 @@ Suture v0 is a prototype. Everything earlier in this guide runs and is tested. T
 - **Totals are not checked at a deploy.** A new or tighter total (`per-group` or `global`) is checked from the next take on; a renamed `checked globally` total starts again from zero.
 - **Whole seconds.** The clock and every timer count whole seconds.
 - **HTTP only.** The service speaks plain HTTP/1.1, one request per connection, with a `Content-Length` body, and leaves TLS to the gateway in front of it. Adapters are reached over HTTP through `curl`.
-- **One request at a time.** Inputs, reads, timers and adapter posts take turns, so a slow adapter holds up the service for as long as its post takes (at most 10 seconds).
+- **One request at a time.** Inputs, reads, timers, adapter posts and model asks take turns, so a slow adapter holds up the service for as long as its post takes (at most 10 seconds), and a slow model for its `within`. Models are asked after the input's step, so the input's own answer does not wait for them.
 - **No `suture test`.** Tests run through `cargo test` and `suture run`.
 - **Alerts** appear only in the trace and in `suture explain`; they are not sent anywhere.
 
@@ -38,11 +38,9 @@ Suture v0 is a prototype. Everything earlier in this guide runs and is tested. T
 | sourcing a `Bool` state | source a Text or Count and compare it in the rule |
 | a formula, a `becomes`, or a total's filter that stays fresh over a sourced fact | read the sourced fact in the rule itself |
 | prefetching | facts are fetched when a step waits on them |
-| asking a model without holding up the step | a model is asked in the step that needs it, which waits up to the model's `within`; keep it short |
 | keys from anywhere but an environment variable | `models.json` names the variable with `key_env` |
 | a model that sees the whole unit | it sees the entity that chooses, with its own facts, and the options with theirs |
 | two `decide`s with a `whose` at the same rank, even when their conditions exclude each other | give one of them a nearer scope or a choice point |
-| waking only as many waiting bindings as a freed amount can serve | every waiter of the pool key is woken, in arrival order, and gathers again |
 
 ## By design, never
 

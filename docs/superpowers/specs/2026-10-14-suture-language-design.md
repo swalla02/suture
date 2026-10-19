@@ -1463,3 +1463,27 @@ Until now a goal's subject and an event's target had to be a root kind. A goal l
 - The gate reads the part's state: delivering a delivered Shipment is refused at the gate. An event to the root kind with no admit is refused at the gate; one that breaks a rule is refused by the rule.
 
 **R.2.5 Review updates.** A part counts, for a goal and as an event's target, only when every node on the way to it is a current attempt, so the parts of a replaced owner are left out. An HTTP event's `part` that is not text is a bad request.
+
+## Appendix S. Prototype slice 18: waking only what can be served, and asking models after the step (2026-10-19)
+
+Two costs left in v0 are lifted. A freed amount woke every waiter of its pool key: each one gathered, most were refused, and each refusal was a round of messages. And a choice handled by a model held up the step that needed it for up to the model's `within`, and with it the caller's answer.
+
+### S.1 What slice 18 adds
+
+| Added in slice 18 | Still waits |
+|---|---|
+| a freed amount, a new entity or a change wakes only the waiters the entity can serve, one at a time | waking by a strict arrival order, where a waiter that does not fit holds back the ones behind it |
+| a served program asks its models after the step, as it ticks, and logs each answer as an input (`decided`) | asking models in parallel, in threads of their own |
+| a deferred choice whose deadline passes is left to `prefer` | |
+
+### S.2 Semantics that slice 18 settles
+
+1. **Waking.** A change to a shared entity (an amount given back, the entity created, an admitted change) puts it on a queue. When the host is idle, it takes the first entity of the queue and, in arrival order, the first waiter of that entity's pool key that the entity would grant its take now: the take checked against the entity's rules as the entity would check it. That waiter gathers again from scratch, and the host lets everything it causes happen before it looks for the next. A waiter the entity would refuse is not woken and sends nothing. Each waiter is woken at most once per change, so a pick refused for another reason does not loop. When no waiter can be served, the next entity of the queue is taken. A smaller waiter can therefore go ahead of a larger one that does not fit.
+2. **Models after the step.** With `defer_models`, which a served program has and a scenario does not, a choice that needs a model (§J, §K) is not put to it in the step. The binding or the slot stays asked; the trace says `choice for ⟨key⟩: model "m" is asked`; and a timer is set for the model's `within`, in whole seconds, at least one. The service asks the models of its own units (§O.2.5) as it ticks, before it fires timers, and applies each answer as an input logged as `{"decided": {"key", "answer"}}`, without moving the clock first. On the answer, the options are gathered again: a pick among them is used; one that is no longer an option, a decline, or any failure leaves the choice to `prefer`, as in §K.2.5; with no option left, a binding waits. If the deadline fires first, `prefer` picks, and a later answer is ignored.
+3. **Replay.** A `decided` line replays its answer, so no model is asked again. An input followed by `model` lines, from a log written before this slice, asked its models in its step, and replays so.
+
+### S.3 Acceptance
+
+- Two units come back to a Stock with two orders waiting, one for 2 and one for 1: the first gets them, and the second is not woken, asks nothing and is refused nothing.
+- A served input whose choice needs a model is answered before the model is asked; the model's pick arrives at the next tick, is logged as `decided`, and replays without the model.
+- A deferred choice whose deadline passes is picked by `prefer`, and the model's later answer is ignored.

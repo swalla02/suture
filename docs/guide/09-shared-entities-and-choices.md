@@ -101,13 +101,13 @@ A binding with no `taking` is granted unless a rule of the candidate refuses it.
 
 ## Waiting and waking
 
-When no candidate is left, the binding **waits** on its pool key, and its part waits with it. It is woken, in arrival order, when:
+When no candidate is left, the binding **waits** on its pool key, and its part waits with it. It is woken when:
 
 - an amount is given back to an entity of that pool;
 - a new entity joins that pool (`given` in a scenario, or an admitted creation);
 - an admitted change sets an attribute of an entity in that pool (chapter 10).
 
-A woken binding gathers again from scratch.
+Only the waiters the change can serve are woken. The host goes through them in arrival order, and wakes the first one the changed entity would grant its take. That binding gathers again from scratch, and its take is applied before the host looks for the next one. A waiter the entity cannot serve stays asleep and sends nothing. So when 2 units come back, an order waiting for 2 gets them, and an order behind it waiting for 1 is not woken just to be refused. A smaller waiter can go ahead of a larger one that does not fit.
 
 ## Giving back
 
