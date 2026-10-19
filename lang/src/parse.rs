@@ -84,6 +84,10 @@ fn number<T: std::str::FromStr>(c: &mut Cursor, what: &str) -> Result<T, Error> 
     }
 }
 
+/// The longest duration a program or scenario may name: 100 years, so that
+/// no deadline or clock can overflow (appendix T.2.1).
+pub const MAX_DURATION_SECS: u64 = 100 * 365 * 86_400;
+
 /// `30 seconds`, `1 day`, `3 days` and so on, in seconds.
 pub(crate) fn duration(c: &mut Cursor) -> Result<u64, Error> {
     let n: u64 = number(c, "a duration")?;
@@ -96,7 +100,7 @@ pub(crate) fn duration(c: &mut Cursor) -> Result<u64, Error> {
         "week" => 604_800,
         _ => return Err(c.error(format!("unknown time unit `{unit}`: use seconds, minutes, hours, days or weeks"))),
     };
-    Ok(n * secs)
+    n.checked_mul(secs).filter(|d| *d <= MAX_DURATION_SECS).ok_or_else(|| c.error(format!("`{n} {unit}` is too long: a duration is at most 100 years")))
 }
 
 fn type_name(c: &mut Cursor) -> Result<TypeName, Error> {
@@ -135,7 +139,11 @@ fn module(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     let (mut attempts, mut candidates) = (None, None);
     while c.eat_sym(',') {
         if c.eat_word("attempts") {
-            attempts = Some(number(&mut c, "a number of attempts")?);
+            let n: u32 = number(&mut c, "a number of attempts")?;
+            if n == 0 {
+                return Err(c.error("`attempts` must be at least 1"));
+            }
+            attempts = Some(n);
         } else if c.eat_word("candidates") {
             let n: u32 = number(&mut c, "a number of candidates")?;
             if n == 0 {

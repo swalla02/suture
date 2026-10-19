@@ -44,7 +44,9 @@ allow ⟨adapter⟩ to receive ⟨Kind⟩'s ⟨attr⟩[, ⟨Kind⟩'s ⟨attr⟩
 
 **Marks:** after the type, `secret` (Text only, no default) or `personal`: `card: Text secret` (chapter 19).
 
-**Literals:** `"text"`, `yes`/`no`, `3`, `9.99 EUR`, `30 seconds` (also minutes, hours, days, weeks).
+**Literals:** `"text"`, `yes`/`no`, `3`, `9.99 EUR`, `30 seconds` (also minutes, hours, days, weeks). A duration is at most 100 years.
+
+**Checked once:** `attempts` and `candidates` are at least 1; no two kinds share a plural, and no plural is another kind's name; a choice has one `prefer` (one per `for a ⟨element⟩`).
 
 ## Sentences
 

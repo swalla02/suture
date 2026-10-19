@@ -1487,3 +1487,28 @@ Two costs left in v0 are lifted. A freed amount woke every waiter of its pool ke
 - Two units come back to a Stock with two orders waiting, one for 2 and one for 1: the first gets them, and the second is not woken, asks nothing and is refused nothing.
 - A served input whose choice needs a model is answered before the model is asked; the model's pick arrives at the next tick, is logged as `decided`, and replays without the model.
 - A deferred choice whose deadline passes is picked by `prefer`, and the model's later answer is ignored.
+
+## Appendix T. Prototype slice 19: the deferred minors (2026-10-19)
+
+Four small gaps found along the way, each of which let a program or an input go wrong without saying so.
+
+### T.1 What slice 19 adds
+
+| Added in slice 19 | Still waits |
+|---|---|
+| a duration is at most 100 years, and a larger one, or one that overflows, is a compile error | |
+| an input that would make a unit larger than the payload limit is refused before anything changes | a step that grows a unit past the limit on an answer or a timer faults (§L) |
+| a second `prefer` for the same choice, and two kinds that share a plural, are compile errors | |
+| `attempts 0` is a compile error, like `candidates 0` | |
+
+### T.2 Semantics that slice 19 settles
+
+1. **Durations.** Every duration a program or a scenario names, in any unit, is at most 100 years (3 153 600 000 seconds). Larger ones, and ones whose seconds overflow, are compile errors that name the duration. The runtime adds durations to its clock without wrapping.
+2. **Unit size.** A unit is one payload, so it must fit the machine's payload limit (§A, 4096 bytes). A creation, an admitted change and an admitted event are checked as the unit would be after their step: one that would not fit is refused, `refused: ⟨label⟩ would hold ⟨n⟩ bytes, and a unit holds at most 4096`, and nothing is created or changed.
+3. **Checked once.** `attempts` must be at least 1. A choice (a slot, or a kind picked with `uses`, per `for a ⟨element⟩`) has at most one `prefer`; a second is an error naming the first's line. A kind's plural may be neither another kind's plural nor another kind's name, so `all ⟨Plural⟩` and the like name one kind; a kind may be its own plural (`kind Sheep (plural Sheep)`).
+
+### T.3 Acceptance
+
+- `within 5300 weeks` and `within 99999999999999999 weeks` are compile errors; `5200 weeks` compiles.
+- A Note created with a body of 5000 characters is refused, and nothing is made; changing a Note's body to one is refused, and the Note is unchanged. Neither leaves a fault.
+- Two `prefer Carrier:` lines, `kind Crate (plural Boxes)` beside `kind Box`, and `attempts 0` are each a compile error.

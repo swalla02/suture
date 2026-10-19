@@ -232,7 +232,9 @@ impl Host {
             self.carry(&Val::Ref(by.name.clone()), &mut facts);
         }
         let part = part.unwrap_or_default().to_string();
-        self.tell(target, &Msg::Event { verb: by.verb.clone(), by: format!("{} {}", by.role, by.name), part, data, facts })?;
+        let msg = Msg::Event { verb: by.verb.clone(), by: format!("{} {}", by.role, by.name), part, data, facts };
+        self.fits(&interp::step_at(&self.prog, &unit, &msg, self.clock()).unit)?;
+        self.tell(target, &msg)?;
         let refused = self.unit(target).and_then(|u| u.notes.iter().find_map(|n| n.strip_prefix("refused ")?.split_once(": refused by rule ").map(|(_, r)| r.to_string())));
         match refused {
             Some(r) => Err(format!("refused by rule {r}")),
@@ -266,6 +268,7 @@ impl Host {
             self.trace.push(format!("{target:<3} {}", after.notes.join("; ")));
             return Err(format!("refused by rule {r}"));
         }
+        self.fits(&after)?;
         let fact = Fact { kind, created: after.root.created, attrs: after.root.attrs.clone() };
         let refresh = Msg::Refresh { facts: Facts::from([(target.to_string(), fact)]) };
         let readers: Vec<String> = self.readers.get(target).cloned().unwrap_or_default();
@@ -286,6 +289,18 @@ impl Host {
             self.tell(r, &refresh)?;
         }
         Ok(())
+    }
+
+    /// Refuses an input that would make a unit larger than the machine lets
+    /// one be, before anything changes (appendix T.2.2).
+    fn fits(&mut self, u: &Unit) -> Result<(), String> {
+        let (bytes, limit) = (u.to_value().encoded_len(), self.machine.program().limits.max_payload_bytes);
+        if bytes <= limit {
+            return Ok(());
+        }
+        let why = format!("{} would hold {bytes} bytes, and a unit holds at most {limit}", u.label);
+        self.trace.push(format!("{:<3} refused: {why}", u.label));
+        Err(format!("refused: {why}"))
     }
 
     fn read_by(&mut self, read: &str, by: &str) {
@@ -329,6 +344,8 @@ impl Host {
             self.gate(by, fits, &format!("a new {kind} {label}"), &unit)?;
         }
         interp::refused_at_creation(&self.prog, &unit, self.clock())?;
+        self.fits(&unit)?;
+        self.fits(&interp::step_at(&self.prog, &unit, &Msg::Create, self.clock()).unit)?;
         let sig = self.machine.program().sig.clone();
         let mut b = NetBuilder::new(&sig);
         let (meet, rest) = (b.var(), b.var());
@@ -459,7 +476,7 @@ impl Host {
         self.trace.push(format!("      choice for {}: model \"{model}\" is asked", choice.key));
         let secs = within.div_ceil(1000).max(1);
         let timer = self.started + 1;
-        self.schedule(self.now + secs, Timer::Model(choice.key.clone(), timer));
+        self.schedule(self.now.saturating_add(secs), Timer::Model(choice.key.clone(), timer));
         self.asking.retain(|a| a.choice.key != choice.key);
         self.asking.push(Asking { model, choice, within, to, timer });
     }
@@ -814,7 +831,7 @@ impl Host {
     /// Moves the clock forward by `secs`, firing in order every timer due by
     /// then; while a timer fires, the clock reads its due time (appendix C.3.2).
     pub fn pass(&mut self, secs: u64) -> Result<(), String> {
-        let until = self.now + secs;
+        let until = self.now.saturating_add(secs);
         let mut first_error = None;
         while let Some((&(due, seq), _)) = self.timers.first_key_value() {
             if due > until {
@@ -1167,7 +1184,7 @@ impl Host {
                 }
                 let within = self.prog.request_within(&ask.kind);
                 self.expired.retain(|a| a.key != ask.key);
-                self.schedule(self.now + within, Timer::Deadline(hole));
+                self.schedule(self.now.saturating_add(within), Timer::Deadline(hole));
                 self.pending.push((ask, hole));
             }
             if effects.is_empty() {
@@ -1226,14 +1243,14 @@ impl Host {
         }
         for (id, secs) in &unit.timers {
             if self.patience_timers.insert(id.clone()) {
-                self.schedule(self.now + secs, Timer::Patience(label.to_string(), id.clone()));
+                self.schedule(self.now.saturating_add(*secs), Timer::Patience(label.to_string(), id.clone()));
             }
         }
         for &g in &unit.matched {
             let within = self.prog.goals.get(g as usize).and_then(|x| x.within_secs);
             if let Some(secs) = within
                 && self.goal_timers.insert((label.to_string(), g)) {
-                self.schedule(self.now + secs, Timer::Goal(label.to_string(), g));
+                self.schedule(self.now.saturating_add(secs), Timer::Goal(label.to_string(), g));
             }
         }
         Ok(())

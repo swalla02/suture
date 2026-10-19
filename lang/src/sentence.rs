@@ -18,7 +18,8 @@ pub fn literal(c: &mut Cursor) -> Result<Option<Literal>, Error> {
             if let Some(secs) = time_unit(c.peek()) {
                 c.next();
                 let k: i64 = n.parse().map_err(|_| c.error(format!("`{n}` is not a whole number")))?;
-                let d = k.checked_mul(secs).ok_or_else(|| c.error(format!("`{n}` is too long a duration")))?;
+                let max = crate::parse::MAX_DURATION_SECS as i64;
+                let d = k.checked_mul(secs).filter(|d| d.abs() <= max).ok_or_else(|| c.error(format!("`{n}` is too long: a duration is at most 100 years")))?;
                 return Ok(Some(Literal::Duration(d)));
             }
             let currency = match c.peek() {

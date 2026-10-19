@@ -858,6 +858,12 @@ impl Checker {
                 attrs.push(Attr { name: a.name.clone(), ty, of: None, default, formula: None, mark: a.mark });
             }
             let plural = k.plural.clone().unwrap_or_else(|| plural_of(&k.name));
+            // `all Boxes` and the like must name one kind (appendix T.2.3).
+            if let Some(o) = p.kinds.iter().find(|o| o.plural == plural || o.name == plural) {
+                self.errors.push(err(&k.at, format!("{}'s plural is {plural}, which {} already is; give one of them another with `(plural …)`", k.name, if o.name == plural { format!("the kind {}", o.name) } else { format!("the plural of {}", o.name) })));
+            } else if let Some(o) = src.kinds.iter().find(|o| o.name != k.name && o.name == plural) {
+                self.errors.push(err(&k.at, format!("{}'s plural is {plural}, which is the kind {}; give it another with `(plural …)`", k.name, o.name)));
+            }
             p.kinds.push(Kind { name: k.name.clone(), plural, attrs, owner: None });
         }
     }
@@ -1094,6 +1100,13 @@ impl Checker {
 
     /// Each slot's `prefer` order and patience, or a warning without one.
     fn prefers(&mut self, src: &Source, p: &mut Program) {
+        // One `prefer` per choice, or the second would silently win or lose (appendix T.2.3).
+        for (i, pr) in src.prefers.iter().enumerate() {
+            if let Some(first) = src.prefers[..i].iter().find(|o| o.choice == pr.choice && o.per == pr.per) {
+                let per = pr.per.as_ref().map_or(String::new(), |l| format!(" for a {l}"));
+                self.errors.push(err(&pr.at, format!("prefer {}{per} is written twice; the first is at line {}", pr.choice, first.at.line)));
+            }
+        }
         for (s, decl) in p.slots.iter().zip(&src.slots) {
             if s.owner.is_empty() {
                 self.errors.push(err(&decl.at, format!("no kind needs the slot {}", s.name)));
