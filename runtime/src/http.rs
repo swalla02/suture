@@ -291,7 +291,14 @@ pub fn write_response(stream: &mut TcpStream, status: u16, body: &Value) -> std:
 
 /// Serves until `stop` is set: one request at a time, and once a second the
 /// timers that fell due (appendix L.2.4). Each trace line goes to `out`.
+/// However it ends, the pod leaves the pods, so its units move at once.
 pub fn serve(svc: &mut Service, listener: TcpListener, operator: Option<&str>, stop: &AtomicBool, clock: impl Fn() -> u64, out: &mut dyn Write) -> std::io::Result<()> {
+    let served = serving(svc, listener, operator, stop, clock, out);
+    svc.leave();
+    served
+}
+
+fn serving(svc: &mut Service, listener: TcpListener, operator: Option<&str>, stop: &AtomicBool, clock: impl Fn() -> u64, out: &mut dyn Write) -> std::io::Result<()> {
     listener.set_nonblocking(true)?;
     let mut shown = svc.host.trace.len();
     let mut last = 0;
@@ -318,7 +325,14 @@ pub fn serve(svc: &mut Service, listener: TcpListener, operator: Option<&str>, s
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(20)),
-            Err(e) => writeln!(out, "accept: {e}")?,
+            Err(e) => {
+                writeln!(out, "accept: {e}")?;
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+        // Once asked to stop, it starts no timer and posts nothing more.
+        if stop.load(Ordering::Relaxed) {
+            break;
         }
         let now = clock();
         if now != last {
@@ -332,6 +346,5 @@ pub fn serve(svc: &mut Service, listener: TcpListener, operator: Option<&str>, s
         }
         shown = svc.host.trace.len();
     }
-    svc.leave();
     Ok(())
 }

@@ -56,8 +56,9 @@ spec:
         runAsUser: 10001
         runAsNonRoot: true
         fsGroup: 10001
-      # Long enough to finish a request and leave the pods (at most 10 seconds for a slow adapter).
-      terminationGracePeriodSeconds: 15
+      # Long enough to finish a request and leave the pods: up to 5 seconds
+      # to read it and 10 to post to a slow adapter.
+      terminationGracePeriodSeconds: 30
       containers:
         - name: suture
           image: tickets:1
@@ -76,6 +77,14 @@ spec:
           ports:
             - name: http
               containerPort: 7878
+          # A pod replays the whole log before it listens, so a long log
+          # gets up to 5 minutes before liveness counts.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
           readinessProbe:
             httpGet:
               path: /health

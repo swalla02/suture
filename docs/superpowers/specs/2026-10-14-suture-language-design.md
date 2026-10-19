@@ -1527,8 +1527,8 @@ Slice 14 made pods (`suture serve --pod`), but nothing packaged them, and a stop
 
 ### U.2 Semantics that slice 20 settles
 
-1. **The image.** It is built in two stages: the command with `cargo build --release --locked`, then a Debian slim image with `ca-certificates`, `curl` and `tini`. The entry point is `tini -- suture`; the default command is `serve /app --state /data --listen 0.0.0.0:7878`; the user is `10001`; `/data` is a volume; the health check is `GET /health` on port 7878. A program's image is built `FROM` it with the program in `/app`. Keys are never in an image: they come from environment variables, as before.
-2. **Stopping.** On `SIGTERM` or `SIGINT`, the service finishes the request it is on, stops, removes its file in `pods/`, so its units go to the other pods at once (§O), prints `stopped; pod ⟨name⟩ left`, and exits with status 0. The signal handler only sets a flag that the serving loop reads, so a stop never cuts a log write short.
+1. **The image.** It is built in two stages: the command with `cargo build --release --locked`, then a Debian slim image with `ca-certificates`, `curl` and `tini`. The entry point is `tini -- suture`; the default command is `serve /app --state /data --listen 0.0.0.0:7878`; the user is `10001`; `/data` is a volume; the health check is `GET /health` on port 7878, with 5 minutes to start, since a pod replays the log before it listens. A program's image is built `FROM` it with the program in `/app`. Keys are never in an image: they come from environment variables, as before.
+2. **Stopping.** On `SIGTERM` or `SIGINT`, the service finishes the request it is on, fires no timer and posts nothing more, stops, removes its file in `pods/`, so its units go to the other pods at once (§O), prints `stopped; pod ⟨name⟩ left`, and exits with status 0. The signal handler only sets a flag that the serving loop reads, so a stop never cuts a log write short. A service that ends on an error after it joined leaves the pods too.
 3. **Pod names.** On Kubernetes a pod is named after its Kubernetes pod, through the downward API, which gives the lower-case names that §O requires.
 
 ### U.3 Acceptance

@@ -254,8 +254,25 @@ fn serve(dir: &Path, flags: &[&str]) -> Result<bool, String> {
     })?;
     let replayed = svc.host.trace.len() - svc.deployed.len();
     svc.join(&pod, unix_now())?;
+    // Whatever stops it after it joined, the pod leaves, so its units move at once.
+    let served = serving(&mut svc, &prog, &state, &listen, &pod, replayed, adapters);
+    if served.is_err() {
+        svc.leave();
+    }
+    served
+}
+
+fn serving(
+    svc: &mut suture_runtime::service::Service,
+    prog: &suture_lang::ir::Program,
+    state: &Path,
+    listen: &str,
+    pod: &str,
+    replayed: usize,
+    adapters: std::collections::BTreeMap<String, suture_runtime::service::Adapter>,
+) -> Result<bool, String> {
     svc.connect(adapters, Box::new(suture_runtime::backend::Curl));
-    let listener = std::net::TcpListener::bind(&listen).map_err(|e| format!("{listen}: {e}"))?;
+    let listener = std::net::TcpListener::bind(listen).map_err(|e| format!("{listen}: {e}"))?;
     let operator = std::env::var("SUTURE_OPERATOR_TOKEN").ok();
     if operator.as_deref().is_some_and(|t| t.trim().is_empty()) {
         return Err("SUTURE_OPERATOR_TOKEN is empty; set a token, or unset it to refuse operator requests".into());
@@ -276,7 +293,7 @@ fn serve(dir: &Path, flags: &[&str]) -> Result<bool, String> {
     // Requests that were waiting when the service stopped are posted again.
     svc.post_new(unix_now())?;
     stop_on_signals();
-    suture_runtime::http::serve(&mut svc, listener, operator.as_deref(), &STOP, unix_now, &mut std::io::stdout()).map_err(|e| e.to_string())?;
+    suture_runtime::http::serve(svc, listener, operator.as_deref(), &STOP, unix_now, &mut std::io::stdout()).map_err(|e| e.to_string())?;
     println!("stopped; pod {pod} left");
     Ok(true)
 }

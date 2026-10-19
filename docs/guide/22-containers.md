@@ -37,17 +37,17 @@ docker run -d --name tickets-b -v tickets:/data -e SUTURE_OPERATOR_TOKEN tickets
   serve /app --state /data --listen 0.0.0.0:7878 --pod b
 ```
 
-The image's health check asks `GET /health` every 10 seconds, on port 7878. If a container listens on another port, give it a health check of its own.
+The image's health check asks `GET /health` every 10 seconds, on port 7878. If a container listens on another port, give it a health check of its own. A pod replays the whole log before it listens (chapter 17), so the check allows 5 minutes to start.
 
 ## Stopping
 
-`suture serve` stops on `SIGTERM` or `SIGINT`. It finishes the request it is on and leaves the pods, so its units go to the other pods at once instead of 10 seconds later, then exits with status 0:
+`suture serve` stops on `SIGTERM` or `SIGINT`. It finishes the request it is on, fires no more timers and posts nothing more, and leaves the pods, so its units go to the other pods at once instead of 10 seconds later, then exits with status 0:
 
 ```text
 stopped; pod a left
 ```
 
-A request can take up to 10 seconds, when it posts to a slow adapter, so give a container at least that long to stop (`docker stop` waits 10 seconds by default).
+A request can take up to 15 seconds: 5 to read it, and 10 to post to a slow adapter. So give a container more than that to stop, as in `docker stop --time 30`. A pod that is killed instead, or that stops on an error, leaves its units for the others 10 seconds later, when its beat runs out. It also leaves the pods when it stops on an error after joining them.
 
 ## Kubernetes
 
@@ -55,7 +55,8 @@ A request can take up to 10 seconds, when it posts to a slow adapter, so give a 
 
 - every pod mounts one `ReadWriteMany` volume at `/data`, whose file system must support `flock` across nodes (chapter 20);
 - each pod is named after its Kubernetes pod (`--pod $(POD_NAME)`, so `tickets-0` and `tickets-1`);
-- `/health` is both the readiness and the liveness probe;
+- `/health` is the startup, readiness and liveness probe, and the startup probe gives a long replay up to 5 minutes;
+- the pods get 30 seconds to stop;
 - `SUTURE_OPERATOR_TOKEN` comes from the secret `tickets-operator`;
 - the service `tickets` must be reachable only by the gateway, since the pods trust the `Suture-Caller` header it sets (chapter 17).
 

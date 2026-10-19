@@ -28,7 +28,7 @@ USER 10001
 WORKDIR /data
 VOLUME /data
 EXPOSE 7878
-HEALTHCHECK --interval=10s --timeout=3s CMD curl -fsS http://127.0.0.1:7878/health || exit 1
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5m CMD curl -fsS http://127.0.0.1:7878/health || exit 1
 ENTRYPOINT ["/usr/bin/tini", "--", "suture"]
 CMD ["serve", "/app", "--state", "/data", "--listen", "0.0.0.0:7878"]
 
