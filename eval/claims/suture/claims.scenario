@@ -9,7 +9,7 @@ scenario "a dent is repaired at the garage with the most room":
   and    holder Ada files a new Claim C1 with policy P1, photo file "dent.png", damage door and amount 1200 EUR
   and    fraud answers scored with score 10
   expect C1's Repair is sent
-  expect the total bays taken from G2 is 1
+  expect the total repairs taken from G2 is 1
   when   garages answers booked
   expect C1 is settled
 
@@ -111,7 +111,7 @@ scenario "a booking nobody answers is sent again, and the claim stays with the g
   and    fraud answers scored with score 10
   and    2 days pass
   expect C1's Repair is sent
-  expect the total bays taken from G1 is 1
+  expect the total repairs taken from G1 is 1
   when   garages answers booked
   expect C1 is settled
 
@@ -123,7 +123,7 @@ scenario "a withdrawn claim gives back its bay":
   and    holder Ada files a new Claim C1 with policy P1, photo file "dent.png", damage door and amount 1200 EUR
   and    holder Ada withdraws C1
   and    20 seconds pass
-  expect the total bays taken from G1 is 0
+  expect the total repairs taken from G1 is 0
 
 scenario "a refused payment is tried three times, then a repair is tried":
   given  a Holder Ada with name Ada

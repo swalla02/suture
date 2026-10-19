@@ -63,6 +63,25 @@ The first baseline answered all of them differently, and nothing caught that unt
 
 **What the baseline got wrong.** Its first draft reset the send counter at every timeout, so a booking that nobody answered would have been sent forever. It also kept asking the bureau after a withdrawal. Neither was caught by a scenario; both were found by reading the code.
 
+## After slice 22
+
+Slice 22 (spec appendix W) made the fixes this evaluation asked for, and `claims.st` was rewritten to use them. With the same thirteen scenarios, it is now 51 lines instead of 57:
+
+- `taking 1` replaces the made-up `bays: Count = 1` on `Repair`;
+- `rule fraud` names the slot, `no Claim has an Outcome that is sent unless …`, so it covers Repair, Writeoff and Cash at once;
+- `rule limit` and `rule big` name `a Writeoff or a Cash`, which replaces the three copied `cash…` rules.
+
+Change 2 made against this version would cost **+9 −4**, against the baseline's +5 −4:
+
+- `kind Cash` (+1);
+- `effect pay Cash`, a new adapter call (+4);
+- `Outcome is … or Cash` and `prefer …, then Cash` (+2 −2);
+- `or a Cash` in `limit` and `big` (+2 −2).
+
+The fraud rule needs no change. That is better than +11 −2, but still more than plain Rust. It was estimated at about 5 lines before the rewrite, and the measured number is higher. The remaining cost is the effect, which is real work in both versions: the baseline already had a payment call to reuse. Forgetting `or a Cash` in `limit` is still possible, and it still pays past the limit with no error. A rule written over the slot from the start (`… unless … or it has a Repair`) avoids that, but it reads worse.
+
+The bug is fixed: a withdrawn claim's fetch stops at its next timeout (`score: no step waits on it any more: stopped asking fraud`). The read-back now says when the bureau is asked, `asked only when a Repair, a Writeoff or a Cash would be sent`. It also prints the policy each slot moves on by: attempts, patience, the next alternative not yet tried, and that a part that went out is never given up for time alone.
+
 ## How far to trust this
 
 - One author wrote both versions, and that author designed Suture. The baseline is careful but small: one file, no storage, no HTTP.
@@ -79,9 +98,9 @@ The first baseline answered all of them differently, and nothing caught that unt
 
 ## What it suggests next
 
-1. Stop sourcing for units whose needs are gone (the bug above).
-2. Rules over a slot, so that an alternative added to a slot is under the same rules. This was the one change where Suture lost.
-3. `taking` a constant, such as `taking 1`.
-4. Say when a source is asked: in the read-back (`asked when a Repair or Writeoff would be sent`), and in the explanation of a step that waits for it.
-5. Print the policies the runtime applies to every slot (attempts, patience, what follows a failure) in the read-back, so that the implicit behaviour can be read.
+1. ~~Stop sourcing for units whose needs are gone (the bug above).~~ Slice 22.
+2. ~~Rules over a slot, so that an alternative added to a slot is under the same rules.~~ Slice 22. This was the one change where Suture lost, and it still loses, by less.
+3. ~~`taking` a constant, such as `taking 1`.~~ Slice 22, for counts.
+4. Say when a source is asked: ~~in the read-back~~ (slice 22), and in the explanation of a step that waits for it (still to do).
+5. ~~Print the policies the runtime applies to every slot in the read-back.~~ Slice 22.
 6. Then the same comparison on a workflow from a design partner, written by someone who did not design the language.

@@ -13,14 +13,14 @@ kind Garage   { name: Text, region: Text, bays: Count }
 kind Claim    { policy: Policy, photo: Media, damage: Text, amount: Money, score: Count,
                 approved: Bool = no, withdrawn: Bool = no,
                 payout: Money = amount - policy's deductible }
-kind Repair   { claim: Claim, bays: Count = 1 }
+kind Repair   { claim: Claim }
 kind Writeoff { claim: Claim, amount: Money = claim's payout }
 kind Cash     { claim: Claim, amount: Money = claim's payout }
 
 Claim   needs Outcome while it is not withdrawn
 Outcome is    Repair or Writeoff or Cash
 Repair  uses  a Garage where the Garage's region is the Claim's policy's region,
-              taking its bays
+              taking 1
 
 effect book Repair via garages within 2 days
   sends    the claim's damage
@@ -41,17 +41,11 @@ source Claim's score via fraud within 10 seconds
   good for   1 day
   otherwise  use 100
 
-rule bays:    the total bays taken from each Garage is at most its bays
-rule limit:   no Claim has a Writeoff that is sent unless its payout is at most its policy's limit
-rule big:     no Claim has a Writeoff that is sent unless its payout is at most 5000 EUR or it is approved
-rule fraud:   no Claim has a Writeoff that is sent unless its score is less than 70 or it is approved,
+rule bays:    the total repairs taken from each Garage is at most its bays
+rule limit:   no Claim has a Writeoff or a Cash that is sent unless its payout is at most its policy's limit
+rule big:     no Claim has a Writeoff or a Cash that is sent unless its payout is at most 5000 EUR or it is approved
+rule fraud:   no Claim has an Outcome that is sent unless its score is less than 70 or it is approved,
               with score at most 1 day old
-rule suspect: no Claim has a Repair that is sent unless its score is less than 70 or it is approved,
-              with score at most 1 day old
-rule cashlimit: no Claim has a Cash that is sent unless its payout is at most its policy's limit
-rule cashbig:   no Claim has a Cash that is sent unless its payout is at most 5000 EUR or it is approved
-rule cashfraud: no Claim has a Cash that is sent unless its score is less than 70 or it is approved,
-                with score at most 1 day old
 rule yearly:  for each Policy and year, the total payout of their Claims is at most 25000 EUR
 
 define: a Claim is settled when its Outcome is done
