@@ -357,3 +357,25 @@ fn a_woken_binding_forgets_earlier_refusals() {
     );
     assert!(r.host.trace.join("\n").contains("O1  Shipment gets Stock S2"), "{}", r.host.trace.join("\n"));
 }
+
+#[test]
+fn a_freed_amount_wakes_only_the_waiters_it_can_serve() {
+    let r = shop_run(
+        "  and    a Stock S1 with warehouse WD, product P and units 2
+  when   a new Order O1 with country DE
+         and a line with product P and quantity 2
+  and    a new Order O2 with country DE
+         and a line with product P and quantity 2
+  and    a new Order O3 with country DE
+         and a line with product P and quantity 1
+  when   payments answers declined for O1
+  expect the total quantity taken from S1 is 2
+",
+    );
+    assert!(r.passed(), "{:?}", r.failures);
+    let trace = r.host.trace.join("\n");
+    let after = &trace[trace.find("O1 gave back 2 quantity").expect("O1 gives back")..];
+    assert!(after.contains("granted O2/"), "{after}");
+    // O3 needs 1 and none is left: it is not woken, so it asks nothing and is refused nothing.
+    assert!(!after.contains("O3/"), "{after}");
+}

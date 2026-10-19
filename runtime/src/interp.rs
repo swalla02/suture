@@ -745,6 +745,13 @@ pub fn choose_among(prog: &Program, u: &Unit, d: &Decide, candidates: impl Itera
 /// The options of a binding's choice (appendix J.2.4): of the candidates, in
 /// creation order, the first `candidates` that meet the binding's filter,
 /// best first under its `prefer`.
+/// Whether the shared entity `c` would grant the binding `d` its take now
+/// (appendix S.2.1).
+pub fn would_grant(prog: &Program, c: &Unit, d: &Decide, now: i64) -> bool {
+    let take = Msg::Take { from: d.label.clone(), key: d.key(), taken: d.taken.clone() };
+    !step_at(prog, c, &take, now).sends.iter().any(|(_, m)| matches!(m, Msg::Refused { .. }))
+}
+
 pub fn options(prog: &Program, u: &Unit, d: &Decide, candidates: impl Iterator<Item = Unit>) -> Vec<Unit> {
     let Some(b) = prog.bindings.get(d.binding as usize) else { return vec![] };
     let Some((at, elem)) = decide_place(prog, u, d) else { return vec![] };

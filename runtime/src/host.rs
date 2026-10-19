@@ -39,6 +39,10 @@ pub struct Host {
     pools: BTreeMap<(String, String), BTreeMap<String, Vec<String>>>,
     /// Bindings with no candidate left, in arrival order (appendix F.2.9).
     waiters: Vec<Waiter>,
+    /// Units something of whose may have freed up, with the bindings
+    /// already woken for the first, so each is woken once (appendix S.2.1).
+    to_wake: VecDeque<String>,
+    woken: BTreeSet<String>,
     /// Every decision of the gate, in order (appendix G.2.2).
     pub gate: Vec<String>,
     /// For each unit, the units that carry its facts: those that refer to
@@ -98,6 +102,8 @@ impl Host {
             expired: vec![],
             pools: BTreeMap::new(),
             waiters: vec![],
+            to_wake: VecDeque::new(),
+            woken: BTreeSet::new(),
             gate: vec![],
             readers: BTreeMap::new(),
             models: Models::default(),
@@ -453,14 +459,25 @@ impl Host {
     }
 
     /// Something of `label`'s may have freed up: the bindings waiting on its
-    /// keys gather again from scratch, in arrival order.
+    /// keys are woken when the host is next idle, one at a time (appendix S.2.1).
     fn wake(&mut self, label: &str) -> Result<(), String> {
-        let Some(u) = self.unit(label) else { return Ok(()) };
+        if !self.to_wake.iter().any(|l| l == label) {
+            self.to_wake.push_back(label.to_string());
+        }
+        Ok(())
+    }
+
+    /// Wakes the first waiter, in arrival order, that can be served by what
+    /// `label` has now, and says whether there was one. Its take is then
+    /// applied before the next waiter gathers, so waiters the freed amount
+    /// cannot serve stay asleep and send nothing.
+    fn wake_one(&mut self, label: &str) -> Result<bool, String> {
+        let Some(u) = self.unit(label) else { return Ok(false) };
         let keys: Vec<String> = self.keys_of(&u).into_iter().flat_map(|(_, k)| k).collect();
         let mut i = 0;
         while i < self.waiters.len() {
             let w = self.waiters[i].clone();
-            if w.kind != u.root.kind || !keys.contains(&w.key) {
+            if w.kind != u.root.kind || !keys.contains(&w.key) || self.woken.contains(&w.decide.key()) {
                 i += 1;
                 continue;
             }
@@ -470,15 +487,22 @@ impl Host {
                 continue;
             };
             let fresh = Decide { skip: vec![], ..w.decide.clone() };
+            // Only `label` changed: a waiter it cannot serve stays asleep.
+            if !interp::would_grant(&self.prog, &u, &fresh, self.clock()) {
+                i += 1;
+                continue;
+            }
             match self.gather(&requester, &fresh, &w.key) {
                 Some((pick, how)) => {
                     self.waiters.remove(i);
+                    self.woken.insert(w.decide.key());
                     self.pick(w.hole, &pick, &fresh, &how)?;
+                    return Ok(true);
                 }
                 None => i += 1,
             }
         }
-        Ok(())
+        Ok(false)
     }
 
     /// The clock, as entities and messages read it.
@@ -986,7 +1010,25 @@ impl Host {
                 self.pending.push((ask, hole));
             }
             if effects.is_empty() {
-                return first_error.map_or(Ok(()), Err);
+                // Idle: wake the next waiter, or move on to the next unit.
+                let mut woke = false;
+                while let Some(label) = self.to_wake.front().cloned() {
+                    match self.wake_one(&label) {
+                        Ok(true) => {
+                            woke = true;
+                            break;
+                        }
+                        Ok(false) => {}
+                        Err(x) => {
+                            first_error.get_or_insert(x);
+                        }
+                    }
+                    self.to_wake.pop_front();
+                    self.woken.clear();
+                }
+                if !woke {
+                    return first_error.map_or(Ok(()), Err);
+                }
             }
         }
     }
