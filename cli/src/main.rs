@@ -275,7 +275,33 @@ fn serve(dir: &Path, flags: &[&str]) -> Result<bool, String> {
     println!("  replayed {replayed} trace lines; operator requests {}", if operator.is_some() { "need the token" } else { "refused: SUTURE_OPERATOR_TOKEN is not set" });
     // Requests that were waiting when the service stopped are posted again.
     svc.post_new(unix_now())?;
-    let stop = std::sync::atomic::AtomicBool::new(false);
-    suture_runtime::http::serve(&mut svc, listener, operator.as_deref(), &stop, unix_now, &mut std::io::stdout()).map_err(|e| e.to_string())?;
+    stop_on_signals();
+    suture_runtime::http::serve(&mut svc, listener, operator.as_deref(), &STOP, unix_now, &mut std::io::stdout()).map_err(|e| e.to_string())?;
+    println!("stopped; pod {pod} left");
     Ok(true)
 }
+
+/// Set when the process is asked to stop: the service finishes the request
+/// it is on, leaves the pods, so its units move at once, and exits (appendix U.2.2).
+static STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(unix)]
+fn stop_on_signals() {
+    const SIGINT: i32 = 2;
+    const SIGTERM: i32 = 15;
+    unsafe extern "C" {
+        fn signal(signum: i32, handler: extern "C" fn(i32)) -> usize;
+    }
+    // Only an atomic store, which is safe in a signal handler.
+    extern "C" fn stop(_: i32) {
+        STOP.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    // SAFETY: `signal` is the C library's, and the handler only stores to an atomic.
+    unsafe {
+        signal(SIGINT, stop);
+        signal(SIGTERM, stop);
+    }
+}
+
+#[cfg(not(unix))]
+fn stop_on_signals() {}

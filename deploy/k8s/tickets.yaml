@@ -1,0 +1,96 @@
+# Two pods of the tickets example over one shared volume (guide chapter 22).
+# The image is built FROM suture with the program in /app:
+#
+#   FROM suture
+#   COPY examples/tickets /app
+#
+# The volume must be ReadWriteMany, with locks that work across nodes.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tickets-state
+spec:
+  accessModes: [ReadWriteMany]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tickets-pods
+spec:
+  clusterIP: None
+  selector:
+    app: tickets
+---
+# Only the gateway may reach this service: the pods trust the Suture-Caller header.
+apiVersion: v1
+kind: Service
+metadata:
+  name: tickets
+spec:
+  selector:
+    app: tickets
+  ports:
+    - port: 7878
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tickets
+spec:
+  serviceName: tickets-pods
+  replicas: 2
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: tickets
+  template:
+    metadata:
+      labels:
+        app: tickets
+    spec:
+      securityContext:
+        runAsUser: 10001
+        runAsNonRoot: true
+        fsGroup: 10001
+      # Long enough to finish a request and leave the pods (at most 10 seconds for a slow adapter).
+      terminationGracePeriodSeconds: 15
+      containers:
+        - name: suture
+          image: tickets:1
+          # Each pod is named after its Kubernetes pod: tickets-0, tickets-1.
+          args: ["serve", "/app", "--state", "/data", "--listen", "0.0.0.0:7878", "--pod", "$(POD_NAME)"]
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: SUTURE_OPERATOR_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tickets-operator
+                  key: token
+          ports:
+            - name: http
+              containerPort: 7878
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          volumeMounts:
+            - name: state
+              mountPath: /data
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: tickets-state

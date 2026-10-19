@@ -36,7 +36,7 @@ The secrets in `secrets.json` (chapter 19) are written under the same lock, befo
 
 Each unit has one owner among the live pods, chosen by a hash of its label. Only the owner posts the unit's requests to adapters. With pods `a` and `b`, about half the bookings are charged through each.
 
-A pod beats every second, writing the time into `pods/⟨name⟩`. A pod whose last beat is 10 seconds old is no longer live: its units go to the others, which post their waiting requests. A pod that stops cleanly removes its file, and its units move at once.
+A pod beats every second, writing the time into `pods/⟨name⟩`. A pod whose last beat is 10 seconds old is no longer live: its units go to the others, which post their waiting requests. A pod that stops cleanly, on `SIGTERM` or `SIGINT`, removes its file, and its units move at once. Chapter 22 runs pods as containers.
 
 A pod that cannot write the log stops taking inputs and stops beating, so its units go to the others; restart it, and it replays the log.
 

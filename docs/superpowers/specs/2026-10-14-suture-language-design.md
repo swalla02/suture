@@ -1512,3 +1512,27 @@ Four small gaps found along the way, each of which let a program or an input go 
 - `within 5300 weeks` and `within 99999999999999999 weeks` are compile errors; `5200 weeks` compiles.
 - A Note created with a body of 5000 characters is refused, and nothing is made; changing a Note's body to one is refused, and the Note is unchanged. Neither leaves a fault.
 - Two `prefer Carrier:` lines, `kind Crate (plural Boxes)` beside `kind Box`, and `attempts 0` are each a compile error.
+
+## Appendix U. Prototype slice 20: a container image for the pods (2026-10-19)
+
+Slice 14 made pods (`suture serve --pod`), but nothing packaged them, and a stopped process left its pod's beat behind for 10 seconds.
+
+### U.1 What slice 20 adds
+
+| Added in slice 20 | Still waits |
+|---|---|
+| a `Dockerfile`: the `suture` command, `curl` and `tini` on Debian, run as a non-root user, serving `/app` with its state in `/data` | images published to a registry, and images for other platforms |
+| `suture serve` stops on `SIGTERM` and `SIGINT`, and leaves the pods | draining: requests that arrive while it stops are refused by the closed port |
+| `deploy/k8s/tickets.yaml`: a StatefulSet of two pods over one `ReadWriteMany` volume | a Helm chart, an operator, and rolling deploys driven by the pods themselves |
+
+### U.2 Semantics that slice 20 settles
+
+1. **The image.** It is built in two stages: the command with `cargo build --release --locked`, then a Debian slim image with `ca-certificates`, `curl` and `tini`. The entry point is `tini -- suture`; the default command is `serve /app --state /data --listen 0.0.0.0:7878`; the user is `10001`; `/data` is a volume; the health check is `GET /health` on port 7878. A program's image is built `FROM` it with the program in `/app`. Keys are never in an image: they come from environment variables, as before.
+2. **Stopping.** On `SIGTERM` or `SIGINT`, the service finishes the request it is on, stops, removes its file in `pods/`, so its units go to the other pods at once (§O), prints `stopped; pod ⟨name⟩ left`, and exits with status 0. The signal handler only sets a flag that the serving loop reads, so a stop never cuts a log write short.
+3. **Pod names.** On Kubernetes a pod is named after its Kubernetes pod, through the downward API, which gives the lower-case names that §O requires.
+
+### U.3 Acceptance
+
+- `suture serve` sent `SIGTERM` exits with status 0, prints `stopped; pod a left`, and leaves no `pods/a`.
+- Two containers of the image over one volume are one service: an input to one is read from the other, both are healthy, and `docker stop` on one hands its units to the other at once.
+- The Kubernetes manifest passes `kubectl apply --dry-run=client`.

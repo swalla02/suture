@@ -331,3 +331,34 @@ fn lsp_shows_errors_read_backs_and_next_words() {
     send(serde_json::json!({ "jsonrpc": "2.0", "method": "exit" }));
     assert!(child.wait().unwrap().success());
 }
+
+#[cfg(unix)]
+#[test]
+fn serve_stops_cleanly_on_sigterm_and_leaves_the_pods() {
+    use std::io::{BufRead, BufReader};
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let state = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("sigterm-state");
+    let _ = std::fs::remove_dir_all(&state);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_suture"))
+        .args(["serve", "examples/tickets", "--listen", "127.0.0.1:0", "--state", state.to_str().unwrap(), "--pod", "a"])
+        .current_dir(&root)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    // Up to the last line it prints before it serves.
+    while !line.contains("replayed") {
+        line.clear();
+        assert!(reader.read_line(&mut line).unwrap() > 0, "serve ended early");
+    }
+    assert!(state.join("pods/a").exists());
+    let killed = Command::new("kill").args(["-TERM", &child.id().to_string()]).status().unwrap();
+    assert!(killed.success());
+    let status = child.wait().unwrap();
+    let mut rest = String::new();
+    std::io::Read::read_to_string(&mut reader, &mut rest).unwrap();
+    assert!(status.success(), "{status:?}: {rest}");
+    assert!(rest.contains("stopped; pod a left"), "{rest}");
+    assert!(!state.join("pods/a").exists(), "its units move to the other pods at once");
+}
