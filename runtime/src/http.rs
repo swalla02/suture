@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 
 use crate::explain::explain_at;
 use crate::service::{self, Record, Service, Who};
+use suture_lang::ir::{third_person, Admitted};
 
 /// The most a request's headers and body may hold, and how long it may take
 /// to arrive: the service answers one request at a time.
@@ -150,7 +151,21 @@ fn input(svc: &Service, by: Who, b: &Value) -> Result<Record, String> {
         return Ok(Record::New { by, verb: text(n, "verb")?, label: text(n, "label")?, kind, attrs, items });
     }
     if let Some(e) = one("event") {
-        return Ok(Record::Event { by, verb: text(e, "verb")?, target: text(e, "target")? });
+        let (verb, target) = (text(e, "verb")?, text(e, "target")?);
+        let kind = svc.host.unit(&target).map(|u| u.root.kind).ok_or_else(|| format!("there is no unit {target}"))?;
+        // The data is typed by the event's `admit … with` (appendix Q.2.1).
+        let want = prog.admits.iter().find_map(|a| match &a.what {
+            Admitted::Event { verb: v, kind: k } if third_person(v) == verb && *k == kind => Some(a.data.as_slice()),
+            _ => None,
+        });
+        let mut data = vec![];
+        if let Some(d) = e.get("data") {
+            for (n, v) in d.as_object().ok_or("an event's `data` is an object")? {
+                let ty = want.and_then(|w| w.iter().find(|(x, _)| x == n)).map(|(_, t)| *t);
+                data.push((n.clone(), service::from_json(v, ty, &prog.currency).map_err(|e| format!("{n}: {e}"))?));
+            }
+        }
+        return Ok(Record::Event { by, verb, target, data });
     }
     if let Some(c) = one("change") {
         let (target, attr) = (text(c, "target")?, text(c, "attr")?);

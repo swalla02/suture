@@ -56,7 +56,7 @@ fn permission_mistakes_are_errors() {
     let e = errors(&format!("{SHOP}admit place a new Order by guest\n"));
     assert!(e[0].contains("t.st:11") && e[0].contains("there is no role guest; the roles are customer, support, staff"), "{e:?}");
     let e = errors(&format!("{SHOP}admit add a new Product by support where the caller's name is \"x\"\n"));
-    assert!(e[0].contains("`the caller's name`: a caller of this admit has a role with no kind"), "{e:?}");
+    assert!(e[0].contains("`the caller's name`: a caller here has a role with no kind"), "{e:?}");
     let e = errors(&format!("{SHOP}admit add a new Product by customer, staff where the caller is the caller\n"));
     assert!(e[0].contains("a role with no kind"), "{e:?}");
     let e = errors(&format!("{SHOP}role staff\n"));
@@ -151,7 +151,7 @@ fn review_fixes_in_the_checker() {
     assert!(e.len() == 1 && e[0].contains("`zone` is the key `Pick uses a Depot` looks up its pool by"), "{e:?}");
     // Roles of different kinds.
     let e = errors(&format!("{SHOP}role clerk is a Product\nadmit add a new Country by customer, clerk where the caller's name is \"x\"\n"));
-    assert!(e[0].contains("the roles of this admit are of different kinds"), "{e:?}");
+    assert!(e[0].contains("the roles here are of different kinds"), "{e:?}");
 }
 
 #[test]

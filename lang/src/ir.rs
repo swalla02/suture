@@ -205,6 +205,9 @@ pub struct Role {
 pub struct Admit {
     pub what: Admitted,
     pub roles: Vec<String>,
+    /// An event's data, read as `the reason` (appendix Q.2.1).
+    #[serde(default)]
+    pub data: Vec<(String, Ty)>,
     pub cond: Option<Cond>,
     pub source: String,
 }
@@ -452,8 +455,12 @@ pub enum Step {
     Cand,
     /// In a `uses … per`: the element the binding is for.
     Elem,
-    /// In an `admit` condition: the caller's unit, through its carried facts.
+    /// In an `admit` condition or an event's reaction: the caller's unit,
+    /// through its carried facts.
     Caller,
+    /// In an `admit` condition or an event's reaction: a value the event
+    /// carries, `the reason` (appendix Q.2.2). It is a whole path.
+    Data(String),
 }
 
 /// A calculation (appendix E.2.3). Paths are relative to the node it is

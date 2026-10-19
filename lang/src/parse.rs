@@ -56,11 +56,11 @@ pub(crate) fn statement(st: &Stmt, out: &mut Source) -> Result<(), Error> {
     }
 }
 
-/// Tokens back to text, for read-backs: no space before `'s` or `,`.
+/// Tokens back to text, for read-backs: no space before `'s`, `,` or `:`.
 pub(crate) fn text(toks: &[Tok]) -> String {
     let mut out = String::new();
     for t in toks {
-        if !out.is_empty() && !matches!(t, Tok::Poss | Tok::Sym(',')) {
+        if !out.is_empty() && !matches!(t, Tok::Poss | Tok::Sym(',' | ':')) {
             out.push(' ');
         }
         out.push_str(&t.to_string());
@@ -739,9 +739,23 @@ fn admit(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     while c.eat_sym(',') || c.eat_word("or") {
         roles.push(c.word()?);
     }
+    let mut data = vec![];
+    if c.eat_word("with") {
+        if !matches!(what, Admitted::Event { .. }) {
+            return Err(c.error("only an event carries data; a new entity or a change is given its attributes"));
+        }
+        loop {
+            let name = c.word()?;
+            c.expect_sym(':')?;
+            data.push((name, type_name(&mut c)?));
+            if !(c.eat_sym(',') || c.eat_word("and")) {
+                break;
+            }
+        }
+    }
     let cond = if c.eat_word("where") { Some(condition(&mut c)?) } else { None };
     c.expect_end()?;
-    out.admits.push(AdmitDecl { what, roles, cond, source: text(&toks[1..]), at });
+    out.admits.push(AdmitDecl { what, roles, data, cond, source: text(&toks[1..]), at });
     Ok(())
 }
 

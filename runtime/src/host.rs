@@ -141,16 +141,29 @@ impl Host {
     /// A caller's admitted event on an existing unit (appendix G.2.4). It
     /// passes the gate, then its reactions run as one step, which a rule may
     /// refuse.
-    pub fn input_event(&mut self, by: Option<&Caller>, target: &str) -> Result<(), String> {
+    pub fn input_event(&mut self, by: Option<&Caller>, target: &str, data: &[(String, Val)]) -> Result<(), String> {
         let unit = self.unit(target).ok_or_else(|| format!("there is no unit {target}"))?;
         let kind = unit.root.kind.clone();
         let fits = |a: &Admitted| matches!(a, Admitted::Event { verb, kind: k } if by.is_some_and(|c| third_person(verb) == c.verb) && *k == kind);
-        self.gate(by, fits, target, &unit)?;
+        let data = match (by, self.event_data(fits, data)) {
+            (Some(c), Err(e)) => {
+                let line = format!("refused at the gate: {} {} {} {target}: {e}", c.role, c.name, c.verb);
+                self.trace.push(format!("gate: {line}"));
+                self.gate.push(line);
+                return Err(format!("refused at the gate: {e}"));
+            }
+            (_, d) => d.unwrap_or_default(),
+        };
+        self.gate_with(by, fits, target, &unit, &data)?;
         let Some(by) = by else { return Ok(()) };
         if !self.prog.reactions.iter().any(|r| r.kind == kind && r.outcome == by.verb && r.by.contains(&by.role)) {
             return Err(format!("nothing reacts when a {} {} {}", by.role, by.verb, interp::a_kind(&kind)));
         }
-        self.tell(target, &Msg::Event { verb: by.verb.clone(), by: format!("{} {}", by.role, by.name) })?;
+        let mut facts = Facts::new();
+        if self.prog.role(&by.role).is_some_and(|r| r.kind.is_some()) {
+            self.carry(&Val::Ref(by.name.clone()), &mut facts);
+        }
+        self.tell(target, &Msg::Event { verb: by.verb.clone(), by: format!("{} {}", by.role, by.name), data, facts })?;
         let refused = self.unit(target).and_then(|u| u.notes.iter().find_map(|n| n.split_once(": refused by rule ").map(|(_, r)| r.to_string())));
         match refused {
             Some(r) => Err(format!("refused by rule {r}")),
@@ -505,10 +518,34 @@ impl Host {
     /// what `fits` describes to `target` (`what`, as in `a new Order O1`).
     /// The decision is kept either way.
     fn gate(&mut self, by: Option<&Caller>, fits: impl Fn(&Admitted) -> bool, what: &str, target: &Unit) -> Result<(), String> {
+        self.gate_with(by, fits, what, target, &[])
+    }
+
+    /// The data an event carries, checked against its `admit`'s `with`
+    /// (appendix Q.2.1): every value named, of its type, and nothing else.
+    fn event_data(&self, fits: impl Fn(&Admitted) -> bool, data: &[(String, Val)]) -> Result<Vec<(String, Val)>, String> {
+        let want = self.prog.admits.iter().find(|a| fits(&a.what)).map_or(&[][..], |a| a.data.as_slice());
+        for (n, _) in data {
+            if !want.iter().any(|(w, _)| w == n) {
+                return Err(format!("the event carries no `{n}`"));
+            }
+        }
+        let mut out = vec![];
+        for (n, ty) in want {
+            let v = data.iter().find(|(d, _)| d == n).map(|(_, v)| v).ok_or_else(|| format!("the event carries `{n}`; give it"))?;
+            if v.ty() != *ty {
+                return Err(format!("`{n}` is {ty:?}, not {:?}", v.ty()));
+            }
+            out.push((n.clone(), v.clone()));
+        }
+        Ok(out)
+    }
+
+    fn gate_with(&mut self, by: Option<&Caller>, fits: impl Fn(&Admitted) -> bool, what: &str, target: &Unit, data: &[(String, Val)]) -> Result<(), String> {
         if self.prog.admits.is_empty() {
             return Ok(());
         }
-        let decision = self.gate_check(by, fits, target);
+        let decision = self.gate_check(by, fits, target, data);
         let input = by.map_or(what.to_string(), |c| format!("{} {} {} {what}", c.role, c.name, c.verb));
         let line = match &decision {
             Ok(()) => format!("admitted: {input}"),
@@ -519,7 +556,7 @@ impl Host {
         decision.map_err(|e| format!("refused at the gate: {e}"))
     }
 
-    fn gate_check(&self, by: Option<&Caller>, fits: impl Fn(&Admitted) -> bool, target: &Unit) -> Result<(), String> {
+    fn gate_check(&self, by: Option<&Caller>, fits: impl Fn(&Admitted) -> bool, target: &Unit, data: &[(String, Val)]) -> Result<(), String> {
         let by = by.ok_or("an input needs a caller")?;
         let role = self.prog.role(&by.role).ok_or_else(|| format!("there is no role {}", by.role))?;
         let mut target = target.clone();
@@ -538,7 +575,7 @@ impl Host {
         let Some(first) = admits.first() else {
             return Err(format!("no `admit` lets a {} do that", by.role));
         };
-        if admits.iter().any(|a| a.cond.as_ref().is_none_or(|c| interp::admits(&self.prog, &target, caller, c))) {
+        if admits.iter().any(|a| a.cond.as_ref().is_none_or(|c| interp::admits(&self.prog, &target, caller, data, c))) {
             Ok(())
         } else {
             Err(format!("the condition of `admit {}` does not hold", first.source))

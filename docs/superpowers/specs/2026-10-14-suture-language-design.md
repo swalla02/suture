@@ -1407,3 +1407,31 @@ Slice 11 serves a program as one process. Slice 14 runs it as several pods over 
 - Hovering a rule shows its read-back; hovering a kind's name shows the kind.
 
 **P.2.5 Review updates.** Only `.st` files are part of a module, whatever else the editor opens beside them. A blank or comment line has no read-back, and nothing is completed inside a comment. Typing `'` after a kind's name offers its attributes, inserting `s` and the attribute.
+
+## Appendix Q. Prototype slice 16: events with data, and the caller in reactions (2026-10-19)
+
+An admitted event (§G.2.4) has, until now, carried only its verb and its caller. A cancellation could not say why, and a refund could not say how much, without an admitted change beside it. Slice 16 gives events data, and lets an event's reactions read the data and the caller.
+
+### Q.1 What slice 16 adds
+
+| Added in slice 16 | Still waits |
+|---|---|
+| `admit refund Order by support with amount: Money, note: Text` | references, sets and lists as event data |
+| `the amount` in the admit's condition and in the event's reactions | event data read by rules or kept in the trace of later steps |
+| `the caller` and `the caller's name` in an event's reactions | the caller in rules (by design, §Q.2.5) |
+| `support Sam refunds O1 with amount 30 EUR and note ok` in scenarios; `"data"` in an HTTP event | |
+
+### Q.2 Semantics that slice 16 settles
+
+1. **An event's data is declared on its `admit`.** `with name: Type, …` follows the roles and comes before `where`. The types are values (Text, Bool, Money, Count, Time, Duration); a name is given once, and is neither `caller` nor an attribute of the target's kind, which `the …` would also name. Every `admit` of the same event declares the same data, so an event means one thing whoever sends it. Only an event carries data: a new entity or a change is given its attributes.
+2. **`the amount` is the event's value.** It is read in the admit's condition (`where the amount is at most its total`) and in the event's reactions (`its refunded becomes the amount`). Nothing follows it: it is a value, not an entity.
+3. **The caller in reactions.** An event's reaction reads `the caller` and its attributes, as an admit's condition does (§G.2.3): the caller's facts are carried to the step and read there only; they are not kept on the target. A reaction cannot change the caller: it changes only its own unit. As in admits, the caller is readable only when the reaction's roles have one kind.
+4. **The gate checks the data.** An event that leaves out a value, adds one the admit does not name, or gives one of the wrong type is refused at the gate, before its condition is read, and the gate line says which value.
+5. **The caller in rules, by design never.** A rule states what must hold of the state at every moment; the caller exists only while an input is applied. A condition about who may act belongs on the `admit`, and a fact about who acted is kept by a reaction (`its by becomes the caller's name`) where a rule can read it.
+6. **The log.** An event's line carries its data (`"data": [["amount", …]]`), left out when there is none, so older logs replay unchanged.
+
+### Q.3 Acceptance
+
+- `customer Ada cancels O1 with reason "too late"` sets the order's reason and who cancelled it.
+- A refund above the order's total is refused at the gate; one that breaks a rule is refused by the rule; one with a missing, extra or mistyped value is refused at the gate.
+- Mismatched data across admits, data named after an attribute, a reference as data, and `the caller` with a kindless role are compile errors.

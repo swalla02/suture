@@ -107,7 +107,7 @@ fn end_kind(p: &Program, kind: &str, steps: &[Step]) -> Option<String> {
         cur = match s {
             Step::Part(k) => k.clone(),
             Step::Owner => p.kind(&cur)?.owner.as_ref()?.kind.clone(),
-            Step::Slot(_) | Step::Attr(_) | Step::Ref(_) | Step::Bound(_) | Step::Cand | Step::Elem | Step::Caller => return None,
+            Step::Slot(_) | Step::Attr(_) | Step::Ref(_) | Step::Bound(_) | Step::Cand | Step::Elem | Step::Caller | Step::Data(_) => return None,
         };
     }
     Some(cur)
@@ -334,6 +334,9 @@ struct Checker {
     /// In an `admit` condition: the kind of the caller's unit, or empty when
     /// one of its roles has no kind (appendix G.2.3).
     caller: Option<String>,
+    /// In an `admit` condition or an event's reaction: the data the event
+    /// carries (appendix Q.2.2).
+    data: Vec<(String, Ty)>,
 }
 
 /// A relation across units (appendix F.2.11): from a Customer, `their
@@ -1702,7 +1705,20 @@ impl Checker {
         for r in &src.reactions {
             if !r.by.is_empty() {
                 if self.event(p, r) {
+                    // The caller and the event's data can be read (appendix Q.2.3).
+                    let admit = p.admits.iter().find(|a| matches!(&a.what, Admitted::Event { verb, kind } if third_person(verb) == r.outcome && *kind == r.kind));
+                    self.data = admit.map(|a| a.data.clone()).unwrap_or_default();
+                    let mut kinds: Vec<String> = r.by.iter().map(|b| p.role(b).and_then(|x| x.kind.clone()).unwrap_or_default()).collect();
+                    kinds.sort();
+                    kinds.dedup();
+                    self.caller = Some(match kinds.as_slice() {
+                        [k] => k.clone(),
+                        ks if ks.iter().any(String::is_empty) => String::new(),
+                        _ => "*".to_string(),
+                    });
                     let actions = self.actions(p, r);
+                    self.caller = None;
+                    self.data = vec![];
                     p.reactions.push(Reaction { kind: r.kind.clone(), outcome: r.outcome.clone(), by: r.by.clone(), actions });
                 }
                 continue;
@@ -1753,7 +1769,9 @@ impl Checker {
                     continue;
                 }
                 match self.np(p, &r.at, &r.kind, &a.target) {
-                    Some((target, End::Node(k) | End::Ref(k))) if through_ref(&target) || matches!(target.steps.last(), Some(Step::Attr(_))) => {
+                    Some((target, End::Node(k) | End::Ref(k)))
+                        if through_ref(&target) || target.steps.first() == Some(&Step::Caller) || matches!(target.steps.last(), Some(Step::Attr(_))) =>
+                    {
                         self.errors.push(err(&r.at, format!("`{}` is a shared {k}; a reaction changes only its own unit", show(&a.target))));
                     }
                     Some((target, End::Node(k))) if a.becomes.is_some() => {
@@ -1861,18 +1879,24 @@ impl Checker {
                     self.errors.push(err(&a.at, format!("`admit {}`: {why}", a.source)));
                     continue;
                 }
+                let Some(data) = self.event_data(p, a, &k) else { continue };
                 self.caller = Some(caller.clone());
-                let cond = match &a.cond {
-                    Some(c) => match self.cond(p, &a.at, &k, c) {
-                        Some(c) => Some(c),
-                        None => {
-                            self.caller = None;
-                            continue;
-                        }
-                    },
+                self.data = data.clone();
+                let cond = a.cond.as_ref().map(|c| self.cond(p, &a.at, &k, c));
+                self.caller = None;
+                self.data = vec![];
+                let cond = match cond {
+                    Some(None) => continue,
+                    Some(c) => c,
                     None => None,
                 };
-                self.caller = None;
+                if let Admitted::Event { verb, kind } = &what
+                    && let Some(other) = p.admits.iter().find(|x| matches!(&x.what, Admitted::Event { verb: v, kind: k } if v == verb && k == kind))
+                    && other.data != data
+                {
+                    self.errors.push(err(&a.at, format!("`admit {}`: `admit {}` gives this event other data; an event carries the same data whoever sends it", a.source, other.source)));
+                    continue;
+                }
                 if let Admitted::Event { verb, kind } = &what {
                     let handled = |role: &String| src.reactions.iter().any(|r| r.by.contains(role) && r.kind == *kind && r.outcome == third_person(verb));
                     let missing: Vec<&String> = a.roles.iter().filter(|r| !handled(r)).collect();
@@ -1881,9 +1905,31 @@ impl Checker {
                         self.errors.push(err(&a.at, format!("`admit {}`: no reaction handles it; add `when a {who} {} {}: …`", a.source, third_person(verb), self::a(kind))));
                     }
                 }
-                p.admits.push(Admit { what, roles: a.roles.clone(), cond, source: a.source.clone() });
+                p.admits.push(Admit { what, roles: a.roles.clone(), data, cond, source: a.source.clone() });
             }
         }
+    }
+
+    /// An event's data (appendix Q.2.1): values, each named once, and not
+    /// after an attribute of the kind, which `the …` would also name.
+    fn event_data(&mut self, p: &Program, a: &ast::AdmitDecl, kind: &str) -> Option<Vec<(String, Ty)>> {
+        let mut out: Vec<(String, Ty)> = vec![];
+        for (name, t) in &a.data {
+            let Some(ty) = value_type(t) else {
+                self.errors.push(err(&a.at, format!("`admit {}`: `{name}` is a value, such as Text, Count or Money; an event carries no references or lists", a.source)));
+                return None;
+            };
+            if out.iter().any(|(n, _)| n == name) {
+                self.errors.push(err(&a.at, format!("`admit {}`: `{name}` is named twice", a.source)));
+                return None;
+            }
+            if p.kind(kind).is_some_and(|k| k.attr(name).is_some()) || name == "caller" {
+                self.errors.push(err(&a.at, format!("`admit {}`: `{name}` is already {}; name the event's value otherwise", a.source, if name == "caller" { "the caller".to_string() } else { format!("an attribute of {}", self::a(kind)) })));
+                return None;
+            }
+            out.push((name.clone(), ty));
+        }
+        Some(out)
     }
 
     fn filter(&mut self, p: &Program, at: &Loc, s: &ast::Subject) -> Option<Vec<Cond>> {
@@ -2100,15 +2146,26 @@ impl Checker {
         let mut cur = from.to_string();
         let mut shared = false;
         let mut words: &[String] = &np.steps;
+        if let (Head::It, Some(w)) = (&np.head, np.steps.first())
+            && let Some((_, ty)) = self.data.iter().find(|(n, _)| n == w)
+            && p.kind(from).is_none_or(|k| k.attr(w).is_none())
+        {
+            // `the reason`: a value the event carries (appendix Q.2.2).
+            if np.steps.len() > 1 {
+                self.errors.push(err(at, format!("`the {}`: `the {w}` is a value the event carries; nothing follows it", np.steps.join("'s "))));
+                return None;
+            }
+            return Some((Path { steps: vec![Step::Data(w.clone())] }, End::Value(*ty)));
+        }
         if let (Some(ck), Head::It, Some(w)) = (self.caller.clone(), &np.head, np.steps.first()) {
             // `the caller`, `the caller's country` (appendix G.2.3).
             if w == "caller" && p.kind(from).is_none_or(|k| k.attr("caller").is_none()) {
                 if ck.is_empty() {
-                    self.errors.push(err(at, format!("`{}`: a caller of this admit has a role with no kind, so it is only a name; write `role … is a ⟨Kind⟩`", show(np))));
+                    self.errors.push(err(at, format!("`{}`: a caller here has a role with no kind, so it is only a name; write `role … is a ⟨Kind⟩`", show(np))));
                     return None;
                 }
                 if ck == "*" {
-                    self.errors.push(err(at, format!("`{}`: the roles of this admit are of different kinds; write one admit for each", show(np))));
+                    self.errors.push(err(at, format!("`{}`: the roles here are of different kinds; write one for each", show(np))));
                     return None;
                 }
                 steps.push(Step::Caller);

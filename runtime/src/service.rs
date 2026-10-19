@@ -41,7 +41,13 @@ pub enum Record {
     /// An entity of the world, which does not pass the gate.
     World { kind: String, label: String, attrs: Vec<(String, Val)>, items: Items },
     New { by: Who, verb: String, kind: String, label: String, attrs: Vec<(String, Val)>, items: Items },
-    Event { by: Who, verb: String, target: String },
+    Event {
+        by: Who,
+        verb: String,
+        target: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        data: Vec<(String, Val)>,
+    },
     Change { by: Who, target: String, attr: String, value: Val },
     /// An adapter's answer: to the request with `key`, or the oldest for `target`.
     Answer { adapter: String, outcome: String, key: Option<String>, target: Option<String>, data: Vec<(String, Val)> },
@@ -732,7 +738,7 @@ impl Service {
             Record::Pass(secs) => h.pass(*secs),
             Record::World { kind, label, attrs, items } => h.create_with(kind, label, attrs, items),
             Record::New { by, verb, kind, label, attrs, items } => h.input_new(Some(&caller(by, verb)), kind, label, attrs, items),
-            Record::Event { by, verb, target } => h.input_event(Some(&caller(by, verb)), target),
+            Record::Event { by, verb, target, data } => h.input_event(Some(&caller(by, verb)), target, data),
             Record::Change { by, target, attr, value } => h.input_change(Some(&caller(by, "changes")), target, attr, value.clone()),
             Record::Answer { adapter, outcome, key: Some(key), data, .. } => h.answer_key(adapter, outcome, data, key),
             Record::Answer { adapter, outcome, target, data, .. } => h.answer(adapter, outcome, data, target.as_deref()),

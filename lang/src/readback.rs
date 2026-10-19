@@ -510,6 +510,7 @@ fn step_names(p: &Program, kind: &str, path: &Path) -> Vec<(String, bool)> {
             Step::Cand => out.push(("candidate".into(), false)),
             Step::Elem => out.push(("element".into(), false)),
             Step::Caller => out.push(("caller".into(), false)),
+            Step::Data(n) => out.push((n.clone(), false)),
             Step::Owner => match p.kind(&cur).and_then(|k| k.owner.clone()) {
                 Some(o) => {
                     out.push((o.attr, false));
@@ -531,7 +532,8 @@ fn path_formula(p: &Program, kind: &str, v: &str, path: &Path) -> String {
 fn path_words(p: &Program, kind: &str, path: &Path) -> String {
     let names: Vec<String> =
         step_names(p, kind, path).into_iter().map(|(n, part)| if part { words_of_kind(&n) } else { n }).collect();
-    if names.is_empty() { "it".into() } else { format!("its {}", names.join("'s ")) }
+    let the = matches!(path.steps.first(), Some(Step::Caller | Step::Data(_)));
+    if names.is_empty() { "it".into() } else { format!("{} {}", if the { "the" } else { "its" }, names.join("'s ")) }
 }
 
 /// `CustomsForm` becomes `customs form`.

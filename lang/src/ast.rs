@@ -319,6 +319,8 @@ pub enum Admitted {
 pub struct AdmitDecl {
     pub what: Admitted,
     pub roles: Vec<String>,
+    /// An event's data: `with reason: Text` (appendix Q.2.1).
+    pub data: Vec<(String, TypeName)>,
     pub cond: Option<Cond>,
     pub source: String,
     pub at: Loc,

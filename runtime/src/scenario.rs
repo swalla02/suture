@@ -40,8 +40,8 @@ pub fn run_with(prog: &Program, sc: &Scenario, setup: impl FnOnce(&mut Host)) ->
                 let created = create(prog, &mut host, kind, name, attrs, items, (!*given).then_some(by.as_ref()));
                 refusal(&mut host, name, refused.as_ref(), created, "it was created")
             }
-            ScenarioStep::Event { by, target, refused } => {
-                let r = host.input_event(Some(by), target);
+            ScenarioStep::Event { by, target, data, refused } => {
+                let r = values(prog, data).and_then(|d| host.input_event(Some(by), target, &d));
                 refusal(&mut host, target, refused.as_ref(), r, "it was admitted")
             }
             ScenarioStep::Change { by, target, attr, value, refused } => {

@@ -26,6 +26,9 @@ pub struct View<'a> {
     pub period: Option<&'a str>,
     /// In an `admit` condition: the caller's unit (appendix G.2.3).
     pub caller: Option<&'a str>,
+    /// In an `admit` condition or an event's reaction: the data the event
+    /// carries (appendix Q.2.2).
+    pub data: &'a [(String, Val)],
     /// When a step checks a rule before acting: the clock. Sourced values
     /// are then known only while fresh, and strict rules count what they
     /// cannot know against the action (appendix I.2.3–I.2.4).
@@ -39,7 +42,7 @@ pub struct View<'a> {
 
 impl<'a> View<'a> {
     pub fn of(u: &'a Unit) -> View<'a> {
-        View { root: &u.root, facts: &u.facts, taken: &u.taken, cand: None, elem: None, period: None, caller: None, now: None, bounds: &[], version: Some(u.version) }
+        View { root: &u.root, facts: &u.facts, taken: &u.taken, cand: None, elem: None, period: None, caller: None, data: &[], now: None, bounds: &[], version: Some(u.version) }
     }
 
     /// The view a step checks its rules with before acting at `now`.
@@ -49,7 +52,7 @@ impl<'a> View<'a> {
 
     /// A tree being built, with its facts and nothing taken yet.
     fn bare(root: &'a Node, facts: &'a Facts) -> View<'a> {
-        View { root, facts, taken: &NO_TOTALS, cand: None, elem: None, period: None, caller: None, now: None, bounds: &[], version: None }
+        View { root, facts, taken: &NO_TOTALS, cand: None, elem: None, period: None, caller: None, data: &[], now: None, bounds: &[], version: None }
     }
 
     fn with(self, root: &'a Node) -> View<'a> {
@@ -184,8 +187,8 @@ pub fn refused_at_creation(prog: &Program, unit: &Unit, now: i64) -> Result<(), 
 
 /// Whether an `admit` condition holds at the root of `u`, with the caller's
 /// facts carried into it (appendix G.2.3). An unknown value does not admit.
-pub fn admits(prog: &Program, u: &Unit, caller: Option<&str>, c: &Cond) -> bool {
-    matches!(eval(prog, View { caller, ..View::of(u) }, &[], c), T::Yes)
+pub fn admits(prog: &Program, u: &Unit, caller: Option<&str>, data: &[(String, Val)], c: &Cond) -> bool {
+    matches!(eval(prog, View { caller, data, ..View::of(u) }, &[], c), T::Yes)
 }
 
 /// Sets given attributes, which must exist, have the right type and not be formulas.
@@ -458,12 +461,18 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
             }
             u.notes.push(format!("refreshed {}", facts.keys().cloned().collect::<Vec<_>>().join(", ")));
         }
-        Msg::Event { verb, by } => {
-            u.notes.push(format!("{by} {verb} it"));
+        Msg::Event { verb, by, data, facts } => {
+            let with: Vec<String> = data.iter().map(|(n, v)| format!("{n} {}", shown(prog, n, v))).collect();
+            let with = if with.is_empty() { String::new() } else { format!(" with {}", with.join(", ")) };
+            u.notes.push(format!("{by} {verb} it{with}"));
             let kind = u.root.kind.clone();
             let mut notes = vec![];
-            let role = by.split_once(' ').map_or(by.as_str(), |(r, _)| r);
-            react(prog, &mut u.root, &unit.facts, &[], &kind, verb, Some(role), &mut notes);
+            let (role, name) = by.split_once(' ').unwrap_or((by.as_str(), ""));
+            // The caller's facts are read in this step only, and not kept.
+            let mut seen = unit.facts.clone();
+            seen.extend(facts.iter().map(|(l, f)| (l.clone(), f.clone())));
+            let caller = facts.contains_key(name).then_some(name);
+            react(prog, &mut u.root, &seen, &[], &kind, verb, Some((role, caller, data)), &mut notes);
             u.notes.extend(notes);
         }
         Msg::Refused { key, by, rule } => {
@@ -506,7 +515,7 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
         let out = Out { asks: again.into_iter().collect(), ..Out::default() };
         return Outcome::kept(unit, format!("refused by rule {}: {}", r.name, r.paraphrase), out);
     }
-    if let (Some(r), Msg::Event { by, verb }) = (newly_violated(prog, unit, &u), msg) {
+    if let (Some(r), Msg::Event { by, verb, .. }) = (newly_violated(prog, unit, &u), msg) {
         // The event's step would break a rule: it is refused, and its caller
         // is told which rule (appendix G.2.4).
         return Outcome::kept(unit, format!("refused {by} {verb} it: refused by rule {}: {}", r.name, r.paraphrase), Out::default());
@@ -935,19 +944,24 @@ pub fn duration(secs: u64) -> String {
 /// Applies the reactions to an outcome, or with the caller's `role` to an
 /// admitted event: only those that name that role (appendix G.2.4).
 #[allow(clippy::too_many_arguments)]
-fn react(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize], kind: &str, outcome: &str, role: Option<&str>, notes: &mut Vec<String>) {
-    let fits = |r: &&suture_lang::ir::Reaction| match role {
+/// An admitted event's caller: its role, its unit if the role has a kind,
+/// and the data the event carries.
+type Sent<'a> = (&'a str, Option<&'a str>, &'a [(String, Val)]);
+
+fn react(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize], kind: &str, outcome: &str, event: Option<Sent>, notes: &mut Vec<String>) {
+    let fits = |r: &&suture_lang::ir::Reaction| match event {
         None => r.by.is_empty(),
-        Some(x) => r.by.iter().any(|b| b == x),
+        Some((x, ..)) => r.by.iter().any(|b| b == x),
     };
     for r in prog.reactions.iter().filter(|r| r.kind == kind && r.outcome == outcome).filter(fits) {
-        apply(prog, root, facts, at, &r.actions, notes);
+        apply(prog, root, facts, at, &r.actions, event.map(|(_, c, d)| (c, d)), notes);
     }
 }
 
 /// Applies actions at the node at `at`: a reaction's, or a source's
 /// `otherwise` (appendix I.2.6).
-fn apply(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize], actions: &[Action], notes: &mut Vec<String>) {
+fn apply(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize], actions: &[Action], event: Option<(Option<&str>, &[(String, Val)])>, notes: &mut Vec<String>) {
+    let (caller, data) = event.unwrap_or((None, &[]));
     {
         for a in actions {
             let Some(target) = here(View::bare(root, facts), at, &a.target.steps) else { continue };
@@ -957,7 +971,7 @@ fn apply(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize], actions: 
                 notes.push(format!("{} is {}{}", n.kind, if a.value { "" } else { "not " }, a.attr));
                 continue;
             };
-            let value = match num(prog, View::bare(root, facts), at, calc) {
+            let value = match num(prog, View { caller, data, ..View::bare(root, facts) }, at, calc) {
                 None => {
                     notes.push(format!("{} not set: its new value is not known yet", a.attr));
                     continue;
@@ -1562,7 +1576,7 @@ fn fail(prog: &Program, u: &mut Unit, at: &[usize], src: &Source, key: &str, why
             u.notes.push(failed);
             let mut t = u.root.clone();
             let mut notes = vec![];
-            apply(prog, &mut t, &u.facts, at, actions, &mut notes);
+            apply(prog, &mut t, &u.facts, at, actions, None, &mut notes);
             match newly_broken(prog, View::of(u), &t) {
                 Some(r) => {
                     // The recovery cannot apply, so the next waiting step fetches again.
@@ -1956,6 +1970,7 @@ fn locate(v: View, from: &[usize], steps: &[Step]) -> Option<Place> {
             (_, Step::Cand) => Place::There(v.cand?.to_string()),
             (_, Step::Caller) => Place::There(v.caller?.to_string()),
             (_, Step::Elem) => Place::Here(v.elem?.to_vec()),
+            (_, Step::Data(_)) => return None,
             (Place::There(_), _) | (_, Step::Attr(_)) => return None,
         };
         if let Place::There(l) = &place {
@@ -1977,6 +1992,9 @@ fn here(v: View, from: &[usize], steps: &[Step]) -> Option<Vec<usize>> {
 fn value(v: View, from: &[usize], path: &Path) -> Option<Val> {
     if path.steps == [Step::Caller] {
         return v.caller.map(|c| Val::Ref(c.to_string()));
+    }
+    if let [Step::Data(n)] = path.steps.as_slice() {
+        return v.data.iter().find(|(d, _)| d == n).map(|(_, x)| x.clone());
     }
     let (last, rest) = path.steps.split_last()?;
     let Step::Attr(name) = last else { return None };
