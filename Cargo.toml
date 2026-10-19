@@ -13,4 +13,4 @@ siphasher = "1"
 thiserror = "2"
 
 [workspace]
-members = ["lang", "runtime", "cli"]
+members = ["lang", "runtime", "cli", "eval/claims/baseline"]

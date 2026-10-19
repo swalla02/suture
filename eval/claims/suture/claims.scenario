@@ -1,0 +1,137 @@
+-- The claims workflow against simulated garages, bank, fraud bureau and model.
+scenario "a dent is repaired at the garage with the most room":
+  given  a Holder Ada with name Ada
+  and    a Policy P1 with holder Ada, region north, limit 20000 EUR, deductible 300 EUR and iban "NL01"
+  and    a Garage G1 with name Bolt, region north and bays 1
+  and    a Garage G2 with name Nut, region north and bays 3
+  and    a Garage G3 with name Far, region south and bays 9
+  when   model "assessor@1" picks Repair
+  and    holder Ada files a new Claim C1 with policy P1, photo file "dent.png", damage door and amount 1200 EUR
+  and    fraud answers scored with score 10
+  expect C1's Repair is sent
+  expect the total bays taken from G2 is 1
+  when   garages answers booked
+  expect C1 is settled
+
+scenario "a total loss is written off for the claim less the deductible":
+  given  a Holder Ada with name Ada
+  and    a Policy P1 with holder Ada, region north, limit 20000 EUR, deductible 300 EUR and iban "NL01"
+  when   model "assessor@1" picks Writeoff
+  and    holder Ada files a new Claim C1 with policy P1, photo file "wreck.png", damage roof and amount 4300 EUR
+  and    fraud answers scored with score 10
+  expect C1's Writeoff is sent
+  expect C1's payout is 4000 EUR
+  when   bank answers paid
+  expect C1 is settled
+
+scenario "a big write-off waits for an adjuster":
+  given  a Holder Ada with name Ada
+  and    a Policy P1 with holder Ada, region north, limit 20000 EUR, deductible 300 EUR and iban "NL01"
+  when   model "assessor@1" picks Writeoff
+  and    holder Ada files a new Claim C1 with policy P1, photo file "wreck.png", damage roof and amount 9300 EUR
+  expect C1's Writeoff is not sent
+  when   adjuster Bo changes C1's approved to yes
+  expect C1's Writeoff is sent
+
+scenario "a write-off over the policy limit is never paid, approved or not":
+  given  a Holder Ada with name Ada
+  and    a Policy P1 with holder Ada, region north, limit 3000 EUR, deductible 300 EUR and iban "NL01"
+  when   model "assessor@1" picks Writeoff
+  and    holder Ada files a new Claim C1 with policy P1, photo file "wreck.png", damage roof and amount 4300 EUR
+  and    adjuster Bo changes C1's approved to yes
+  expect C1's Writeoff is not sent
+  and    14 days pass
+  expect an alert for C1
+
+scenario "a suspect claim waits for an adjuster, and a failing bureau counts as suspect":
+  given  a Holder Ada with name Ada
+  and    a Policy P1 with holder Ada, region north, limit 20000 EUR, deductible 300 EUR and iban "NL01"
+  and    a Garage G1 with name Bolt, region north and bays 1
+  when   model "assessor@1" picks Repair
+  and    holder Ada files a new Claim C1 with policy P1, photo file "dent.png", damage door and amount 1200 EUR
+  and    fraud answers unknown
+  expect C1's score is 100
+  expect C1's Repair is not sent
+  when   adjuster Bo changes C1's approved to yes
+  expect C1's Repair is sent
+
+scenario "a fraud score older than a day is fetched again before a repair is booked":
+  given  a Holder Ada with name Ada
+  and    a Policy P1 with holder Ada, region north, limit 20000 EUR, deductible 300 EUR and iban "NL01"
+  and    a Garage G1 with name Bolt, region north and bays 1
+  when   model "assessor@1" picks Repair
+  and    holder Ada files a new Claim C1 with policy P1, photo file "dent.png", damage door and amount 1200 EUR
+  and    fraud answers scored with score 80
+  expect C1's Repair is not sent
+  when   1 day passes
+  and    fraud answers scored with score 20
+  expect C1's score is 20
+  expect C1's Repair is sent
+
+scenario "with no model, and no garage with room, the claim is written off after two days":
+  given  a Holder Ada with name Ada
+  and    a Policy P1 with holder Ada, region north, limit 20000 EUR, deductible 300 EUR and iban "NL01"
+  and    a Garage G1 with name Bolt, region north and bays 1
+  and    a Holder Cy with name Cy
+  and    a Policy P2 with holder Cy, region north, limit 20000 EUR, deductible 300 EUR and iban "NL02"
+  when   model "assessor@1" declines
+  and    holder Ada files a new Claim C1 with policy P1, photo file "dent.png", damage door and amount 1200 EUR
+  and    fraud answers scored with score 10 for C1
+  expect C1's Repair is sent
+  when   model "assessor@1" declines
+  and    holder Cy files a new Claim C2 with policy P2, photo file "dent.png", damage door and amount 1300 EUR
+  expect C2's Repair is not sent
+  when   2 days pass
+  and    fraud answers scored with score 10 for C2
+  expect C2's Writeoff is sent
+
+scenario "only the policy's holder files or withdraws, and a withdrawn claim stops":
+  given  a Holder Ada with name Ada
+  and    a Holder Cy with name Cy
+  and    a Policy P1 with holder Ada, region north, limit 20000 EUR, deductible 300 EUR and iban "NL01"
+  when   holder Cy files a new Claim C9 with policy P1, photo file "dent.png", damage door and amount 1200 EUR
+           is refused at the gate
+  when   model "assessor@1" picks Writeoff
+  and    holder Ada files a new Claim C1 with policy P1, photo file "wreck.png", damage roof and amount 9300 EUR
+  and    holder Cy withdraws C1
+           is refused at the gate
+  and    holder Ada withdraws C1
+  and    adjuster Bo changes C1's approved to yes
+  expect C1 is withdrawn
+  expect C1 is not settled
+  when   14 days pass
+  expect no alert for C1
+
+scenario "a booking nobody answers is sent again, and the claim stays with the garage":
+  given  a Holder Ada with name Ada
+  and    a Policy P1 with holder Ada, region north, limit 20000 EUR, deductible 300 EUR and iban "NL01"
+  and    a Garage G1 with name Bolt, region north and bays 1
+  when   model "assessor@1" picks Repair
+  and    holder Ada files a new Claim C1 with policy P1, photo file "dent.png", damage door and amount 1200 EUR
+  and    fraud answers scored with score 10
+  and    2 days pass
+  expect C1's Repair is sent
+  expect the total bays taken from G1 is 1
+  when   garages answers booked
+  expect C1 is settled
+
+scenario "a withdrawn claim gives back its bay":
+  given  a Holder Ada with name Ada
+  and    a Policy P1 with holder Ada, region north, limit 20000 EUR, deductible 300 EUR and iban "NL01"
+  and    a Garage G1 with name Bolt, region north and bays 1
+  when   model "assessor@1" picks Repair
+  and    holder Ada files a new Claim C1 with policy P1, photo file "dent.png", damage door and amount 1200 EUR
+  and    holder Ada withdraws C1
+  and    20 seconds pass
+  expect the total bays taken from G1 is 0
+
+scenario "a refused payment is tried three times, then a repair is tried":
+  given  a Holder Ada with name Ada
+  and    a Policy P1 with holder Ada, region north, limit 20000 EUR, deductible 300 EUR and iban "NL01"
+  when   model "assessor@1" picks Writeoff
+  and    holder Ada files a new Claim C1 with policy P1, photo file "wreck.png", damage roof and amount 4300 EUR
+  and    fraud answers scored with score 10
+  and    bank answers refused
+  and    bank answers refused
+  and    bank answers refused
+  expect C1 has a Repair

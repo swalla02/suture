@@ -1,0 +1,8 @@
+[package]
+name = "claims-baseline"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The claims workflow written the usual way, to compare with eval/claims/suture"
+
+[dependencies]

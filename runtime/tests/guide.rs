@@ -154,3 +154,16 @@ fn the_returns_example_passes() {
     let names: Vec<String> = suture_runtime::backend::load(&text, || Box::new(suture_runtime::backend::Curl)).unwrap().into_iter().map(|(n, _)| n).collect();
     assert!(names.iter().all(|n| p.decisions.iter().any(|d| d.model.as_ref() == Some(n))), "{names:?}");
 }
+
+#[test]
+fn the_claims_evaluation_passes() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../eval/claims/suture");
+    let p = suture_lang::compile_dir(std::path::Path::new(dir)).unwrap_or_else(|e| panic!("{e:?}"));
+    let file = format!("{dir}/claims.scenario");
+    let list = parse_scenarios(&file, &std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(list.len(), 11);
+    for sc in list {
+        let r = run(&p, &sc);
+        assert!(r.passed(), "{}: {:?}", r.title, r.failures);
+    }
+}
