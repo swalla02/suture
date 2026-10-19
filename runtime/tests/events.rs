@@ -82,3 +82,35 @@ fn bad_event_data_does_not_compile() {
     let e = bad("admit pause Order by customer\nwhen a customer pauses an Order: the caller is cancelled\n");
     assert!(e.iter().any(|e| e.msg.contains("a reaction changes only its own unit")), "{e:?}");
 }
+
+#[test]
+fn an_event_over_http_carries_typed_data_and_the_log_keeps_it() {
+    use serde_json::json;
+    use suture_runtime::http::{handle, Request};
+    use suture_runtime::service::{Record, Service};
+    let post = |svc: &mut Service, path: &str, caller: &str, body: serde_json::Value| {
+        let mut headers = vec![("authorization".to_string(), "Bearer t".to_string())];
+        if !caller.is_empty() {
+            headers.push(("suture-caller".to_string(), caller.to_string()));
+        }
+        let r = Request { method: "POST".into(), path: path.into(), query: String::new(), headers, body: body.to_string().into_bytes() };
+        handle(svc, &r, Some("t"), 1_800_000_000)
+    };
+    let mut svc = Service::in_memory(&prog(), 1_800_000_000);
+    for b in [json!({ "kind": "Customer", "label": "Ada", "attrs": { "name": "Ada" } }), json!({ "kind": "Order", "label": "O1", "attrs": { "customer": "Ada", "total": "100 EUR" } })] {
+        assert_eq!(post(&mut svc, "/world", "", b).0, 200);
+    }
+    let (status, body) = post(&mut svc, "/inputs", "support Sam", json!({ "event": { "verb": "refunds", "target": "O1", "data": { "amount": 5, "note": "x" } } }));
+    assert_eq!(status, 400, "{body}");
+    let (status, body) = post(&mut svc, "/inputs", "support Sam", json!({ "event": { "verb": "refunds", "target": "O1", "data": { "amount": "20 EUR", "note": "dented" } } }));
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(svc.host.unit("O1").unwrap().root.attrs["refunded"], Val::Money(2000));
+    let line = serde_json::to_string(&Record::Event {
+        by: suture_runtime::service::Who { role: "support".into(), name: "Sam".into() },
+        verb: "refunds".into(),
+        target: "O1".into(),
+        data: vec![],
+    })
+    .unwrap();
+    assert!(!line.contains("data"), "an event with no data is logged as before: {line}");
+}

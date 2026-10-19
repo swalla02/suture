@@ -93,6 +93,37 @@ when a member or librarian returns a Loan: the Loan is returned
 - An admitted event with no reaction, a reaction to an event that is not admitted, and a reaction naming a role the admits do not, are compile errors.
 - The reaction is a step like any other: if it would break a rule, it is refused, and the caller is told which rule. Renewing a returned loan is refused by rule `once`.
 
+### Events with data
+
+An event can carry values. They are declared on its `admit`, after the roles, and read as `the ⟨name⟩` in the admit's condition and in the event's reactions:
+
+```suture
+kind Fine { member: Member, due: Money, paid: Money = 0 EUR, note: Text = "", by: Text = "" }
+
+admit charge a new Fine by librarian
+admit pay Fine by member with amount: Money, comment: Text where the Fine's member is the caller and the amount is at most its due
+when a member pays a Fine: its paid becomes the amount and its note becomes the comment and its by becomes the caller's name
+```
+
+- The data are values: Text, Bool, Money, Count, Time or Duration. A name is not `caller`, nor an attribute of the target's kind, and every `admit` of the same event declares the same data.
+- An event that leaves out a value, adds one, or gives one of the wrong type is refused at the gate.
+- A reaction reads `the caller` and its attributes as an admit's condition does, when the reaction's roles have one kind. It cannot change the caller.
+- Rules do not read the caller: a rule holds of the state at every moment, and the caller exists only while an input is applied. Keep who acted with a reaction, as `its by` above, and let the rule read that.
+
+```scenario
+scenario "a member pays part of a fine":
+  given  a Member Mia with name Mia
+  and    a Member Ned with name Ned
+  when   librarian Lou charges a new Fine F1 with member Mia and due 5 EUR
+  and    member Mia pays F1 with amount 9 EUR and comment "all of it"
+         is refused at the gate
+  and    member Ned pays F1 with amount 2 EUR and comment "for Mia"
+         is refused at the gate
+  and    member Mia pays F1 with amount 3 EUR
+         is refused at the gate
+  and    member Mia pays F1 with amount 3 EUR and comment "part of it"
+```
+
 ## Changes
 
 ```text

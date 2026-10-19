@@ -34,7 +34,7 @@ prefer ⟨Kind⟩ [for a ⟨element⟩]: ⟨criterion⟩[, then ⟨criterion⟩]
     criteria: lowest ⟨num⟩ · highest ⟨num⟩ · those ⟨cond⟩ · those whose ⟨attr⟩ …
 
 admit ⟨verb⟩ a new ⟨Kind⟩[, ⟨Kind⟩… or ⟨Kind⟩] by ⟨role⟩[, ⟨role⟩] [where ⟨cond⟩]
-admit ⟨verb⟩ ⟨Kind⟩ by ⟨role⟩[, ⟨role⟩] [where ⟨cond⟩]
+admit ⟨verb⟩ ⟨Kind⟩ by ⟨role⟩[, ⟨role⟩] [with ⟨name⟩: ⟨Type⟩[, …]] [where ⟨cond⟩]
 admit change ⟨Kind⟩'s ⟨attr⟩ by ⟨role⟩[, ⟨role⟩] [where ⟨cond⟩]
 apply rule ⟨name⟩ to ⟨Kinds⟩ created from version ⟨n⟩
 allow ⟨adapter⟩ to receive ⟨Kind⟩'s ⟨attr⟩[, ⟨Kind⟩'s ⟨attr⟩…]
