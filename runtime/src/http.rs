@@ -152,7 +152,10 @@ fn input(svc: &Service, by: Who, b: &Value) -> Result<Record, String> {
     }
     if let Some(e) = one("event") {
         let (verb, target) = (text(e, "verb")?, text(e, "target")?);
-        let part = e.get("part").and_then(Value::as_str).map(String::from);
+        let part = match e.get("part") {
+            None => None,
+            Some(p) => Some(p.as_str().map(String::from).ok_or("an event's `part` is the name of a part kind")?),
+        };
         let root = svc.host.unit(&target).map(|u| u.root.kind).ok_or_else(|| format!("there is no unit {target}"))?;
         let kind = part.clone().unwrap_or(root);
         // The data is typed by the event's `admit … with` (appendix Q.2.1).

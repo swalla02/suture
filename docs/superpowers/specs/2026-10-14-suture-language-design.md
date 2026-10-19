@@ -1461,3 +1461,5 @@ Until now a goal's subject and an event's target had to be a root kind. A goal l
 
 - An express order's goal about its Shipment is met when a courier delivers it, and alerts when the deadline passes first; it does not apply to an order that is not express.
 - The gate reads the part's state: delivering a delivered Shipment is refused at the gate. An event to the root kind with no admit is refused at the gate; one that breaks a rule is refused by the rule.
+
+**R.2.5 Review updates.** A part counts, for a goal and as an event's target, only when every node on the way to it is a current attempt, so the parts of a replaced owner are left out. An HTTP event's `part` that is not text is a bad request.

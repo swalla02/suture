@@ -198,7 +198,7 @@ pub fn part_at(u: &Unit, kind: &str) -> Result<Vec<usize>, String> {
         .into_iter()
         .filter(|at| {
             let n = node_at(&u.root, at);
-            n.kind == kind && at.split_last().is_some_and(|(&i, owner)| current(node_at(&u.root, owner), kind) == Some(i))
+            n.kind == kind && !at.is_empty() && live(&u.root, at)
         })
         .collect();
     match found.as_slice() {
@@ -1648,7 +1648,7 @@ pub fn goal_nodes(prog: &Program, u: &Unit, g: &suture_lang::ir::Goal) -> Vec<Ve
         .into_iter()
         .filter(|at| {
             let n = node_at(&u.root, at);
-            n.kind == g.kind && at.split_last().is_none_or(|(&i, owner)| current(node_at(&u.root, owner), &n.kind) == Some(i))
+            n.kind == g.kind && live(&u.root, at)
         })
         .filter(|at| g.filter.iter().all(|f| eval(prog, View::of(u), at, f) == T::Yes))
         .collect()
@@ -1956,6 +1956,12 @@ fn positions(root: &Node) -> Vec<Vec<usize>> {
     let mut out = vec![];
     walk(root, &mut vec![], &mut out);
     out
+}
+
+/// Whether every node on the walk to `at` is the current attempt of its
+/// kind, so the node is not left over from a replaced owner.
+fn live(root: &Node, at: &[usize]) -> bool {
+    (0..at.len()).all(|k| current(node_at(root, &at[..k]), &node_at(root, &at[..=k]).kind) == Some(at[k]))
 }
 
 /// The current attempt of a part kind: the last one created.
