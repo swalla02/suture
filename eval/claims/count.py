@@ -1,26 +1,30 @@
 #!/usr/bin/env python3
-"""Counts what eval/claims/RESULTS.md reports: lines of logic (not blank,
-not comments) and control-flow constructs, for each version."""
-import re, sys, pathlib
+"""Counts what eval/claims/RESULTS.md reports, for the working tree or for a
+commit (`count.py 1a2b3c`): lines that are not blank or comments; in Rust,
+control-flow statements; in Suture, which has none, the clauses that make a
+condition or a fallback."""
+import re, subprocess, sys, pathlib
 
 root = pathlib.Path(__file__).parent
+rev = sys.argv[1] if len(sys.argv) > 1 else None
 
-def logic(path, comment):
-    out = []
-    for line in path.read_text().splitlines():
-        s = line.strip()
-        if s and not s.startswith(comment):
-            out.append(s)
-    return out
+def text(rel):
+    if rev is None:
+        return (root / rel).read_text()
+    return subprocess.run(["git", "show", f"{rev}:eval/claims/{rel}"], capture_output=True, text=True, check=True).stdout
 
-FLOW = r"\b(if|else|match|for|while|loop|return)\b|\?;|=>"
+def logic(rel, comment):
+    return [s for s in (l.strip() for l in text(rel).splitlines()) if s and not s.startswith(comment)]
 
-def report(name, files, comment):
-    lines = [l for f in files for l in logic(f, comment)]
-    flow = sum(len(re.findall(FLOW, l)) for l in lines) if comment == "//" else 0
-    print(f"{name:10} {len(lines):5} lines  {flow:4} control-flow constructs  ({', '.join(str(f.relative_to(root)) for f in files)})")
+RUST_FLOW = r"\b(if|else|match|for|while|loop|return)\b"
+SUTURE_CONDITIONS = r"\b(unless|where|whose|while|otherwise|after|fails with)\b"
 
-report("suture", [root / "suture/claims.st"], "--")
-report("baseline", [root / "baseline/src/lib.rs"], "//")
-report("scenarios", [root / "suture/claims.scenario"], "--")
-report("tests", [root / "baseline/tests/scenarios.rs"], "//")
+def report(name, rel, comment, pattern, what):
+    lines = logic(rel, comment)
+    n = sum(len(re.findall(pattern, l)) for l in lines)
+    print(f"{name:10} {len(lines):5} lines  {n:4} {what}")
+
+report("suture", "suture/claims.st", "--", SUTURE_CONDITIONS, "condition and fallback clauses (no control flow)")
+report("baseline", "baseline/src/lib.rs", "//", RUST_FLOW, "control-flow statements")
+report("scenarios", "suture/claims.scenario", "--", r"^(when|and|expect)\b", "steps")
+report("tests", "baseline/tests/scenarios.rs", "//", r"\bassert", "asserts")
