@@ -202,3 +202,16 @@ fn a_policy_pays_out_at_most_25000_eur_a_year() {
     assert!(sent_pay(&s, "C1"));
     assert!(!sent_pay(&s, "C2"));
 }
+
+#[test]
+fn a_holder_can_be_paid_the_payout_in_cash_under_the_same_checks() {
+    let mut s = world(20000_00);
+    s.model = Some(model(Some(Kind::Cash)));
+    s.file_claim(&ada(), "C1", "P1", DENT.to_vec(), "door", 1200_00).unwrap();
+    s.fraud_answers("C1", Some(80));
+    assert!(!sent_pay(&s, "C1"));
+    s.set_approved(&bo(), "C1", true).unwrap();
+    assert!(sent_pay(&s, "C1"));
+    s.bank_answers("C1", true);
+    assert!(s.claims["C1"].settled());
+}

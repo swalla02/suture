@@ -21,7 +21,7 @@ const REPAIR_PATIENCE: u64 = 2 * DAY;
 const SETTLE_WITHIN: u64 = 14 * DAY;
 const SENDS: u32 = 3;
 /// The outcomes, best first: one that fails gives way to the next not yet tried.
-const PREFER: [Kind; 2] = [Kind::Repair, Kind::Writeoff];
+const PREFER: [Kind; 3] = [Kind::Repair, Kind::Writeoff, Kind::Cash];
 const YEARLY: i64 = 25000_00;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -56,6 +56,7 @@ pub struct Garage {
 pub enum Kind {
     Repair,
     Writeoff,
+    Cash,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -260,7 +261,7 @@ impl System {
 
     pub fn bank_answers(&mut self, id: &str, paid: bool) {
         let Some(o) = self.claims.get_mut(id).and_then(|c| c.outcome.as_mut()) else { return };
-        if o.kind == Kind::Writeoff && matches!(o.effect, Effect::Sent { .. }) {
+        if matches!(o.kind, Kind::Writeoff | Kind::Cash) && matches!(o.effect, Effect::Sent { .. }) {
             if paid {
                 o.effect = Effect::Done;
             } else {
@@ -432,7 +433,7 @@ impl System {
                 }
                 self.send(id);
             }
-            Kind::Writeoff => {
+            Kind::Writeoff | Kind::Cash => {
                 let payout = c.amount - policy.deductible;
                 if payout > policy.limit {
                     return;
@@ -457,7 +458,7 @@ impl System {
         o.effect = Effect::Sent { at: self.now };
         let request = match o.kind {
             Kind::Repair => Request::Book { claim: id.into(), garage: o.garage.clone().unwrap(), damage: c.damage.clone() },
-            Kind::Writeoff => Request::Pay { claim: id.into(), amount: c.amount - policy.deductible, iban: policy.iban.clone() },
+            Kind::Writeoff | Kind::Cash => Request::Pay { claim: id.into(), amount: c.amount - policy.deductible, iban: policy.iban.clone() },
         };
         self.outbox.push(request);
     }

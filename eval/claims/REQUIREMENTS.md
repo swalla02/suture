@@ -17,4 +17,4 @@ Motor insurance claims, with a decision model in the loop. `suture/` and `baseli
 ## The changes made to both, one commit each
 
 1. **A yearly cap.** The claims filed on one policy in a calendar year (UTC, by filing time) pay out at most 25000 EUR together. A claim that would pass it waits. A withdrawn claim still counts.
-2. **Cash.** A third outcome: the payout paid to the holder, under the same limit, approval and fraud checks as a write-off. The model may pick it, and it is tried when a write-off fails, instead of failing the claim.
+2. **Cash.** A third outcome: the payout paid to the holder, under the same limit, approval and fraud checks as a write-off. The model may pick it, and it comes last among the outcomes to try when one fails.

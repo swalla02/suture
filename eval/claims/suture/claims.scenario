@@ -147,3 +147,15 @@ scenario "a policy pays out at most 25000 EUR a year":
   and    adjuster Bo changes C2's approved to yes
   expect C1's Writeoff is sent
   expect C2's Writeoff is not sent
+
+scenario "a holder can be paid the payout in cash, under the same checks":
+  given  a Holder Ada with name Ada
+  and    a Policy P1 with holder Ada, region north, limit 20000 EUR, deductible 300 EUR and iban "NL01"
+  when   model "assessor@1" picks Cash
+  and    holder Ada files a new Claim C1 with policy P1, photo file "dent.png", damage door and amount 1200 EUR
+  and    fraud answers scored with score 80
+  expect C1's Cash is not sent
+  when   adjuster Bo changes C1's approved to yes
+  expect C1's Cash is sent
+  when   bank answers paid
+  expect C1 is settled
