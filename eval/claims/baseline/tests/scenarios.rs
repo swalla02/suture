@@ -190,3 +190,15 @@ fn a_refused_payment_is_tried_three_times_then_a_repair_is_tried() {
     }
     assert_eq!(s.claims["C1"].outcome.as_ref().unwrap().kind, Kind::Repair);
 }
+
+#[test]
+fn a_policy_pays_out_at_most_25000_eur_a_year() {
+    let mut s = world(20000_00);
+    s.model = Some(model(Some(Kind::Writeoff)));
+    s.file_claim(&ada(), "C1", "P1", WRECK.to_vec(), "roof", 15300_00).unwrap();
+    s.file_claim(&ada(), "C2", "P1", WRECK.to_vec(), "roof", 12300_00).unwrap();
+    s.set_approved(&bo(), "C1", true).unwrap();
+    s.set_approved(&bo(), "C2", true).unwrap();
+    assert!(sent_pay(&s, "C1"));
+    assert!(!sent_pay(&s, "C2"));
+}

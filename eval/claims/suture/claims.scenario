@@ -135,3 +135,15 @@ scenario "a refused payment is tried three times, then a repair is tried":
   and    bank answers refused
   and    bank answers refused
   expect C1 has a Repair
+
+scenario "a policy pays out at most 25000 EUR a year":
+  given  a Holder Ada with name Ada
+  and    a Policy P1 with holder Ada, region north, limit 20000 EUR, deductible 300 EUR and iban "NL01"
+  when   model "assessor@1" picks Writeoff
+  and    holder Ada files a new Claim C1 with policy P1, photo file "wreck.png", damage roof and amount 15300 EUR
+  and    model "assessor@1" picks Writeoff
+  and    holder Ada files a new Claim C2 with policy P1, photo file "wreck.png", damage roof and amount 12300 EUR
+  and    adjuster Bo changes C1's approved to yes
+  and    adjuster Bo changes C2's approved to yes
+  expect C1's Writeoff is sent
+  expect C2's Writeoff is not sent

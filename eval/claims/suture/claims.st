@@ -43,6 +43,7 @@ rule fraud:   no Claim has a Writeoff that is sent unless its score is less than
               with score at most 1 day old
 rule suspect: no Claim has a Repair that is sent unless its score is less than 70 or it is approved,
               with score at most 1 day old
+rule yearly:  for each Policy and year, the total payout of their Claims is at most 25000 EUR
 
 define: a Claim is settled when its Outcome is done
 desired within 14 days: every Claim that is not withdrawn is settled

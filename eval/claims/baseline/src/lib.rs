@@ -22,6 +22,7 @@ const SETTLE_WITHIN: u64 = 14 * DAY;
 const SENDS: u32 = 3;
 /// The outcomes, best first: one that fails gives way to the next not yet tried.
 const PREFER: [Kind; 2] = [Kind::Repair, Kind::Writeoff];
+const YEARLY: i64 = 25000_00;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Role {
@@ -98,6 +99,8 @@ pub struct Claim {
     pub alerted: bool,
     /// The outcomes that failed, so as not to try them again.
     pub tried: Vec<Kind>,
+    /// Whether its payout counts toward its policy's yearly total.
+    pub counted: bool,
 }
 
 impl Claim {
@@ -201,6 +204,7 @@ impl System {
             outcome: Some(outcome),
             alerted: false,
             tried: vec![],
+            counted: false,
         };
         self.claims.insert(id.into(), claim);
         self.progress(id);
@@ -372,11 +376,37 @@ impl System {
         }
     }
 
+    /// Counts the claim toward its policy's total for the year it was filed
+    /// in, if there is room; a claim without room waits.
+    fn count_yearly(&mut self, id: &str) -> bool {
+        let c = &self.claims[id];
+        if c.counted {
+            return true;
+        }
+        let deductible = self.policies[&c.policy].deductible;
+        let year = year_of(c.created);
+        let total: i64 = self
+            .claims
+            .values()
+            .filter(|o| o.counted && o.policy == c.policy && year_of(o.created) == year)
+            .map(|o| o.amount - self.policies[&o.policy].deductible)
+            .sum();
+        if total + c.amount - deductible > YEARLY {
+            return false;
+        }
+        self.claims.get_mut(id).unwrap().counted = true;
+        true
+    }
+
     fn progress(&mut self, id: &str) {
         let Some(c) = self.claims.get(id) else { return };
         if c.withdrawn {
             return;
         }
+        if !self.count_yearly(id) {
+            return;
+        }
+        let c = &self.claims[id];
         let Some(o) = &c.outcome else { return };
         if o.effect != Effect::Waiting {
             return;
@@ -431,4 +461,17 @@ impl System {
         };
         self.outbox.push(request);
     }
+}
+
+/// The calendar year, in UTC, of a time in seconds since 1970.
+fn year_of(secs: u64) -> i64 {
+    // Days to a civil date (Howard Hinnant's algorithm).
+    let z = (secs / DAY) as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    yoe + era * 400 + i64::from(month <= 2)
 }
