@@ -1604,7 +1604,7 @@ The last open item of the claims evaluation's list (eval/claims/RESULTS.md, item
 
 | Added in slice 23 | Still waits |
 |---|---|
-| `waiting: rule ⟨r⟩, on ⟨Kind⟩'s ⟨attr⟩ (⟨where the fetch stands⟩)` in `suture explain` | the same in the served `/explain` answer's structure (it carries the same lines) |
+| `waiting: rule ⟨r⟩, on ⟨Kind⟩'s ⟨attr⟩ (⟨where the fetch stands⟩)` in `suture explain` and the served explanation, which share one function | nothing more from the evaluation's list but a design partner's workflow |
 
 ### X.2 Semantics that slice 23 settles
 
