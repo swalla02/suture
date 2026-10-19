@@ -63,7 +63,7 @@ rule located: no Item has a Restock that is sent unless its rma's location is re
 prefer Payback: Refund, then Credit after 1 minute
 
 admit authorize a new Rma by staff where the Rma's order is shipped
-admit authorize a new Item by staff where the Item's rma is not cancelled
+admit authorize a new Item by staff where the Item's rma is not cancelled and the Item's unit's order is the Item's rma's order
 admit receive Item by staff where the Item is not received and it is not expired and it is not cancelled
 admit give Item by staff where the Item is awaiting
 admit lose Item by staff where the Item is awaiting

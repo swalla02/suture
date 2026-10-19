@@ -198,3 +198,13 @@ scenario "a cancelled authorization stays cancelled":
   and    staff Sam changes A1's cancelled to yes
   and    staff Sam changes A1's cancelled to no
            is refused at the gate
+
+scenario "a return item for a unit of another order is refused":
+  given  a Customer Ada with name Ada
+  and    a Location L1 with name Main
+  when   staff Sam adds a new Order O1 with customer Ada and number R100
+  and    staff Sam adds a new Order O2 with customer Ada and number R200
+  and    staff Sam adds a new Unit U2 with order O2, number U200 and price 30 EUR
+  and    staff Sam authorizes a new Rma A1 with order O1 and location L1
+  and    staff Sam authorizes a new Item I1 with rma A1 and unit U2
+           is refused at the gate
