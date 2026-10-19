@@ -1608,8 +1608,8 @@ The last open item of the claims evaluation's list (eval/claims/RESULTS.md, item
 
 ### X.2 Semantics that slice 23 settles
 
-1. **What is named.** For a part waiting on rule ⟨r⟩, each sourced fact that ⟨r⟩ reads (`sources`, defines included) is looked up on the part or its nearest owner of that kind. The fact is named when a model is picking its source, when a fetch is open (`asking ⟨adapter⟩, send n of attempts`), when its sources failed (`⟨adapter⟩ failed`), or when it has no value yet (`not fetched yet`). A fact that is in is not named, because then the rule waits on its value.
+1. **What is named.** For a part waiting on rule ⟨r⟩, each sourced fact that ⟨r⟩ reads (`sources`, defines included) is looked up on every live node of the source's kind, as the runtime does when it fetches. A fact is named when a model is picking its source, when a fetch is open (`asking ⟨adapter⟩, send n of attempts`), when its sources failed (`⟨adapter⟩ failed`), when it has no value yet (`not fetched yet`), or when its value is too old for the rule at the time of the explanation (`2 hours old, too old for the rule`). A fact that is in and fresh enough is not named, because then the rule waits on its value. The same line is not repeated.
 
 ### X.3 Acceptance
 
-- In the credit program, an order just placed explains `Payment: waiting: rule credit, on Order's credit (asking bureau, send 1 of 3)`.
+- In the credit program, an order just placed explains `Payment: waiting: rule credit, on Order's credit (asking bureau, send 1 of 3)`, and a credit two hours old against `at most 1 hour old` explains `(2 hours old, too old for the rule)`.

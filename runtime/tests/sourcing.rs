@@ -266,6 +266,12 @@ fn explain_shows_where_a_sourced_value_stands() {
     assert!(show(placed).contains("  Payment: waiting: rule credit, on Order's credit (asking bureau, send 1 of 3)"), "{}", show(placed));
     let fetched = format!("{placed}  and    bureau answers found with credit 100 EUR\n  and    2 hours pass\n");
     assert!(show(&fetched).contains("  credit: 100 EUR from bureau, 2 hours old, trusted 22 hours more"), "{}", show(&fetched));
+    // Too old for the rule (`at most 1 hour old`) by the time it is read:
+    // named, until the next pass asks again.
+    let r = scenario(&p, &format!("{placed}  and    bureau answers found with credit 10 EUR\n"));
+    let late = r.host.now as i64 + 2 * 3600;
+    let text = suture_runtime::explain::explain_at(&p, &r.host.unit("O1").unwrap(), Some(late), |_| None).join("\n");
+    assert!(text.contains("Payment: waiting: rule credit, on Order's credit (2 hours old, too old for the rule)"), "{text}");
     let fallback = format!("{placed}  and    bureau answers unknown\n");
     assert!(show(&fallback).contains("  credit: 0 EUR, the fallback after bureau failed"), "{}", show(&fallback));
 }

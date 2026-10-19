@@ -103,7 +103,7 @@ fn part(prog: &Program, unit: &Unit, at: &[usize], now: Option<i64>, due: &impl 
     let depth = at.len();
     let effect = prog.effect_of(&n.kind);
     let what = match (n.status, &n.waiting) {
-        (Status::Idle, Some(rule)) => format!("waiting: rule {rule}{}", awaited(prog, unit, at, rule)),
+        (Status::Idle, Some(rule)) => format!("waiting: rule {rule}{}", awaited(prog, unit, now, rule)),
         (Status::Idle, None) if effect.is_some() => "not requested yet".to_string(),
         (Status::Idle, None) => "waiting for its parts".to_string(),
         (Status::Requested, _) => {
@@ -128,36 +128,41 @@ fn part(prog: &Program, unit: &Unit, at: &[usize], now: Option<i64>, due: &impl 
 }
 
 /// `, on Order's credit (asking bureau, send 1 of 3)`: the sourced facts a
-/// waiting rule reads that are not in yet (appendix X.2.1). A fact that is in
-/// and trusted is not named: then the rule waits on the fact's value.
-fn awaited(prog: &Program, unit: &Unit, at: &[usize], rule: &str) -> String {
+/// waiting rule reads that are not in yet (appendix X.2.1), on the nodes the
+/// runtime fetches them for: every live node of the source's kind. A fact
+/// that is in and fresh for the rule is not named: then the rule waits on
+/// the fact's value.
+fn awaited(prog: &Program, unit: &Unit, now: Option<i64>, rule: &str) -> String {
     let Some(r) = prog.rules.iter().find(|r| r.name == rule) else { return String::new() };
-    // The node and its owners, nearest first.
-    let mut chain = vec![&unit.root];
-    for &i in at {
-        let last = chain[chain.len() - 1];
-        chain.push(&last.parts[i]);
-    }
-    chain.reverse();
-    let mut on = vec![];
+    let mut on: Vec<String> = vec![];
     for (kind, attr) in &r.sources {
-        let Some(n) = chain.iter().find(|n| n.kind == *kind) else { continue };
-        let f = n.fetched.get(attr).cloned().unwrap_or_default();
-        let src = prog.sources_of(kind, attr).into_iter().find(|s| s.adapter == f.via).or_else(|| prog.sources_of(kind, attr).into_iter().next());
-        let Some(src) = src else { continue };
-        let picking = n.choosing.keys().any(|k| k.ends_with("?source") && k.contains(&format!("~{attr}#")));
-        let state = if picking {
-            "a model is picking its source".to_string()
-        } else if f.sends > 0 {
-            format!("asking {}, send {} of {}", src.adapter, f.sends, prog.attempts)
-        } else if f.failed {
-            format!("{} failed", src.adapter)
-        } else if !n.attrs.contains_key(attr) {
-            "not fetched yet".to_string()
-        } else {
-            continue;
-        };
-        on.push(format!("{kind}'s {attr} ({state})"));
+        let bound = r.fresh.iter().find(|(a, _)| a == attr).map(|(_, secs)| *secs);
+        for pos in crate::interp::positions(&unit.root) {
+            let n = pos.iter().fold(&unit.root, |n, &i| &n.parts[i]);
+            if n.kind != *kind || n.status == Status::Failed {
+                continue;
+            }
+            let f = n.fetched.get(attr).cloned().unwrap_or_default();
+            let Some(src) = prog.sources_of(kind, attr).into_iter().find(|s| s.adapter == f.via).or_else(|| prog.sources_of(kind, attr).into_iter().next()) else { continue };
+            let picking = n.choosing.keys().any(|k| k.ends_with("?source") && k.contains(&format!("~{attr}#")));
+            let state = if picking {
+                "a model is picking its source".to_string()
+            } else if f.sends > 0 {
+                format!("asking {}, send {} of {}", src.adapter, f.sends, prog.attempts)
+            } else if f.failed {
+                format!("{} failed", src.adapter)
+            } else if f.at.is_none() {
+                "not fetched yet".to_string()
+            } else if let Some(t) = now.filter(|t| !f.fresh(*t, bound)) {
+                format!("{} old, too old for the rule", duration((t - f.at.unwrap_or(t)).max(0) as u64))
+            } else {
+                continue;
+            };
+            let line = format!("{kind}'s {attr} ({state})");
+            if !on.contains(&line) {
+                on.push(line);
+            }
+        }
     }
     if on.is_empty() { String::new() } else { format!(", on {}", on.join(" and ")) }
 }

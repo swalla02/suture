@@ -1971,7 +1971,7 @@ fn node_at_mut<'a>(root: &'a mut Node, at: &[usize]) -> &'a mut Node {
 }
 
 /// Every position in the unit, owners before their parts.
-fn positions(root: &Node) -> Vec<Vec<usize>> {
+pub(crate) fn positions(root: &Node) -> Vec<Vec<usize>> {
     fn walk(n: &Node, at: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
         out.push(at.clone());
         for (i, p) in n.parts.iter().enumerate() {
