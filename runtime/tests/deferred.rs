@@ -103,3 +103,31 @@ fn a_late_model_leaves_the_pick_to_prefer_and_its_answer_is_ignored() {
     h.model_answer("O1/Shipment#1@Carrier", &suture_runtime::choice::Answer::Picked("Fast".into())).unwrap();
     assert!(h.trace.last().unwrap().contains("ignored: nothing waits for it"), "{:?}", h.trace.last());
 }
+
+#[test]
+fn a_deploy_while_a_model_is_asked_carries_the_choice_over() {
+    let p = prog();
+    let mut h = Host::new(p.clone());
+    h.defer_models = true;
+    for (k, l, a) in [
+        ("Product", "Kettle", vec![("name", Val::Text("Kettle".into()))]),
+        ("Carrier", "Cheap", vec![("name", Val::Text("Cheap".into())), ("zone", Val::Text("EU".into())), ("fee", Val::Money(500))]),
+        ("Carrier", "Fast", vec![("name", Val::Text("Fast".into())), ("zone", Val::Text("EU".into())), ("fee", Val::Money(900))]),
+    ] {
+        let a: Vec<(String, Val)> = a.into_iter().map(|(n, v)| (n.to_string(), v)).collect();
+        h.create_with(k, l, &a, &[]).unwrap();
+    }
+    let by = Caller { role: "staff".into(), name: "Sam".into(), verb: "places".into() };
+    h.input_new(Some(&by), "Order", "O1", &[("product".into(), Val::Ref("Kettle".into())), ("zone".into(), Val::Text("EU".into()))], &[]).unwrap();
+    // v2 puts a binding before the one being asked, so its number changes.
+    let v2 = SHOP.replace("version 1", "version 2").replace(
+        "Shipment uses a Carrier",
+        "kind Box { zone: Text }\nShipment uses a Box where the Box's zone is the Order's zone\nShipment uses a Carrier",
+    );
+    let v2 = suture_lang::compile(&[("shop.st".to_string(), v2)]).unwrap_or_else(|e| panic!("{e:?}"));
+    h.deploy(v2).unwrap();
+    assert_eq!(h.model_asks().len(), 1);
+    h.model_answer("O1/Shipment#1@Carrier", &suture_runtime::choice::Answer::Picked("Fast".into())).unwrap();
+    let t = h.trace.join("\n");
+    assert!(t.contains("choice: Fast for O1/Shipment#1@Carrier by model \"dearest@1\" (of Cheap, Fast)"), "{t}");
+}

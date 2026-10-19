@@ -71,6 +71,9 @@ struct Asking {
     choice: Choice,
     within: u64,
     to: Chooses,
+    /// The number of its deadline's timer, so an older ask's timer does
+    /// not answer this one.
+    timer: u64,
 }
 
 /// Where a deferred model's answer goes.
@@ -127,8 +130,9 @@ enum Timer {
     Goal(String, u32),
     /// A slot's patience, for a unit (appendix D.3.5).
     Patience(String, String),
-    /// A deferred model's deadline, by choice key (appendix S.2.2).
-    Model(String),
+    /// A deferred model's deadline, by choice key and the timer's number
+    /// (appendix S.2.2).
+    Model(String, u64),
 }
 
 impl Host {
@@ -454,9 +458,10 @@ impl Host {
     fn defer(&mut self, model: String, choice: Choice, within: u64, to: Chooses) {
         self.trace.push(format!("      choice for {}: model \"{model}\" is asked", choice.key));
         let secs = within.div_ceil(1000).max(1);
-        self.schedule(self.now + secs, Timer::Model(choice.key.clone()));
+        let timer = self.started + 1;
+        self.schedule(self.now + secs, Timer::Model(choice.key.clone(), timer));
         self.asking.retain(|a| a.choice.key != choice.key);
-        self.asking.push(Asking { model, choice, within, to });
+        self.asking.push(Asking { model, choice, within, to, timer });
     }
 
     /// The choices waiting for a model, as (key, unit), in the order asked.
@@ -859,8 +864,8 @@ impl Host {
                 self.expired.push(ask);
                 self.pump()
             }
-            Timer::Model(key) => {
-                if !self.asking.iter().any(|a| a.choice.key == key) {
+            Timer::Model(key, timer) => {
+                if !self.asking.iter().any(|a| a.choice.key == key && a.timer == timer) {
                     return Ok(());
                 }
                 self.model_answer(&key, &Answer::Late)
@@ -1011,6 +1016,13 @@ impl Host {
                 add(format!("{} uses a {} that is removed, and live units wait for one", b.subject, b.target), &w.decide.label);
             }
         }
+        for a in &self.asking {
+            let Chooses::Bind { decide, .. } = &a.to else { continue };
+            if bindings.get(decide.binding as usize).copied().flatten().is_none() {
+                let b = &self.prog.bindings[decide.binding as usize];
+                add(format!("{} uses a {} that is removed, and live units wait for a model to pick one", b.subject, b.target), &decide.label);
+            }
+        }
         Ok(breaks
             .into_iter()
             .map(|(b, units)| {
@@ -1051,6 +1063,11 @@ impl Host {
         for w in &mut self.waiters {
             w.decide.binding = bindings[w.decide.binding as usize].expect("the check refuses a removed binding") as u32;
         }
+        for a in &mut self.asking {
+            if let Chooses::Bind { decide, .. } = &mut a.to {
+                decide.binding = bindings[decide.binding as usize].expect("the check refuses a removed binding") as u32;
+            }
+        }
         self.trace.push(format!("deployed {} v{} over v{}", self.prog.module, self.prog.version, old.version));
         let mut first_error = None;
         for (l, facts) in carried {
@@ -1069,6 +1086,19 @@ impl Host {
             w.key = self.pool_key(&u, &w.decide);
             w.kind = self.prog.bindings[w.decide.binding as usize].target.clone();
             self.waiters.push(w);
+        }
+        // So do the pool keys of the choices waiting for a model.
+        let asking = std::mem::take(&mut self.asking);
+        for mut a in asking {
+            let label = match &a.to {
+                Chooses::Bind { decide, .. } => decide.label.clone(),
+                Chooses::Ask { ask, .. } => ask.label.clone(),
+            };
+            let Some(u) = self.unit(&label) else { continue };
+            if let Chooses::Bind { decide, pool, .. } = &mut a.to {
+                *pool = self.pool_key(&u, decide);
+            }
+            self.asking.push(a);
         }
         if let Err(e) = self.pump() {
             first_error.get_or_insert(e);
