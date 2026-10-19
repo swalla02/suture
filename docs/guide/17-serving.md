@@ -66,7 +66,7 @@ There are three kinds of input, one per form of `admit`:
 | Input | Body |
 |---|---|
 | a new entity | `{"new": {"verb": "books", "kind": "Booking", "label": "B1", "attrs": {…}, "items": {"lines": [{…}]}}}` |
-| an event | `{"event": {"verb": "cancels", "target": "B1", "data": {"reason": "ill"}}}`; `data` only when the `admit` declares some |
+| an event | `{"event": {"verb": "cancels", "target": "B1", "data": {"reason": "ill"}}}`; `data` only when the `admit` declares some, `"part": "Ticket"` for an event to a part |
 | a change | `{"change": {"target": "Fri", "attr": "seats", "value": 120}}` |
 
 The answer is 200 with the trace lines the input caused, 409 with `refused` when the gate or a rule refuses it, or 400 when the request itself is wrong (an unknown field, or a value of the wrong type).

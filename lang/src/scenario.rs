@@ -41,7 +41,8 @@ pub enum ScenarioStep {
     },
     /// `when support Sam cancels O1 [is refused …]`: an admitted event (appendix G.2.4).
     /// `customer Ada cancels O1 with reason "late"`: data as in an `admit`'s `with`.
-    Event { by: Caller, target: String, data: Vec<(String, Literal)>, refused: Option<Refused> },
+    /// `customer Ada cancels O1's Shipment`: an event to the unit's part (appendix R.2.2).
+    Event { by: Caller, target: String, part: Option<String>, data: Vec<(String, Literal)>, refused: Option<Refused> },
     /// `when staff Tom changes S1's units to 3 [is refused …]` (appendix G.2.5).
     Change { by: Caller, target: String, attr: String, value: Literal, refused: Option<Refused> },
     /// `and forms answers filled with licence "L-77" [for O1]`
@@ -201,9 +202,10 @@ fn step(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {
     }
     if let Some(by) = by.clone().filter(|_| !(c.is_word("a") || c.is_word("an"))) {
         let target = c.word()?;
+        let part = if c.eat_poss() { Some(c.kind_name()?) } else { None };
         let data = if c.eat_word("with") { pairs(c)? } else { vec![] };
         let refused = refusal(c)?;
-        return Ok(ScenarioStep::Event { by, target, data, refused });
+        return Ok(ScenarioStep::Event { by, target, part, data, refused });
     }
     if by.is_some() || c.is_word("a") || c.is_word("an") {
         if !(c.eat_word("a") || c.eat_word("an")) {
@@ -390,7 +392,7 @@ mod tests {
         let src = "scenario \"x\":\n  when   support Sam cancels O1\n         is refused by rule late\n";
         let s = &parse_scenarios("o.scenario", src).unwrap()[0];
         let by = Caller { role: "support".into(), name: "Sam".into(), verb: "cancels".into() };
-        assert_eq!(s.steps[0], ScenarioStep::Event { by, target: "O1".into(), data: vec![], refused: Some(Refused::Rule("late".into())) });
+        assert_eq!(s.steps[0], ScenarioStep::Event { by, target: "O1".into(), part: None, data: vec![], refused: Some(Refused::Rule("late".into())) });
         let src = "scenario \"x\":\n  when   staff Tom changes S1's units to 3\n";
         let s = &parse_scenarios("o.scenario", src).unwrap()[0];
         let by = Caller { role: "staff".into(), name: "Tom".into(), verb: "changes".into() };

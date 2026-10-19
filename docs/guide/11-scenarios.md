@@ -77,7 +77,7 @@ given a ⟨Kind⟩ ⟨Name⟩ [with ⟨attr⟩ ⟨value⟩[, ⟨attr⟩ ⟨value
 | `when a new ⟨Kind⟩ ⟨Name⟩ with …` | creates a root, with no caller (only in a program with no `admit`) |
 | `when ⟨role⟩ ⟨Name⟩ ⟨verb⟩s a new ⟨Kind⟩ ⟨Name⟩ with …` | an admitted creation |
 | `  and a ⟨element⟩ with …` | an element of the new entity's list, on the next line |
-| `when ⟨role⟩ ⟨Name⟩ ⟨verb⟩s ⟨Name⟩ [with …]` | an admitted event, with its data |
+| `when ⟨role⟩ ⟨Name⟩ ⟨verb⟩s ⟨Name⟩['s ⟨Part⟩] [with …]` | an admitted event, to the entity or its part, with its data |
 | `when ⟨role⟩ ⟨Name⟩ changes ⟨Name⟩'s ⟨attr⟩ to ⟨value⟩` | an admitted change |
 | `… is refused at the gate` | (on the next line) this input must be refused at the gate |
 | `… is refused by rule ⟨name⟩` | this input must be refused by that rule |

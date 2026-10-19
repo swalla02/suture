@@ -187,8 +187,25 @@ pub fn refused_at_creation(prog: &Program, unit: &Unit, now: i64) -> Result<(), 
 
 /// Whether an `admit` condition holds at the root of `u`, with the caller's
 /// facts carried into it (appendix G.2.3). An unknown value does not admit.
-pub fn admits(prog: &Program, u: &Unit, caller: Option<&str>, data: &[(String, Val)], c: &Cond) -> bool {
-    matches!(eval(prog, View { caller, data, ..View::of(u) }, &[], c), T::Yes)
+pub fn admits(prog: &Program, u: &Unit, caller: Option<&str>, data: &[(String, Val)], at: &[usize], c: &Cond) -> bool {
+    matches!(eval(prog, View { caller, data, ..View::of(u) }, at, c), T::Yes)
+}
+
+/// The unit's one part of `kind`, the current attempt, that an event goes
+/// to (appendix R.2.2).
+pub fn part_at(u: &Unit, kind: &str) -> Result<Vec<usize>, String> {
+    let found: Vec<Vec<usize>> = positions(&u.root)
+        .into_iter()
+        .filter(|at| {
+            let n = node_at(&u.root, at);
+            n.kind == kind && at.split_last().is_some_and(|(&i, owner)| current(node_at(&u.root, owner), kind) == Some(i))
+        })
+        .collect();
+    match found.as_slice() {
+        [at] => Ok(at.clone()),
+        [] => Err(format!("{} has no {kind}", u.label)),
+        _ => Err(format!("{} has {} {kind} parts; an event goes to one", u.label, found.len())),
+    }
 }
 
 /// Sets given attributes, which must exist, have the right type and not be formulas.
@@ -461,18 +478,21 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
             }
             u.notes.push(format!("refreshed {}", facts.keys().cloned().collect::<Vec<_>>().join(", ")));
         }
-        Msg::Event { verb, by, data, facts } => {
+        Msg::Event { verb, by, part, data, facts } => {
+            let at = if part.is_empty() { Ok(vec![]) } else { part_at(&u, part) };
+            let Ok(at) = at else { return Outcome::kept(unit, format!("ignored {by} {verb} its {part}: it has none, or several"), out) };
             let with: Vec<String> = data.iter().map(|(n, v)| format!("{n} {}", shown(prog, n, v))).collect();
             let with = if with.is_empty() { String::new() } else { format!(" with {}", with.join(", ")) };
-            u.notes.push(format!("{by} {verb} it{with}"));
-            let kind = u.root.kind.clone();
+            let it = if part.is_empty() { "it".to_string() } else { format!("its {part}") };
+            u.notes.push(format!("{by} {verb} {it}{with}"));
+            let kind = node_at(&u.root, &at).kind.clone();
             let mut notes = vec![];
             let (role, name) = by.split_once(' ').unwrap_or((by.as_str(), ""));
             // The caller's facts are read in this step only, and not kept.
             let mut seen = unit.facts.clone();
             seen.extend(facts.iter().map(|(l, f)| (l.clone(), f.clone())));
             let caller = facts.contains_key(name).then_some(name);
-            react(prog, &mut u.root, &seen, &[], &kind, verb, Some((role, caller, data)), &mut notes);
+            react(prog, &mut u.root, &seen, &at, &kind, verb, Some((role, caller, data)), &mut notes);
             u.notes.extend(notes);
         }
         Msg::Refused { key, by, rule } => {
@@ -515,10 +535,11 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
         let out = Out { asks: again.into_iter().collect(), ..Out::default() };
         return Outcome::kept(unit, format!("refused by rule {}: {}", r.name, r.paraphrase), out);
     }
-    if let (Some(r), Msg::Event { by, verb, .. }) = (newly_violated(prog, unit, &u), msg) {
+    if let (Some(r), Msg::Event { by, verb, part, .. }) = (newly_violated(prog, unit, &u), msg) {
+        let it = if part.is_empty() { "it".to_string() } else { format!("its {part}") };
         // The event's step would break a rule: it is refused, and its caller
         // is told which rule (appendix G.2.4).
-        return Outcome::kept(unit, format!("refused {by} {verb} it: refused by rule {}: {}", r.name, r.paraphrase), Out::default());
+        return Outcome::kept(unit, format!("refused {by} {verb} {it}: refused by rule {}: {}", r.name, r.paraphrase), Out::default());
     }
     if let (Some(r), Msg::Change { by, attr, .. }) = (newly_violated(prog, unit, &u), msg) {
         return Outcome::kept(unit, format!("refused {by} changes {attr}: refused by rule {}: {}", r.name, r.paraphrase), Out::default());
@@ -893,10 +914,7 @@ fn deadline(prog: &Program, u: &mut Unit, key: &str, out: &mut Out) -> Result<()
 /// and each need held back by a rule.
 fn goal_due(prog: &Program, u: &mut Unit, goal: u32) {
     let Some(g) = prog.goals.get(goal as usize) else { return };
-    if g.kind != u.root.kind || u.met.contains(&goal) || u.alerts.contains(&goal) {
-        return;
-    }
-    if !g.filter.iter().all(|f| eval(prog, View::of(u), &[], f) == T::Yes) {
+    if u.met.contains(&goal) || u.alerts.contains(&goal) || goal_nodes(prog, u, g).is_empty() {
         return;
     }
     u.alerts.push(goal);
@@ -1622,17 +1640,34 @@ fn fetch_due(u: &mut Unit, id: &str) {
 /// Records each goal with a deadline the first time the root matches its
 /// subject, so the host starts its timer (appendix C.3.4), and notes each
 /// goal the first time it is met: late, if it already raised an alert.
+/// The nodes a goal is about in this unit: the root, or for a goal about a
+/// part kind, the current attempt of each such part, whose filter holds
+/// (appendix R.2.1).
+pub fn goal_nodes(prog: &Program, u: &Unit, g: &suture_lang::ir::Goal) -> Vec<Vec<usize>> {
+    positions(&u.root)
+        .into_iter()
+        .filter(|at| {
+            let n = node_at(&u.root, at);
+            n.kind == g.kind && at.split_last().is_none_or(|(&i, owner)| current(node_at(&u.root, owner), &n.kind) == Some(i))
+        })
+        .filter(|at| g.filter.iter().all(|f| eval(prog, View::of(u), at, f) == T::Yes))
+        .collect()
+}
+
+/// Whether a goal applies to the unit: some node it is about is in it.
+pub fn goal_applies(prog: &Program, u: &Unit, goal: u32) -> bool {
+    prog.goals.get(goal as usize).is_some_and(|g| !goal_nodes(prog, u, g).is_empty())
+}
+
 fn goals(prog: &Program, u: &mut Unit) {
     for (i, g) in prog.goals.iter().enumerate() {
         let i = i as u32;
-        if g.kind != u.root.kind {
-            continue;
-        }
-        let applies = g.filter.iter().all(|f| eval(prog, View::of(u), &[], f) == T::Yes);
+        let nodes = goal_nodes(prog, u, g);
+        let applies = !nodes.is_empty();
         if applies && g.within_secs.is_some() && !u.matched.contains(&i) {
             u.matched.push(i);
         }
-        if !u.met.contains(&i) && applies && g.states.iter().all(|s| state_at(prog, View::of(u), &[], s)) {
+        if !u.met.contains(&i) && applies && nodes.iter().all(|at| g.states.iter().all(|s| state_at(prog, View::of(u), at, s))) {
             u.met.push(i);
             let late = if u.alerts.contains(&i) { " late" } else { "" };
             u.notes.push(format!("goal met{late}: {}", g.source));

@@ -109,6 +109,7 @@ fn an_event_over_http_carries_typed_data_and_the_log_keeps_it() {
         by: suture_runtime::service::Who { role: "support".into(), name: "Sam".into() },
         verb: "refunds".into(),
         target: "O1".into(),
+        part: None,
         data: vec![],
     })
     .unwrap();

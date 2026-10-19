@@ -1437,3 +1437,27 @@ An admitted event (§G.2.4) has, until now, carried only its verb and its caller
 - Mismatched data across admits, data named after an attribute, a reference as data, and `the caller` with a kindless role are compile errors.
 
 **Q.2.7 Review updates.** A refusal is read only from the step's refusal note, so an event's Text data that reads like a refusal (`"x: refused by rule cap"`) is traced, quoted, and does not make an applied event look refused.
+
+## Appendix R. Prototype slice 17: goals about parts, and events to parts (2026-10-19)
+
+Until now a goal's subject and an event's target had to be a root kind. A goal like "every Shipment is delivered within two days" had to go through a definition on the owner, and an event on a part through a reaction on the root. Slice 17 lets both name a part.
+
+### R.1 What slice 17 adds
+
+| Added in slice 17 | Still waits |
+|---|---|
+| `desired within 2 days: every Shipment whose order is express is delivered` | a deadline per part, from that part's creation |
+| `admit deliver Shipment by courier`, sent as `courier Cy delivers O1's Shipment` | events to one of several parts of a kind |
+| `"part": "Shipment"` in an HTTP event, `part` in the log | |
+
+### R.2 Semantics that slice 17 settles
+
+1. **A goal about a part is about each unit's parts.** Its subject is the current attempt of each part of the kind in a unit whose filter holds there. The goal applies to the unit once some part fits; its deadline runs from that moment, as for a root (§C.3.4); it is met when every part that fits is in all the goal's states. A unit with no part that fits is not a subject. The met, matched and alert marks stay per unit, so a goal alerts at most once per unit.
+2. **An event to a part.** An `admit` of an event may name a part kind. The input names the unit and the part kind; the event goes to the unit's one current part of that kind. None, or more than one, is refused at the gate. The admit's condition is read at the part (`it`, `its order`), with the caller and the data as in §G.2.3 and §Q.2.2, and the event's reactions run at the part, as one step of the unit, which a rule may refuse.
+3. **New entities and changes stay on roots.** A part is created by its owner's needs, and its attributes are not changed from outside (§G.2.5).
+4. **The log.** An event's line carries `"part"` only when it goes to a part, so older logs replay unchanged.
+
+### R.3 Acceptance
+
+- An express order's goal about its Shipment is met when a courier delivers it, and alerts when the deadline passes first; it does not apply to an order that is not express.
+- The gate reads the part's state: delivering a delivered Shipment is refused at the gate. An event to the root kind with no admit is refused at the gate; one that breaks a rule is refused by the rule.

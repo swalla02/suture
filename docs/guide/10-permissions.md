@@ -93,6 +93,10 @@ when a member or librarian returns a Loan: the Loan is returned
 - An admitted event with no reaction, a reaction to an event that is not admitted, and a reaction naming a role the admits do not, are compile errors.
 - The reaction is a step like any other: if it would break a rule, it is refused, and the caller is told which rule. Renewing a returned loan is refused by rule `once`.
 
+### Events to parts
+
+`admit deliver Shipment by courier` admits an event on a part. The input names the entity and the part, as `O1's Shipment` in scenarios or `"part": "Shipment"` over HTTP. It goes to the entity's one current part of that kind; if it has none, or several, the event is refused at the gate. The admit's condition and the reactions read the part, as `it`.
+
 ### Events with data
 
 An event can carry values. They are declared on its `admit`, after the roles, and read as `the ⟨name⟩` in the admit's condition and in the event's reactions:

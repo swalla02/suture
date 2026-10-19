@@ -52,7 +52,7 @@ desired [within ⟨duration⟩]: every ⟨subject⟩ is ⟨state⟩[ and ⟨stat
 
 - For every entity that matches the subject, the states must **eventually** all hold.
 - The deadline runs from the moment the entity **first matched** the subject. Here that is when the hire was created, since a new hire is not `left`.
-- A goal is about a root kind. In v0 a part cannot be a goal's subject; state the goal on its owner (`every Hire is equipped`, with `define: a Hire is equipped when its Laptop is delivered`).
+- A goal about a part kind (`every Laptop that is ordered is delivered`) is about each entity's parts of that kind: it applies to an entity once one of its parts fits the subject, its deadline runs from then, and it is met when every part that fits is in the states. Only the current attempt of a part counts.
 - A goal without `within` has no deadline: it is still checked, and `explain` reports whether it is met.
 
 A goal is not an instruction. It does not make anything happen: needs do that. It states what success looks like, so the runtime can tell you when it has not happened in time.

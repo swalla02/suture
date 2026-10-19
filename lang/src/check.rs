@@ -1678,12 +1678,9 @@ impl Checker {
     fn goals(&mut self, src: &Source, p: &mut Program) {
         for g in &src.goals {
             let kind = &g.subject.kind;
-            let Some(k) = p.kind(kind) else {
+            // A goal about a part is about each such part of a unit (appendix R.2.1).
+            if p.kind(kind).is_none() {
                 self.errors.push(err(&g.at, format!("unknown kind {kind}")));
-                continue;
-            };
-            if let Some(o) = &k.owner {
-                self.errors.push(err(&g.at, format!("in slice 1 a goal is about a root kind; {kind} is a part of {}", o.kind)));
                 continue;
             }
             let Some(filter) = self.filter(p, &g.at, &g.subject) else { continue };
@@ -1867,7 +1864,8 @@ impl Checker {
                         self.errors.push(err(&a.at, format!("`{}`: there is no kind {k}", a.source)));
                         continue;
                     }
-                    Some(x) if x.owner.is_some() => {
+                    // An event can go to a part (appendix R.2.2).
+                    Some(x) if x.owner.is_some() && !matches!(what, Admitted::Event { .. }) => {
                         let owner = x.owner.as_ref().map(|o| o.kind.clone()).unwrap_or_default();
                         self.errors.push(err(&a.at, format!("`{}`: {k} is a part of {owner}; its owner's needs create and change it", a.source)));
                         continue;

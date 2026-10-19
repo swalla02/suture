@@ -152,7 +152,9 @@ fn input(svc: &Service, by: Who, b: &Value) -> Result<Record, String> {
     }
     if let Some(e) = one("event") {
         let (verb, target) = (text(e, "verb")?, text(e, "target")?);
-        let kind = svc.host.unit(&target).map(|u| u.root.kind).ok_or_else(|| format!("there is no unit {target}"))?;
+        let part = e.get("part").and_then(Value::as_str).map(String::from);
+        let root = svc.host.unit(&target).map(|u| u.root.kind).ok_or_else(|| format!("there is no unit {target}"))?;
+        let kind = part.clone().unwrap_or(root);
         // The data is typed by the event's `admit … with` (appendix Q.2.1).
         let want = prog.admits.iter().find_map(|a| match &a.what {
             Admitted::Event { verb: v, kind: k } if third_person(v) == verb && *k == kind => Some(a.data.as_slice()),
@@ -165,7 +167,7 @@ fn input(svc: &Service, by: Who, b: &Value) -> Result<Record, String> {
                 data.push((n.clone(), service::from_json(v, ty, &prog.currency).map_err(|e| format!("{n}: {e}"))?));
             }
         }
-        return Ok(Record::Event { by, verb, target, data });
+        return Ok(Record::Event { by, verb, target, part, data });
     }
     if let Some(c) = one("change") {
         let (target, attr) = (text(c, "target")?, text(c, "attr")?);

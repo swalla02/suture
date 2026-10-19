@@ -45,6 +45,9 @@ pub enum Record {
         by: Who,
         verb: String,
         target: String,
+        /// The kind of the part it goes to (appendix R.2.2).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        part: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         data: Vec<(String, Val)>,
     },
@@ -738,7 +741,7 @@ impl Service {
             Record::Pass(secs) => h.pass(*secs),
             Record::World { kind, label, attrs, items } => h.create_with(kind, label, attrs, items),
             Record::New { by, verb, kind, label, attrs, items } => h.input_new(Some(&caller(by, verb)), kind, label, attrs, items),
-            Record::Event { by, verb, target, data } => h.input_event(Some(&caller(by, verb)), target, data),
+            Record::Event { by, verb, target, part, data } => h.input_event(Some(&caller(by, verb)), target, part.as_deref(), data),
             Record::Change { by, target, attr, value } => h.input_change(Some(&caller(by, "changes")), target, attr, value.clone()),
             Record::Answer { adapter, outcome, key: Some(key), data, .. } => h.answer_key(adapter, outcome, data, key),
             Record::Answer { adapter, outcome, target, data, .. } => h.answer(adapter, outcome, data, target.as_deref()),

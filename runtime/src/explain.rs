@@ -2,7 +2,7 @@
 
 use suture_lang::ir::{Otherwise, Program};
 
-use crate::interp::{duration, holds, in_state, request_key};
+use crate::interp::{duration, in_state, request_key};
 use crate::state::{Fetch, Node, Status, Unit};
 
 /// One line for the unit, one per goal, and one per part, indented by depth.
@@ -11,16 +11,26 @@ pub fn explain(prog: &Program, unit: &Unit, due: impl Fn(&str) -> Option<u64>) -
     explain_at(prog, unit, None, due)
 }
 
+/// The root kind a kind is a part of, or the kind itself.
+fn root_of(prog: &Program, kind: &str) -> String {
+    let mut k = kind.to_string();
+    while let Some(o) = prog.kind(&k).and_then(|x| x.owner.as_ref()) {
+        k = o.kind.clone();
+    }
+    k
+}
+
 /// [`explain`] at the clock `now`, which also gives each sourced value's age.
 pub fn explain_at(prog: &Program, unit: &Unit, now: Option<i64>, due: impl Fn(&str) -> Option<u64>) -> Vec<String> {
     let attrs: Vec<String> = unit.root.attrs.iter().map(|(k, v)| format!("{k} {}", crate::interp::shown(prog, k, v))).collect();
     let mut out = vec![format!("{} {} ({})", unit.root.kind, unit.label, attrs.join(", "))];
-    for (i, g) in prog.goals.iter().enumerate().filter(|(_, g)| g.kind == unit.root.kind) {
-        if !g.filter.iter().all(|f| holds(prog, unit, &[], f)) {
+    for (i, g) in prog.goals.iter().enumerate().filter(|(_, g)| root_of(prog, &g.kind) == unit.root.kind) {
+        let nodes = crate::interp::goal_nodes(prog, unit, g);
+        if nodes.is_empty() {
             out.push(format!("  goal does not apply: {}", g.source));
             continue;
         }
-        let missing: Vec<&str> = g.states.iter().filter(|s| !in_state(prog, unit, &[], s)).map(String::as_str).collect();
+        let missing: Vec<&str> = g.states.iter().filter(|s| nodes.iter().any(|at| !in_state(prog, unit, at, s))).map(String::as_str).collect();
         out.push(if missing.is_empty() {
             format!("  goal met: {}", g.source)
         } else if unit.alerts.contains(&(i as u32)) {

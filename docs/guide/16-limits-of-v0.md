@@ -27,7 +27,7 @@ Suture v0 is a prototype. Everything earlier in this guide runs and is tested. T
 |---|---|
 | changing a reference, a set, a formula, `created`, a part's attribute, or an attribute a pool key reads | model the change as a new entity |
 | refreshing carried facts that a shared entity's own reactions or answers change | a rule that reads such a fact from another unit is a compile error; carry it with a formula or change it with `admit change` |
-| goals about parts, and events sent to parts | state the goal, and admit the event, on the root |
+| events to one of several parts of a kind (a part per list element) | admit the event on the root and react there |
 | a `that` filter on a relation across units (`their Refunds that are refunded`) | filter on the subject's own relations |
 | sets of values (`set of Text`) | a set of a small kind (`set of Zone`) |
 | references, sets or lists as an event's data | pass the name as Text, or admit a new entity |

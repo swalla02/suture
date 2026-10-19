@@ -535,7 +535,8 @@ pub enum Msg {
     /// written (`cancels`), for the reactions to it (appendix G.2.4).
     /// `by` is `role name`; `data` is what the event carries, and `facts`
     /// the caller's carried facts, for its reactions (appendix Q.2.3).
-    Event { verb: String, by: String, data: Vec<(String, Val)>, facts: Facts },
+    /// `part` is the kind of the part it goes to, empty for the root (appendix R.2.2).
+    Event { verb: String, by: String, part: String, data: Vec<(String, Val)>, facts: Facts },
     /// An admitted change from a caller: set the root's attribute (appendix G.2.5).
     Change { attr: String, value: Val, by: String },
     /// New values of the facts a reader carries (appendix G.2.7).
@@ -565,7 +566,9 @@ impl Msg {
             Msg::Refused { key, by, rule } => Value::tuple([Value::from(6i64), text(key), text(by), text(rule)]),
             Msg::Waiting { key } => Value::tuple([Value::from(7i64), text(key)]),
             Msg::Release { from, key, taken } => Value::tuple([Value::from(8i64), text(from), text(key), taken_value(taken)]),
-            Msg::Event { verb, by, data, facts } => Value::tuple([Value::from(9i64), text(verb), text(by), pairs_value(data), facts_value(facts)]),
+            Msg::Event { verb, by, part, data, facts } => {
+                Value::tuple([Value::from(9i64), text(verb), text(by), text(part), pairs_value(data), facts_value(facts)])
+            }
             Msg::Change { attr, value, by } => Value::tuple([Value::from(10i64), pairs_value(&[(attr.clone(), value.clone())]), text(by)]),
             Msg::Refresh { facts } => Value::tuple([Value::from(11i64), facts_value(facts)]),
             Msg::Due { id } => Value::tuple([Value::from(12i64), text(id)]),
@@ -611,8 +614,8 @@ impl Msg {
                 Ok(Msg::Release { from: string(from)?, key: string(key)?, taken: taken_from(taken)? })
             }
             Some(Ok(9)) => {
-                let [_, verb, by, data, facts] = fields::<5>(v, "event message")?;
-                Ok(Msg::Event { verb: string(verb)?, by: string(by)?, data: pairs_from(data)?, facts: facts_from(facts)? })
+                let [_, verb, by, part, data, facts] = fields::<6>(v, "event message")?;
+                Ok(Msg::Event { verb: string(verb)?, by: string(by)?, part: string(part)?, data: pairs_from(data)?, facts: facts_from(facts)? })
             }
             Some(Ok(10)) => {
                 let [_, change, by] = fields::<3>(v, "change message")?;
@@ -891,7 +894,7 @@ mod tests {
             Msg::Refused { key: "k".into(), by: "S1".into(), rule: "stock".into() },
             Msg::Waiting { key: "k".into() },
             Msg::Release { from: "O1".into(), key: "k".into(), taken: taken.clone() },
-            Msg::Event { verb: "cancels".into(), by: "customer Ada".into(), data: vec![("reason".into(), Val::Text("late".into()))], facts: u.facts.clone() },
+            Msg::Event { verb: "cancels".into(), by: "customer Ada".into(), part: "Payment".into(), data: vec![("reason".into(), Val::Text("late".into()))], facts: u.facts.clone() },
             Msg::Change { attr: "units".into(), value: Val::Count(2), by: "staff Tom".into() },
             Msg::Refresh { facts: u.facts.clone() },
             Msg::Due { id: "O1~credit#1:stale".into() },
