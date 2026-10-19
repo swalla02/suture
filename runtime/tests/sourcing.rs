@@ -262,6 +262,8 @@ fn explain_shows_where_a_sourced_value_stands() {
     };
     let placed = "  when   staff Sam places a new Order O1 with customer Ada and total 50 EUR\n";
     assert!(show(placed).contains("  credit: asking bureau, send 1 of 3"));
+    // The waiting step names the fetch it waits on (appendix X.2.1).
+    assert!(show(placed).contains("  Payment: waiting: rule credit, on Order's credit (asking bureau, send 1 of 3)"), "{}", show(placed));
     let fetched = format!("{placed}  and    bureau answers found with credit 100 EUR\n  and    2 hours pass\n");
     assert!(show(&fetched).contains("  credit: 100 EUR from bureau, 2 hours old, trusted 22 hours more"), "{}", show(&fetched));
     let fallback = format!("{placed}  and    bureau answers unknown\n");

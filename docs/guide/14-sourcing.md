@@ -333,7 +333,7 @@ rule credit: no Order has a Payment that is sent unless its total is at most its
   sources:         credit from bureau, fetched once
 
 sourcing:
-  Order's credit from bureau within 5 seconds (sends name); trusted until the unit ends; if it fails, it is cancelled; read by rule credit
+  Order's credit from bureau within 5 seconds (sends name); trusted until the unit ends; if it fails, it is cancelled; read by rule credit; asked only when a Payment would be sent
 ```
 
 `suture explain` gives each sourced value with its age and how long it is still trusted, or where its fetch stands. For the first program of this chapter, half an hour after the credit came:
@@ -344,5 +344,7 @@ Order O1 (approved yes, cancelled no, credit 500 EUR, customer Ada, product Kett
 ```
 
 Other lines read `credit: asking bureau, send 1 of 3`, `credit: 0 EUR, the fallback after bureau failed`, `credit: bureau failed; the steps its rules guard wait` (or, with the other recoveries, `bureau failed; asking again 1 hour after the failure` and ``bureau failed, and its `otherwise` was applied``), and `credit: not fetched yet`.
+
+A step that waits on a rule also names the facts the rule is still missing: `Payment: waiting: rule credit, on Order's credit (asking bureau, send 1 of 3)`. A fact that is in and trusted is not named, because then the step waits on its value, not on the fetch.
 
 The repository's `examples/credit/` has the whole credit check with its scenarios.

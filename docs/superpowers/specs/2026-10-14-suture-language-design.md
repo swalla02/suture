@@ -1595,3 +1595,21 @@ The claims comparison (eval/claims/RESULTS.md) found one bug and three gaps. Cha
 - `taking 1` names the total `repairs`, and `taking 2 EUR` is an error.
 - `suture build` on examples/credit says `asked only when a Payment would be sent`. A slot's read-back states its attempts.
 - The claims workflow uses `taking 1` and one fraud rule over `Outcome`, and its thirteen scenarios pass.
+
+## Appendix X. Prototype slice 23: a waiting step names its fetch (2026-10-19)
+
+The last open item of the claims evaluation's list (eval/claims/RESULTS.md, item 4): `suture explain` said that a step waits on a rule, but not that the rule waits on a fetch.
+
+### X.1 What slice 23 adds
+
+| Added in slice 23 | Still waits |
+|---|---|
+| `waiting: rule ⟨r⟩, on ⟨Kind⟩'s ⟨attr⟩ (⟨where the fetch stands⟩)` in `suture explain` | the same in the served `/explain` answer's structure (it carries the same lines) |
+
+### X.2 Semantics that slice 23 settles
+
+1. **What is named.** For a part waiting on rule ⟨r⟩, each sourced fact that ⟨r⟩ reads (`sources`, defines included) is looked up on the part or its nearest owner of that kind. The fact is named when a model is picking its source, when a fetch is open (`asking ⟨adapter⟩, send n of attempts`), when its sources failed (`⟨adapter⟩ failed`), or when it has no value yet (`not fetched yet`). A fact that is in is not named, because then the rule waits on its value.
+
+### X.3 Acceptance
+
+- In the credit program, an order just placed explains `Payment: waiting: rule credit, on Order's credit (asking bureau, send 1 of 3)`.

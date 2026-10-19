@@ -101,6 +101,6 @@ The bug is fixed: a withdrawn claim's fetch stops at its next timeout (`score: n
 1. ~~Stop sourcing for units whose needs are gone (the bug above).~~ Slice 22.
 2. ~~Rules over a slot, so that an alternative added to a slot is under the same rules.~~ Slice 22. This was the one change where Suture lost, and it still loses, by less.
 3. ~~`taking` a constant, such as `taking 1`.~~ Slice 22, for counts.
-4. Say when a source is asked: ~~in the read-back~~ (slice 22), and in the explanation of a step that waits for it (still to do).
+4. ~~Say when a source is asked: in the read-back, and in the explanation of a step that waits for it.~~ Slices 22 and 23.
 5. ~~Print the policies the runtime applies to every slot in the read-back.~~ Slice 22.
 6. Then the same comparison on a workflow from a design partner, written by someone who did not design the language.
