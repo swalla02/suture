@@ -694,7 +694,12 @@ fn is_held(prog: &Program, id: &str) -> bool {
 fn held_pass(prog: &Program, u: &mut Unit, at: &[usize], out: &mut Out) -> bool {
     for (id, i, _) in bind_slots(prog, &u.root, at) {
         let Some(filter) = &prog.bindings[i].held else { continue };
-        let holds = eval(prog, View::of(u), at, filter) == T::Yes;
+        // While the filter is unknown, the contribution stays as it is.
+        let holds = match eval(prog, View::of(u), at, filter) {
+            T::Yes => true,
+            T::No => false,
+            T::Unknown => continue,
+        };
         let kind = node_at(&u.root, at).kind.clone();
         let total = id.split_once('(').map_or(id.as_str(), |(_, t)| t.trim_end_matches(')')).to_string();
         match (holds, node_at(&u.root, at).binds.get(&id).cloned()) {

@@ -291,7 +291,11 @@ impl Host {
         let readers: Vec<String> = self.readers.get(target).cloned().unwrap_or_default();
         for r in &readers {
             let Some(u) = self.unit(r) else { continue };
-            let after = interp::step_at(&self.prog, &u, &refresh, self.clock()).unit;
+            let pre = interp::step_at(&self.prog, &u, &refresh, self.clock());
+            // A reader whose filter the change makes hold is checked as the
+            // changed unit is (appendix AA.2.2).
+            self.refused_across(&pre, &format!("{who} changes {target}'s {attr}"))?;
+            let after = pre.unit;
             if let Some(rule) = interp::newly_violated(&self.prog, &u, &after) {
                 self.trace.push(format!("{target:<3} change refused: {r} would break rule {}", rule.name));
                 return Err(format!("refused by rule {}: {} (in {r})", rule.name, rule.paraphrase));
