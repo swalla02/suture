@@ -2024,12 +2024,16 @@ fn num(prog: &Program, v: View, at: &[usize], n: &Num) -> Option<Val> {
 }
 
 /// `a * b / c` over amounts, in cents, rounded half away from zero
-/// (appendix AB.2.1); `None` when `c` is zero or the result overflows.
+/// (appendix AB.2.1). A share of nothing is nothing, even of a zero `c`;
+/// `None` when only `c` is zero, or the result overflows.
 fn share(a: i64, b: i64, c: i64) -> Option<i64> {
-    if c == 0 {
+    let (n, d) = (i128::from(a) * i128::from(b), i128::from(c));
+    if n == 0 {
+        return Some(0);
+    }
+    if d == 0 {
         return None;
     }
-    let (n, d) = (i128::from(a) * i128::from(b), i128::from(c));
     let q = (2 * n.abs() + d.abs()) / (2 * d.abs());
     let q = if (n < 0) != (d < 0) { -q } else { q };
     i64::try_from(q).ok()

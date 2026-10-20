@@ -1,11 +1,12 @@
-//! Slice 27: shares of an amount, negative amounts and dates (spec appendix AB).
+//! Slice 27: shares of an amount, negative amounts and dates in scenarios
+//! (spec appendix AB).
 
 use suture_lang::scenario::parse_scenarios;
 use suture_runtime::scenario::{run, Report};
 
 const SHOP: &str = "module shop version 1, currency EUR
 role staff
-kind Order { promo: Money = 0 EUR, items: Money, opens: Time = 2026-03-01 }
+kind Order { promo: Money = 0 EUR, items: Money, opens: Time }
 kind Unit  { order: Order, price: Money,
              share: Money = price * order's promo / order's items,
              amount: Money = price + share }
@@ -44,7 +45,14 @@ fn a_share_of_an_amount_is_rounded_half_away_from_zero() {
 }
 
 #[test]
-fn a_share_of_nothing_is_unknown() {
+fn a_share_of_a_zero_whole_is_unknown_unless_it_is_a_share_of_nothing() {
+    passes(
+        SHOP,
+        "  given  a Order O1 with items 0 EUR
+  and    a Unit U1 with order O1 and price 10 EUR
+  expect U1's share is 0 EUR
+",
+    );
     let r = scenario(
         SHOP,
         "  given  a Order O1 with promo -10 EUR and items 0 EUR
@@ -59,17 +67,19 @@ fn a_share_of_nothing_is_unknown() {
 fn the_clock_moves_to_a_date() {
     let r = passes(
         SHOP,
-        "  given  a Order O1 with items 1 EUR
+        "  given  a Order O1 with items 1 EUR and opens 2026-02-01 12:30
   when   it is 2026-02-01 12:30
   given  a Order O2 with items 1 EUR and opens 2026-02-01 12:30
-  and    a Order O3 with items 1 EUR
+  and    a Order O3 with items 1 EUR and opens 2026-03-01
   when   it is 2026-03-01
-  given  a Order O4 with items 1 EUR
+  given  a Order O4 with items 1 EUR and opens 2026-03-01
   expect O1 is not late
   expect O2 is late
   expect O3 is not late
   expect O4 is late
-  expect O4's opens is 2026-03-01
+  expect O4's created is 2026-03-01
+  expect O2's created is at least 2026-02-01
+  expect O1's created is less than 2026-01-01 0:01
 ",
     );
     assert!(r.host.trace.iter().any(|l| l == "  … it is 2026-02-01 12:30"), "{}", r.host.trace.join("\n"));

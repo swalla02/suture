@@ -21,7 +21,7 @@ pub fn check(src: &Source) -> Result<Program, Vec<Error>> {
 /// Resolves a condition about a `kind` against a compiled program, as a
 /// scenario's `expect` needs (appendix E.2.9).
 pub fn condition(p: &Program, kind: &str, c: &ast::Cond) -> Result<Cond, Vec<Error>> {
-    let mut cx = Checker::default();
+    let mut cx = Checker { scenario: true, ..Checker::default() };
     let at = Loc { file: String::new(), line: 0 };
     match cx.cond(p, &at, kind, c) {
         Some(c) if cx.errors.is_empty() => Ok(c),
@@ -354,6 +354,8 @@ fn show(np: &NounPhrase) -> String {
 
 #[derive(Default)]
 struct Checker {
+    /// While a scenario's `expect` is checked: dates may be written.
+    scenario: bool,
     /// While an adapter's `sends` or a secret's formula is checked: secrets may be read.
     sending: bool,
     /// The marked attributes read while `sending`, as (kind, attribute, mark).
@@ -1140,7 +1142,13 @@ impl Checker {
             Literal::Bool(b) => (Lit::Bool(*b), Ty::Bool),
             Literal::Count(n) => (Lit::Count(*n), Ty::Count),
             Literal::Duration(secs) => (Lit::Duration(*secs), Ty::Duration),
-            Literal::Time(t) => (Lit::Time(*t), Ty::Time),
+            Literal::Time(t) if self.scenario => (Lit::Time(*t), Ty::Time),
+            Literal::Time(_) => {
+                // A served program's clock counts from when its log started
+                // (appendix AB.2.3), so a date means something only in scenarios.
+                self.errors.push(err(at, "a date is written only in scenarios: a program's times come from `created` and the clock"));
+                return None;
+            }
             Literal::Set(_) => {
                 self.errors.push(err(at, "a set of names is written only in scenarios"));
                 return None;

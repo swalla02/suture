@@ -1706,19 +1706,19 @@ The returns port carried each unit's `discount` as given, because Solidus comput
 |---|---|
 | `a * b / c` over amounts is an amount: a share of `a` | multiplying two amounts on their own, or by a ratio such as `b / c` |
 | negative amounts: `-3 EUR`, `-0.50 EUR` | negative counts and durations |
-| dates: `2026-03-01`, `2026-03-01 14:30`, in UTC | conditions that read the clock (they still read `created` and timers) |
+| dates in scenarios: `2026-03-01`, `2026-03-01 14:30`, in UTC | dates in a program, and conditions that read the clock |
 | `when it is 2026-03-01` in scenarios | other time zones |
 
 ### AB.2 Semantics that slice 27 settles
 
-1. **Shares.** `a * b / c` where `a`, `b` and `c` are all amounts is an amount: `a × b ÷ c`, computed exactly and rounded to the cent, half away from zero, as Solidus's `BigDecimal` rounding does when it stores the result. The expression must be written in that order, so `price * order's promo / order's items` is a share and `price * (order's promo / order's items)` is an error. When `c` is zero, the share is unknown, so a formula holding it has no value. Multiplying two amounts otherwise is an error that names the form. Totals over elements (`the total of … over …`) accept the same form.
+1. **Shares.** `a * b / c` where `a`, `b` and `c` are all amounts is an amount: `a × b ÷ c`, computed exactly and rounded to the cent, half away from zero, as Solidus's `BigDecimal` rounding does when it stores the result. The expression must be written in that order, so `price * order's promo / order's items` is a share and `price * (order's promo / order's items)` is an error. A share of nothing is nothing: when `a × b` is zero, the share is 0, even when `c` is zero, as Solidus's calculator returns 0 for an order with no items. Otherwise, when `c` is zero, the share is unknown, so a formula holding it has no value. Multiplying two amounts otherwise is an error that names the form. Totals over elements (`the total of … over …`) accept the same form.
 2. **Negative amounts.** A `-` or `−` directly before an amount makes it negative, in source and in scenarios: `promo: Money = -2.50 EUR`, `with promo -10 EUR`. Only amounts may be negative. `-3` alone is an error. Read-backs show `-2.50 EUR`. A `-` between two values is still a subtraction.
-3. **Dates.** `YYYY-MM-DD`, optionally followed by `H:MM` or `HH:MM`, is a `Time`. The runtime clock's 0 is 2026-01-01 00:00 UTC (F.2.12), so a date is the seconds from then, and dates before it are negative. A day that does not exist, an hour above 23 or a minute above 59 is an error. Four digits, a `-`, two digits, a `-` and two digits always read as a date, never as a subtraction of counts. Read-backs show `2026-03-01`, with the time only when it is not midnight.
+3. **Dates.** In a scenario's given values and `expect` conditions, `YYYY-MM-DD`, optionally followed by `H:MM` or `HH:MM`, is a `Time`. The scenario clock's 0 is 2026-01-01 00:00 UTC (F.2.12), so a date is the seconds from then, and dates before it are negative. A date in a program is an error, `a date is written only in scenarios`: a served program's clock counts from when its log started (§ serving), so a date there would not mean the day it names. A day that does not exist, an hour above 23 or a minute above 59 is an error. Four digits, a `-`, two digits, a `-` and two digits always read as a date, never as a subtraction of counts. Read-backs show `2026-03-01`, with the time only when it is not midnight.
 4. **The scenario clock.** `when it is ⟨date⟩` (or `given` or `and`) moves the clock forward to that time, firing timers on the way as `when … pass` does. The trace shows `… it is 2026-03-01`. A date before the clock's present fails the step: `it is already past 2026-02-01: the clock only moves forward`.
 
 ### AB.3 Acceptance
 
 - `share: Money = price * order's promo / order's items` gives -3.33 EUR for a 10 EUR unit of a 30 EUR order with a -10 EUR promotion, and -1.67 EUR for a 5 EUR unit.
-- A share of a zero item total is unknown, and `a * b`, `a * b / 2` over amounts, `-3`, `2026-02-30` and `24:00` are errors.
-- `when it is 2026-02-01 12:30` moves the clock, an entity created after it has that `created`, and going back fails the step.
+- A share of a zero item total is unknown, unless the promotion is zero too, and then it is 0; and `a * b`, `a * b / 2` over amounts, `-3`, `2026-02-30` and `24:00` are errors.
+- `when it is 2026-02-01 12:30` moves the clock, an entity created after it has that `created`, and going back fails the step. A date in a program is an error.
 - The returns port computes the promotion share instead of carrying `discount`.
