@@ -341,6 +341,10 @@ fn pairs(c: &mut Cursor) -> Result<Vec<(String, Literal)>, Error> {
     }
 }
 
+fn word_at(c: &Cursor, k: usize, w: &str) -> bool {
+    matches!(c.peek_at(k), Some(Tok::Word(x)) if x == w)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -419,8 +423,4 @@ mod tests {
         let e = parse_scenarios("o.scenario", "scenario \"x\":\n  then O1 is paid\n").unwrap_err();
         assert!(e.msg.contains("expected `given`, `when`, `and` or `expect`"), "{e}");
     }
-}
-
-fn word_at(c: &Cursor, k: usize, w: &str) -> bool {
-    matches!(c.peek_at(k), Some(Tok::Word(x)) if x == w)
 }
