@@ -1613,3 +1613,29 @@ The last open item of the claims evaluation's list (eval/claims/RESULTS.md, item
 ### X.3 Acceptance
 
 - In the credit program, an order just placed explains `Payment: waiting: rule credit, on Order's credit (asking bureau, send 1 of 3)`, and a credit two hours old against `at most 1 hour old` explains `(2 hours old, too old for the rule)`.
+
+## Appendix Y. Prototype slice 24: a fixed refusal moves on, or is warned about (2026-10-20)
+
+The returns comparison (eval/returns/RESULTS.md) found a trap. `rule window: no Item has a Refund that is sent unless its Refund's created - its unit's created is at most 90 days` reads only facts that never change, but a late refund waited for ever instead of moving on to store credit, and nothing said so.
+
+### Y.1 What slice 24 adds
+
+| Added in slice 24 | Still waits |
+|---|---|
+| a slot moves on at once when a rule on fixed facts refuses its alternative's send, or its being done, not only its creation | a state form for kinds; relations across units with a filter |
+| the refused part's own unchangeable attributes, `created` included, count as fixed | |
+| a formula that reads a changeable fact, a slot, a binding or a total is not fixed | |
+| `suture build` warns about each part that a fixed refusal leaves waiting for good | |
+
+### Y.2 Semantics that slice 24 settles
+
+1. **Moving on.** When sending a part's request, or marking a part with no effect done, newly breaks a rule whose `fixed` is set, and the part is its slot's current alternative, nothing of it has gone out, and the slot has an alternative not yet tried, the part is withdrawn (its grants given back) and the slot moves on as in F.2.15. The trace says `⟨Slot⟩: ⟨Kind⟩ refused by rule ⟨r⟩, trying ⟨Next⟩`, or asks the slot's model.
+2. **What is fixed.** A path is fixed when its last step is an attribute that is not changeable and it goes through carried facts, stays in its unit's node, or goes to a part that the rule refuses. Such a part exists whenever the rule breaks. So `its Refund's …` is fixed only when every `has a K` in the rule's `no … has` names a Refund there, and `its Payback's …` only when each names an alternative of that slot. A bool state on such a part is fixed in the same way. An attribute is changeable (G.2.6) when a reaction, an admitted change, an effect's answer or a source sets it. A formula is set once it can be known, so a formula that reads a changeable attribute, a slot, a binding or a total counts as changeable too, transitively.
+3. **The warning.** For each fixed rule and each kind K it refuses that is no slot's alternative, or is its slot's last alternative, `suture build` warns: `rule ⟨r⟩: a K it refuses waits for good, because the rule reads only facts that never change[, and K is the last alternative of ⟨Slot⟩]. If none is wanted then, say so on the need: `⟨Owner⟩ needs ⟨K or Slot⟩ while …``. A kind no need asks for is not named.
+
+### Y.3 Acceptance
+
+- `no Order has a Shipment that is sent` on a restricted country moves the delivery to a Refund at once, and the Shipment never waits.
+- A rule through `its Refund's amount` or `its Refund's created`, refusing a Refund, is fixed; one refusing a Shipment through `its Refund's amount` is not.
+- The returns port drops its `after 1 minute` patience and its three `1 minute passes`, and states its restock condition on the need. Its eighteen scenarios pass, and `suture build` warns only about `rule kept` (a preferred refund past 90 days is not paid, as in Solidus).
+- The claims port warns about `rule limit` (a payout over the limit is never paid), and a write-off over the limit now tries a repair instead of waiting.
