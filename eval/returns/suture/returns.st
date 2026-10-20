@@ -30,7 +30,7 @@ define: an Item is back when it is not awaiting and it is not expired
 define: an Item is superseded when the number of its unit's Items is more than its seq + 1
 define: an Item is dropped when its rma is cancelled or it is superseded
 define: an Item is cancelled when it is dropped and it is awaiting
-define: an Item is open when it is awaiting and it is not cancelled
+define: an Item is open when it is awaiting and it is not cancelled and its unit is shipped
 define: an Item is recent when its Inspection's created - its unit's order's created is less than 365 days
 define: an Item is timely when its unit's order is complete and it is recent
 define: an Item is reimbursed when its Payback is done
@@ -70,13 +70,13 @@ prefer Payback: Refund, then Credit
 
 admit authorize a new Rma by staff where the Rma's order is shipped
 admit authorize a new Item by staff where the Item's rma is not cancelled and the Item's unit's order is the Item's rma's order and the number of the Item's unit's Items that are back is 0
-admit receive Item by staff where the Item is not received and it is not expired and it is not cancelled
+admit receive Item by staff where the Item is not received and it is not expired and it is not cancelled and its unit is shipped
 admit give Item by staff where the Item is open
 admit lose Item by staff where the Item is open
 admit mismatch Item by staff where the Item is open
 admit shortship Item by staff where the Item is open
 admit forward Item by staff where the Item is open
-admit expire Item by staff where the Item is open
+admit expire Item by staff where the Item is awaiting and it is not cancelled
 admit accept Item by staff where the Item is not rejected
 admit reject Item by staff where the Item is not rejected
 admit reimburse Item by staff where the Item is accepted

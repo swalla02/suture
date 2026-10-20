@@ -156,7 +156,7 @@ scenario "an order with nothing shipped cannot be authorized for return":
   and    staff Sam authorizes a new Rma A1 with order O1 and location L1
            is refused at the gate
 
-scenario "an unshipped unit waits for staff to decide, who may accept it":
+scenario "an unshipped unit cannot be received, given or lost, but can expire":
   given  a Customer Ada with name Ada
   and    a Location L1 with name Main
   when   staff Sam adds a new Order O1 with customer Ada and number R100
@@ -164,10 +164,13 @@ scenario "an unshipped unit waits for staff to decide, who may accept it":
   and    staff Sam authorizes a new Rma A1 with order O1 and location L1
   and    staff Sam authorizes a new Item I1 with rma A1 and unit U1
   and    staff Sam receives I1
-  expect I1 is undecided
-  expect I1 is not rejected
-  when   staff Sam accepts I1
-  expect I1 is accepted
+           is refused at the gate
+  and    staff Sam gives I1
+           is refused at the gate
+  and    staff Sam loses I1
+           is refused at the gate
+  and    staff Sam expires I1
+  expect I1 is expired
 
 scenario "an item of an order that is not complete is rejected":
   given  a Customer Ada with name Ada
