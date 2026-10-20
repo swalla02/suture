@@ -17,6 +17,7 @@ kind Unit     { order: Order, number: Text, price: Money, discount: Money = 0 EU
 kind Rma      { order: Order, location: Location, cancelled: Bool = no }
 kind Item     { rma: Rma, unit: Unit, preferred: Text = "none",
                 amount: Money = unit's price - unit's discount,
+                seq: Count = the number of its unit's Items,
                 reception: awaiting | received | given | lost | wrong | short | transit | expired,
                 approved: Bool = no, refused: Bool = no, reimbursing: Bool = no }
 kind Inspection { item: Item }
@@ -25,17 +26,21 @@ kind Credit   { item: Item, amount: Money = item's amount }
 kind Restock  { item: Item }
 
 define: an Item is back when it is not awaiting and it is not expired
-define: an Item is cancelled when its rma is cancelled and it is awaiting
+define: an Item is superseded when the number of its unit's Items is more than its seq + 1
+define: an Item is dropped when its rma is cancelled or it is superseded
+define: an Item is cancelled when it is dropped and it is awaiting
 define: an Item is open when it is awaiting and it is not cancelled
 define: an Item is recent when its Inspection's created - its unit's order's created is less than 365 days
 define: an Item is timely when its unit's order is complete and it is recent
-define: an Item is eligible when it is timely and its unit is shipped
+define: an Item is reimbursed when its Payback is done
+define: an Item is spent when it is reimbursed and it is not cancelled and it is not expired
+define: an Item is clean when the number of its unit's Items that are spent is 0 or it is reimbursed
+define: an Item is eligible when it is timely and its unit is shipped and it is clean
 define: an Item is passed when it is back and it is eligible and it is not refused
 define: an Item is failing when it is back and it is not timely and it is not approved
-define: an Item is undecided when it is back and it is timely and its unit is not shipped and it is not approved and it is not refused
+define: an Item is undecided when it is back and it is timely and it is not eligible and it is not approved and it is not refused
 define: an Item is rejected when it is refused or it is failing
 define: an Item is accepted when it is approved or it is passed
-define: an Item is reimbursed when its Payback is done
 
 Item needs Inspection while it is back
 Item needs Payback while it is accepted and it is reimbursing and it is not refused
@@ -58,11 +63,12 @@ effect restock Restock via stock within 1 day
 rule window:  no Item has a Refund that is sent unless its Refund's created - its unit's created is at most 90 days
 rule wanted:  no Item has a Refund that is sent unless its preferred is not "credit"
 rule kept:    no Item has a Credit that is sent unless its preferred is not "refund"
+rule once:    the number of each Unit's Items that are back is at most 1
 
 prefer Payback: Refund, then Credit
 
 admit authorize a new Rma by staff where the Rma's order is shipped
-admit authorize a new Item by staff where the Item's rma is not cancelled and the Item's unit's order is the Item's rma's order
+admit authorize a new Item by staff where the Item's rma is not cancelled and the Item's unit's order is the Item's rma's order and the number of the Item's unit's Items that are back is 0
 admit receive Item by staff where the Item is not received and it is not expired and it is not cancelled
 admit give Item by staff where the Item is open
 admit lose Item by staff where the Item is open

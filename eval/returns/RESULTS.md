@@ -13,8 +13,8 @@ The second measured comparison, and the first against code its designer did not 
 | Condition and fallback clauses (`unless`, `where`, `while`, `after`, …) | 21 | (inside the 47) |
 | Change 1, `2741034ae`, a return item's unit must be on the RMA's order | **+1 −1** (a `where` on the gate) | +7 −0 counted (+9 raw): a validation, its registration, and a guard |
 | Change 2, `65c411211`, an `in_transit` reception state | +4 −2 (+3 −1 after slice 25) | **+2 −1** |
-| After both | 75 (74 after slices 24 and 25) | 663 |
-| Scenarios | 18, in 201 lines | Solidus's own specs, which were not run against the port |
+| After both | 75 (74 after slices 24 and 25; 80 with the three behaviours of slice 26) | 663 |
+| Scenarios | 18, in 201 lines (21 in 246 after slice 26) | Solidus's own specs, which were not run against the port |
 
 Solidus's count is over the 23 files that do what the port does. It leaves out, by name and pattern, the lines and methods for exchanges, taxes, simulation, the tolerance check and `errored`, splitting refunds over payments, the override type, display, generated numbers and admin search. The filter is coarse: a few lines either way. Rails gives Solidus a database, transactions, an admin and an API. Suture gives the port:
 - a durable log and replay;
@@ -36,7 +36,7 @@ Solidus's count is over the 23 files that do what the port does. It leaves out, 
 Nothing in the language says that the statuses exclude each other: the port keeps them apart with `where the Item is awaiting` on each `admit`. A state form, `reception is awaiting, received, given, lost, …, in_transit`, would make that a one-word change, and make the exclusion a fact the compiler knows.
 
 **What Suture could not express at all.**
-- **Three Solidus behaviours were not ported, so the port's line count looks better than it is.** Each one reads the other return items of the same unit:
+- **Three Solidus behaviours were not ported, so the port's line count looks better than it is** (ported after slice 26, below). Each one reads the other return items of the same unit:
   - a new return item cancels the unit's other active return items;
   - a second completed return item for the unit is refused;
   - a unit with an earlier reimbursed return item is ineligible.
@@ -78,6 +78,20 @@ That is **+3 −1**, against +4 −2 before and Solidus's +2 −1. `back` needs 
 
 After both changes, the port is 74 lines, and its 18 scenarios take 200 lines.
 
+## After slice 26
+
+Slice 26 (spec appendix AA) lets a relation across units have a `that` filter, and lets a unit read the totals of a unit it refers to. The three behaviours the port skipped are now in it:
+
+- **A new return item cancels the older ones** (`cancel_others`). Each Item numbers itself when it is made, `seq: Count = the number of its unit's Items`, and `superseded` is `the number of its unit's Items is more than its seq + 1`. `cancelled` was `its rma is cancelled and it is awaiting`, and is now `dropped` (RMA cancelled, or superseded) and awaiting.
+- **A second completed return item is refused** (`validate_no_other_completed_return_items`). `rule once: the number of each Unit's Items that are back is at most 1` refuses an event that would make a second Item back. The gate for a new Item adds `and the number of the Item's unit's Items that are back is 0`.
+- **A unit with a reimbursed return item is ineligible** (`NoReimbursements`). `spent` is reimbursed and not cancelled or expired, as Solidus's `valid` scope, and `clean` is `the number of its unit's Items that are spent is 0 or it is reimbursed`. `eligible` adds `and it is clean`, and `undecided` (manual intervention) now reads `not eligible` instead of `its unit is not shipped`. The `or it is reimbursed` keeps an Item's own refund from taking back its acceptance: Solidus stores acceptance, while the port derives it.
+
+That is **+10 −4** (not counting the `reimbursed` define, which moved up). Solidus spends 40 counted lines on the same three: `no_reimbursements.rb` (19), the validation and `cancel_others` (17), their registrations and the `valid` scope (3), and the line that lists the validator (1). They were in its count from the start. The port is now 80 lines against Solidus's 661 at `bafb57f`, with nothing left out that the port claims to cover. Three new scenarios take the port to 21, in 246 lines.
+
+**The three overlap.** Once older Items are cancelled, no two valid Items of a unit coexist, so through the flow `rule once` and `clean` can never refuse anything. A unit that came back is refused at the gate first. The same holds in Solidus, where the validation and the eligibility check are guards behind `cancel_others`. The new scenarios test the two that the flow reaches: cancelling, and the gate. They also test a reimbursed, cancelled Item that leaves its unit eligible, as Solidus's spec does.
+
+**What it cost the language.** `seq` is a workaround: v0 has no order within a relation, so "the newest Item of the unit" is spelled as a count taken at creation. Each change to a total that others read sends one refresh to every Item of the unit, which is cheap at a unit's few return items.
+
 ## How far to trust this
 
 - **Better than eval/claims:**
@@ -88,12 +102,12 @@ After both changes, the port is 74 lines, and its 18 scenarios take 200 lines.
   - two changes, both small;
   - Solidus's specs were ported as 18 scenarios, not run, so the port matches Solidus only as far as those reach. A first review against the Solidus code found four places where the port had misread it: the `manual_intervention_required` outcome, a preferred refund past 90 days, the 365-day boundary, and an RMA that could be un-cancelled. All four were fixed in the first version before the changes were replayed;
   - Solidus's lines include Rails declarations that a port elsewhere would also need, and its counted files still have code for the gateway, admin and record shapes;
-  - the port leaves out three behaviours it cannot express, which makes its line count look better than it is.
+  - until slice 26, the port left out three behaviours it could not express, which made its line count look better than it was.
 - A third party writing a workflow they run is still the stronger test.
 
 ## What it suggests next
 
 1. Move on at once when a rule on fixed facts holds a part's send, not only its creation, and count a part's `created` (and any attribute of a part, which v0 never changes) as fixed. That is the trap above. Done in slice 24.
 2. A state form for kinds: `reception is awaiting, received, …`, with transitions on events. That is change 2. Done in slice 25, without transitions.
-3. Relations across units with a filter, at least `the number of the Unit's Items that are received`, kept as a running total like `taking`. That is the three unported behaviours.
+3. Relations across units with a filter, at least `the number of the Unit's Items that are received`, kept as a running total like `taking`. That is the three unported behaviours. Done in slice 26.
 4. Money ratios (`a * b / c` over Money), negative Money literals, and Time literals in scenarios.

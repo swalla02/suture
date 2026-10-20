@@ -219,3 +219,52 @@ scenario "an item in transit is accepted, and received when it arrives":
   expect I1 is accepted
   when   staff Sam receives I1
   expect I1's Restock is sent
+
+scenario "a new item for the same unit cancels the older one":
+  given  a Customer Ada with name Ada
+  and    a Location L1 with name Main
+  when   staff Sam adds a new Order O1 with customer Ada and number R100
+  and    staff Sam adds a new Unit U1 with order O1, number U100 and price 30 EUR
+  and    staff Sam authorizes a new Rma A1 with order O1 and location L1
+  and    staff Sam authorizes a new Item I1 with rma A1 and unit U1
+  and    staff Sam authorizes a new Rma A2 with order O1 and location L1
+  and    staff Sam authorizes a new Item I2 with rma A2 and unit U1
+  expect I1 is cancelled
+  expect I2 is not cancelled
+  when   staff Sam receives I1
+           is refused at the gate
+  when   staff Sam receives I2
+  expect I2 is accepted
+
+scenario "a unit that came back cannot be authorized for return again":
+  given  a Customer Ada with name Ada
+  and    a Location L1 with name Main
+  when   staff Sam adds a new Order O1 with customer Ada and number R100
+  and    staff Sam adds a new Unit U1 with order O1, number U100 and price 30 EUR
+  and    staff Sam authorizes a new Rma A1 with order O1 and location L1
+  and    staff Sam authorizes a new Item I1 with rma A1 and unit U1
+  and    staff Sam receives I1
+  and    staff Sam authorizes a new Rma A2 with order O1 and location L1
+  and    staff Sam authorizes a new Item I2 with rma A2 and unit U1
+           is refused at the gate
+  expect I1 is not cancelled
+
+scenario "a reimbursed item that was cancelled leaves the unit eligible":
+  given  a Customer Ada with name Ada
+  and    a Location L1 with name Main
+  when   staff Sam adds a new Order O1 with customer Ada and number R100
+  and    staff Sam adds a new Unit U1 with order O1, number U100 and price 30 EUR
+  and    staff Sam authorizes a new Rma A1 with order O1 and location L1
+  and    staff Sam authorizes a new Item I1 with rma A1 and unit U1
+  and    staff Sam accepts I1
+  and    staff Sam reimburses I1
+  and    payments answers refunded
+  expect I1 is reimbursed
+  expect I1 is spent
+  when   staff Sam authorizes a new Rma A2 with order O1 and location L1
+  and    staff Sam authorizes a new Item I2 with rma A2 and unit U1
+  expect I1 is cancelled
+  expect I1 is not spent
+  expect I2 is clean
+  when   staff Sam receives I2
+  expect I2 is accepted
