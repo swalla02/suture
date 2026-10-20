@@ -1639,3 +1639,30 @@ The returns comparison (eval/returns/RESULTS.md) found a trap. `rule window: no 
 - A rule through `its Refund's amount` or `its Refund's created`, refusing a Refund, is fixed; one refusing a Shipment through `its Refund's amount` is not.
 - The returns port drops its `after 1 minute` patience and its three `1 minute passes`, and states its restock condition on the need. Its eighteen scenarios pass, and `suture build` warns only about `rule kept` (a preferred refund past 90 days is not paid, as in Solidus).
 - The claims port warns about `rule limit` (a payout over the limit is never paid), and a write-off over the limit now tries a repair instead of waiting.
+
+## Appendix Z. Prototype slice 25: state attributes (2026-10-20)
+
+The returns comparison's change 2, a new reception state, cost Suture +4 −2 against Solidus's +2 −1. Each reception state was a Bool, and nothing said that they exclude each other.
+
+### Z.1 What slice 25 adds
+
+| Added in slice 25 | Still waits |
+|---|---|
+| `⟨attr⟩: ⟨state⟩ \| ⟨state⟩… [= ⟨state⟩]` in a kind | transitions declared on the attribute (`from awaiting`); admits still guard them |
+| `it is ⟨state⟩` and `has a K that is ⟨state⟩` for those states, also through references | an admit and a reaction in one statement |
+| `⟨np⟩ is ⟨state⟩` as a reaction's action | |
+| values that are not states are refused at every input | |
+
+### Z.2 Semantics that slice 25 settles
+
+1. **Declaring.** A state attribute lists two or more lower-case states separated by `|`. It is a `Text` that holds one of them: the first, or the one after `=`. A state must be new on its kind. It cannot be an attribute, a state of another of the kind's state attributes, an effect's mark or outcome, or `done` or `failed`. The default must be one of the states.
+2. **Reading.** A state is read like a Bool attribute's state: `⟨np⟩ is [not] ⟨state⟩` compiles to `Cond::State`, and the runtime holds it when the attribute's value is that state. `its reception is received` compiles to a comparison with the same meaning, and a text that is not a state is an error there. Through a reference, a shared entity's states are its Bool attributes and the states of its state attributes. Wherever the compiler matches names (G.2.6, I.2.4, F.2.15), a state counts as a read of every state attribute that holds it, so the stale-copy error, watches, strictness and fixed rules apply to state attributes as they do to Bools.
+3. **Setting.** In a reaction, `⟨np⟩ is ⟨state⟩` sets the attribute to that state. `is not ⟨state⟩` is an error, because it names no state to go to. `⟨attr⟩ becomes …` and an admitted change may also set it.
+4. **Inputs.** A given value or an admitted change that is not one of the states is refused: `Copy.condition is one of shelved, lent, lost, mending, not burnt`.
+
+### Z.3 Acceptance
+
+- A kind with `condition: shelved | lent | lost | mending` starts shelved. Reactions move it from state to state, and only one state holds at a time.
+- A wrong default, a repeated state, `done`, a clash with an attribute or another state attribute, `is not ⟨state⟩` in a reaction, and comparing with a text that is no state are errors.
+- A rule reading a shared entity's state that its reactions change is the stale-copy error. One that an admitted change sets is watched.
+- The returns port uses `reception: awaiting | received | given | lost | wrong | short | expired`. Change 2 is replayed as `| transit`, an admit and a reaction: +3 −1, against +4 −2 before.
