@@ -40,7 +40,7 @@ apply rule ⟨name⟩ to ⟨Kinds⟩ created from version ⟨n⟩
 allow ⟨adapter⟩ to receive ⟨Kind⟩'s ⟨attr⟩[, ⟨Kind⟩'s ⟨attr⟩…]
 ```
 
-**Types:** `Text`, `Bool`, `Count`, `Money`, `Duration`, `Time`, `Media`, `⟨Kind⟩`, `list of ⟨Kind⟩`, `set of ⟨Kind⟩`. Built-in: `created: Time`.
+**Types:** `Text`, `Bool`, `Count`, `Money`, `Duration`, `Time`, `Media`, `⟨Kind⟩`, `list of ⟨Kind⟩`, `set of ⟨Kind⟩`. Built-in: `created: Time`. A state attribute: `⟨attr⟩: ⟨state⟩ | ⟨state⟩… [= ⟨state⟩]`.
 
 **Marks:** after the type, `secret` (Text only, no default) or `personal`: `card: Text secret` (chapter 19).
 
@@ -79,7 +79,7 @@ for each ⟨Kind⟩ and ⟨day|week|month|year⟩, the total ⟨attr⟩ of their
 
 **Comparisons:** `is at most`, `is at least`, `is more than`, `is less than`.
 
-**Actions:** `⟨np⟩ is ⟨Bool attr⟩` · `⟨np⟩ is not ⟨Bool attr⟩` · `⟨np⟩'s ⟨attr⟩ becomes ⟨num or np⟩`
+**Actions:** `⟨np⟩ is ⟨Bool attr⟩` · `⟨np⟩ is not ⟨Bool attr⟩` · `⟨np⟩ is ⟨state⟩` · `⟨np⟩'s ⟨attr⟩ becomes ⟨num or np⟩`
 
 **Noun phrases:** `it` · `its ⟨attr⟩` · `their ⟨attr⟩` · `⟨np⟩'s ⟨attr⟩` · `⟨np⟩'s ⟨Kind⟩` (current part) · `⟨np⟩'s ⟨Kinds⟩` (relation) · `the ⟨Kind⟩` · `the ⟨element⟩` · `the caller` · `all ⟨Kinds⟩` · literals
 
@@ -87,7 +87,7 @@ for each ⟨Kind⟩ and ⟨day|week|month|year⟩, the total ⟨attr⟩ of their
 
 **Numbers:** `⟨np⟩` · `the total ⟨attr⟩ of ⟨np⟩'s ⟨Kinds⟩ [that ⟨cond⟩]` · `the number of ⟨np⟩'s ⟨Kinds⟩ [that ⟨cond⟩]` · `the total ⟨attr⟩ taken from ⟨np⟩` · `the total of ⟨calc⟩ over ⟨list⟩` · `+ - * /` and parentheses
 
-**States:** Bool attributes · `define`d states · `done`, `failed` (parts and slots) · an effect's mark, outcomes and `timed out`
+**States:** Bool attributes · the states of state attributes · `define`d states · `done`, `failed` (parts and slots) · an effect's mark, outcomes and `timed out`
 
 ## Scenarios
 

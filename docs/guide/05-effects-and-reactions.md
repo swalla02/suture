@@ -125,6 +125,7 @@ There are three actions:
 |---|---|
 | `⟨np⟩ is ⟨Bool attribute⟩` | sets it to yes: `its Claim is closed` |
 | `⟨np⟩ is not ⟨Bool attribute⟩` | sets it to no |
+| `⟨np⟩ is ⟨state⟩` | puts its state attribute in that state: `the Copy is lent` (chapter 3) |
 | `⟨np⟩'s ⟨attr⟩ becomes ⟨num or np⟩` | sets a value: `its Claim's approved becomes its offer` |
 
 The types must match. A value that is unknown is not set, and the trace says so. A `Count` never becomes negative.

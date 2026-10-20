@@ -68,6 +68,23 @@ Because a formula is computed once, it is how a fact is **carried**: `fee` keeps
 
 A formula whose value is unknown, or a `Count` formula that would be negative, leaves the attribute unknown. An unknown value never breaks a rule, and it makes a condition false.
 
+## States
+
+When an entity is in exactly one of several states, list them instead of giving it one `Bool` per state:
+
+```suture
+kind Copy { book: Book, condition: shelved | lent | lost | mending }
+define: a Copy is out when it is not shelved and it is not mending
+```
+
+`condition` is a **state attribute**. It holds one state at a time: the first listed, unless `= ⟨state⟩` names another (`condition: shelved | lent | lost | mending = mending`). Its states read like any other state: `it is lent`, `the Copy is not lost`, `has a Copy that is lost`. `its condition is lent` means the same. A reaction puts it in a state with `the Copy is lent` (chapter 5), and leaving the old state needs nothing more, because the compiler knows the states exclude each other. Adding a state is one more word in the list.
+
+A state is a new name on its kind: it cannot also be an attribute, a state of another state attribute of the kind, an effect's mark or outcome, or `done` or `failed`. A state attribute is a `Text` underneath, so it is sent, given and shown as text. A value that is not one of its states is refused wherever it comes in: from a scenario, an admitted change, or the HTTP API.
+
+```suture fails
+kind Tape { state: new | worn = broken }
+```
+
 ## Arithmetic
 
 Calculations use `+`, `-`, `*`, `/` (or `−`, `×`) and parentheses. `*` and `/` bind tighter than `+` and `-`.
