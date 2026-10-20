@@ -36,6 +36,7 @@ impl Val {
             Lit::Money(c) => Val::Money(*c),
             Lit::Count(n) => Val::Count(*n),
             Lit::Duration(s) => Val::Duration(*s),
+            Lit::Time(t) => Val::Time(*t),
         }
     }
 

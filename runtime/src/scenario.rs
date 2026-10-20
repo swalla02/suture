@@ -101,6 +101,16 @@ pub fn run_with(prog: &Program, sc: &Scenario, setup: impl FnOnce(&mut Host)) ->
                 host.trace.push(format!("  … {} pass", duration(*secs)));
                 host.pass(*secs)
             }
+            ScenarioStep::Until { at } => {
+                let now = i64::try_from(host.now).unwrap_or(i64::MAX);
+                let date = suture_lang::sentence::date_text(*at);
+                if *at < now {
+                    Err(format!("it is already past {date}: the clock only moves forward"))
+                } else {
+                    host.trace.push(format!("  … it is {date}"));
+                    host.pass(u64::try_from(*at - now).unwrap_or(0))
+                }
+            }
         };
         if let Err(e) = result {
             failures.push(format!("step {}: {e}", i + 1));
@@ -164,6 +174,7 @@ fn values(prog: &Program, media: &mut Store, base: &Path, pairs: &[(String, Lite
                 Literal::Bool(b) => Val::Bool(*b),
                 Literal::Count(n) => Val::Count(*n),
                 Literal::Duration(s) => Val::Duration(*s),
+                Literal::Time(t) => Val::Time(*t),
                 // Names of shared entities: the host checks and resolves them.
                 Literal::Set(names) => {
                     let mut names = names.clone();

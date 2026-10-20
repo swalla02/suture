@@ -1992,6 +1992,13 @@ fn num(prog: &Program, v: View, at: &[usize], n: &Num) -> Option<Val> {
     match n {
         Num::Path(p) => value(v, at, p),
         Num::Lit(l) => Some(Val::from_lit(l)),
+        Num::Bin(l, Arith::Div, z) if matches!(l.as_ref(), Num::Bin(_, Arith::Mul, _)) => {
+            let Num::Bin(x, _, y) = l.as_ref() else { unreachable!("matched above") };
+            match (num(prog, v, at, x)?, num(prog, v, at, y)?, num(prog, v, at, z)?) {
+                (Val::Money(a), Val::Money(b), Val::Money(c)) => share(a, b, c).map(Val::Money),
+                (a, b, c) => arith(arith(a, Arith::Mul, b)?, Arith::Div, c),
+            }
+        }
         Num::Bin(x, op, y) => arith(num(prog, v, at, x)?, *op, num(prog, v, at, y)?),
         Num::Sum { of, kind, calc, filter, ty } => {
             let mut total = zero(*ty);
@@ -2014,6 +2021,18 @@ fn num(prog: &Program, v: View, at: &[usize], n: &Num) -> Option<Val> {
             _ => None,
         },
     }
+}
+
+/// `a * b / c` over amounts, in cents, rounded half away from zero
+/// (appendix AB.2.1); `None` when `c` is zero or the result overflows.
+fn share(a: i64, b: i64, c: i64) -> Option<i64> {
+    if c == 0 {
+        return None;
+    }
+    let (n, d) = (i128::from(a) * i128::from(b), i128::from(c));
+    let q = (2 * n.abs() + d.abs()) / (2 * d.abs());
+    let q = if (n < 0) != (d < 0) { -q } else { q };
+    i64::try_from(q).ok()
 }
 
 /// Nothing, as an amount of type `ty`.
