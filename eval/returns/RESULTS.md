@@ -108,7 +108,7 @@ That is +2 −1. The share is fixed when the unit ships, as the amount already w
 
 ## Six more changes
 
-After slice 27, the port was measured against six more Solidus commits to the files it covers. They are every commit since 2015 to those files that changes a behaviour the port claims. Commits that only rename, restyle or deprecate were left out, and so were commits about exchanges, taxes and splitting refunds. So were three commits that make a reference mandatory or nil-safe (`5003808b9`, `943372e9a`, `0e6da3f04`). Those cost Suture nothing, because a reference is always set, and counting them would flatter it. `count.py ⟨checkout⟩ --change ⟨commit⟩` counts Solidus's side with the same filter as the totals; it reproduces changes 1 and 2.
+After slice 27, the port was measured against six more Solidus commits to the files it covers. They are every commit since 2015 to those files that changes a behaviour the port claims. Commits that only rename, restyle or deprecate were left out, and so were commits about exchanges, taxes and splitting refunds. So were three commits that make a reference mandatory or nil-safe (`5003808b9`, `943372e9a`, `0e6da3f04`). Those cost Suture nothing, because a reference is always set, and counting them would flatter it. `count.py ⟨checkout⟩ --change ⟨commit⟩` counts Solidus's side over the same files, with the same filter as the totals, and reproduces changes 1 and 2. It diffs the filtered lines, so a moved block may count a line or two either way.
 
 | Change | What it does | Suture | Solidus |
 |---|---|---|---|

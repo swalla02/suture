@@ -93,16 +93,14 @@ SUTURE_CONDITIONS = r"\b(unless|where|whose|while|otherwise|after|fails with)\b"
 
 if solidus_rev == "--change":
     # `count.py ⟨checkout⟩ --change ⟨commit⟩`: the counted lines a Solidus
-    # commit adds and removes in core/app, by the same filter.
+    # commit adds and removes in the files above, by the same filter.
     import difflib
     commit = sys.argv[3]
-    changed = subprocess.run(["git", "-C", str(solidus), "show", "--format=", "--name-only", commit, "--", "core/app"],
+    changed = subprocess.run(["git", "-C", str(solidus), "show", "--format=", "--name-only", "--no-renames", commit, "--", *FILES],
                              capture_output=True, text=True, check=True).stdout.split()
     def at(r, f):
-        try:
-            return ruby_logic(git(solidus, r, f))
-        except subprocess.CalledProcessError:
-            return []
+        exists = subprocess.run(["git", "-C", str(solidus), "cat-file", "-e", f"{r}:{f}"], capture_output=True).returncode == 0
+        return ruby_logic(git(solidus, r, f)) if exists else []
     plus = minus = 0
     for f in changed:
         for d in difflib.ndiff(at(commit + "^", f), at(commit, f)):
