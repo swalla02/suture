@@ -33,6 +33,9 @@ Suture v0 is a prototype. Everything earlier in this guide runs and is tested. T
 | a rule that reads the total of a unit it refers to (`the number of its unit's Items`) | state the rule about that unit: `the number of each Unit's Items … is at most …` |
 | refusing a new entity, or an answer, that would overfill a filtered total | its contribution waits for room |
 | ordering within a relation (`the newest Item`) | number them with a formula: `seq: Count = the number of its unit's Items` |
+| dates in a program (`opens: Time = 2026-03-01`), and conditions that read the clock | count from `created`: `its created + 30 days`; scenarios may write dates |
+| multiplying two amounts, except as a share `a * b / c` | a Count factor, or a share |
+| negative counts and durations | count the other way, or subtract |
 | sets of values (`set of Text`) | a set of a small kind (`set of Zone`) |
 | references, sets or lists as an event's data | pass the name as Text, or admit a new entity |
 | `attempts` per part kind | one module-wide setting |

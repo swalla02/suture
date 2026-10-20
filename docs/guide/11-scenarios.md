@@ -90,8 +90,9 @@ given a ⟨Kind⟩ ⟨Name⟩ [with ⟨attr⟩ ⟨value⟩[, ⟨attr⟩ ⟨value
 | `… answers ⟨outcome⟩ with ⟨attr⟩ ⟨value⟩[, …]` | with the outcome's data |
 | `… answers ⟨outcome⟩ for ⟨Name⟩` | the request of that entity, when several are pending |
 | `when ⟨n⟩ ⟨unit⟩ pass` | moves the clock: `30 seconds`, `5 minutes`, `2 hours`, `3 days`, `1 week` (singular or plural) |
+| `when it is ⟨date⟩` | moves the clock forward to `2026-03-01` or `2026-03-01 14:30`, in UTC; a date already past fails the step |
 
-Moving the clock fires every timer that falls due, in order: deadlines (re-sends and time-outs), slot patience, and goal deadlines. The scenario clock starts at 2026-01-01 00:00 UTC.
+Moving the clock fires every timer that falls due, in order: deadlines (re-sends and time-outs), slot patience, and goal deadlines. The scenario clock starts at 2026-01-01 00:00 UTC. A date can also be given as a value, `with opens 2026-03-01`, or compared in an `expect`, `expect O1's created is at least 2026-02-01`. A program cannot write one, because a served program's clock starts when its log does (chapter 17).
 
 ## Checks: `expect`
 

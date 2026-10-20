@@ -39,9 +39,9 @@ A `kind` lists attributes as `name: Type`, separated by commas. A long kind can 
 | `Text` | strings | `"Ada"`; in scenarios also a bare word, `Ada` |
 | `Bool` | yes or no | `yes`, `no` (also `true`, `false`) |
 | `Count` | whole numbers, 0 or more | `3` |
-| `Money` | amounts in the module's currency, exact to the cent | `10 EUR`, `9.99 EUR` |
+| `Money` | amounts in the module's currency, exact to the cent | `10 EUR`, `9.99 EUR`, `-2.50 EUR` |
 | `Duration` | lengths of time | `30 seconds`, `5 minutes`, `2 hours`, `3 days`, `1 week` |
-| `Time` | instants from the runtime's clock | (none: times come from `created` and the clock) |
+| `Time` | instants from the runtime's clock | in programs, none: times come from `created` and the clock; in scenarios, `2026-03-01`, `2026-03-01 14:30` |
 | `Media` | an image, a sound, a video or a document, for decision models only (chapter 15) | `file "dent.png"`, in scenarios |
 | a kind name | a reference to one entity | the entity's name, in scenarios |
 | `list of K` | entities of kind K given together with this one | `and a line with …`, in scenarios |
@@ -94,11 +94,16 @@ Calculations use `+`, `-`, `*`, `/` (or `−`, `×`) and parentheses. `*` and `/
 | `Money + Money`, `Money - Money` | Money |
 | `Count + Count`, `Count - Count`, `Count * Count`, `Count / Count` | Count |
 | `Money * Count`, `Count * Money`, `Money / Count` | Money |
+| `Money * Money / Money`, written in that order | Money: a share of an amount |
 | `Time - Time` | Duration |
 | `Time + Duration`, `Time - Duration` | Time |
 | `Duration ± Duration`, `Duration * Count`, `Duration / Count` | Duration |
 
 Anything else is a compile error: you cannot add a Count to Money. Division rounds toward zero (to the cent for Money). An overflow or a division by zero makes the result unknown.
+
+A **share** of an amount multiplies two amounts and divides by a third at once: `price * order's adjustments / order's items` is this unit's part of the order's adjustments, weighted by its price. It is rounded to the cent, half away from zero, so a 10 EUR unit of a 30 EUR order with a -10 EUR promotion gets -3.33 EUR. A share of nothing is 0, even of a zero total. Otherwise dividing by zero leaves it unknown. Only this order is a share: `a * b` alone, or `a * (b / c)`, is still an error, because an amount times an amount means nothing on its own.
+
+A `-` directly before an amount makes it negative, `-2.50 EUR`. Only amounts can be negative.
 
 ## References
 
