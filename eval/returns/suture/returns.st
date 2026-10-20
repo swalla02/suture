@@ -26,6 +26,7 @@ kind Refund   { item: Item, amount: Money = item's amount }
 kind Credit   { item: Item, amount: Money = item's amount }
 kind Restock  { item: Item }
 
+define: an Rma is cancellable when the number of its Items that are awaiting is more than 0 or the number of its Items is 0
 define: an Item is back when it is not awaiting and it is not expired
 define: an Item is superseded when the number of its unit's Items is more than its seq + 1
 define: an Item is dropped when its rma is cancelled or it is superseded
@@ -80,7 +81,7 @@ admit expire Item by staff where the Item is awaiting and it is not cancelled
 admit accept Item by staff where the Item is not rejected
 admit reject Item by staff where the Item is not rejected
 admit reimburse Item by staff where the Item is accepted
-admit change Rma's cancelled by staff where the Rma is not cancelled
+admit change Rma's cancelled by staff where the Rma is not cancelled and it is cancellable
 admit add a new Customer, Order, Location or Unit by staff
 
 when a staff receives an Item: the Item is received

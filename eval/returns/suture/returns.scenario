@@ -274,3 +274,20 @@ scenario "a reimbursed item that was cancelled leaves the unit eligible":
   expect I2 is clean
   when   staff Sam receives I2
   expect I2 is accepted
+
+scenario "an authorization is cancelled only while one of its items can be":
+  given  a Customer Ada with name Ada
+  and    a Location L1 with name Main
+  when   staff Sam adds a new Order O1 with customer Ada and number R100
+  and    staff Sam adds a new Unit U1 with order O1, number U100 and price 30 EUR
+  and    staff Sam adds a new Unit U2 with order O1, number U101 and price 20 EUR
+  and    staff Sam authorizes a new Rma A1 with order O1 and location L1
+  and    staff Sam authorizes a new Item I1 with rma A1 and unit U1
+  and    staff Sam receives I1
+  and    staff Sam changes A1's cancelled to yes
+           is refused at the gate
+  when   staff Sam authorizes a new Item I2 with rma A1 and unit U2
+  and    staff Sam changes A1's cancelled to yes
+  expect I2 is cancelled
+  expect I1 is received
+  expect I1 is not cancelled
