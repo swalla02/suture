@@ -1666,3 +1666,32 @@ The returns comparison's change 2, a new reception state, cost Suture +4 −2 ag
 - A wrong default, a repeated state, `done`, a clash with an attribute or another state attribute, `is not ⟨state⟩` in a reaction, and comparing with a text that is no state are errors.
 - A rule reading a shared entity's state that its reactions change is the stale-copy error. One that an admitted change sets is watched.
 - The returns port uses `reception: awaiting | received | given | lost | wrong | short | expired`. Change 2 is replayed as `| transit`, an admit and a reaction: +3 −1, against +4 −2 before.
+
+## Appendix AA. Prototype slice 26: filtered relations across units, and sibling totals (2026-10-20)
+
+The returns comparison left three Solidus behaviours unported. Each one reads the other return items of the same inventory unit: a new return item cancels the older ones, a second completed return item is refused, and a unit with a reimbursed return item makes the others ineligible. In v0, each return item is its own unit, and a relation across units had no `that` filter and could be read only by its own unit.
+
+### AA.1 What slice 26 adds
+
+| Added in slice 26 | Still waits |
+|---|---|
+| `that ⟨cond⟩` on a relation across units: `the number of each Unit's Items that are back` | a rule that reads another unit's total |
+| a unit reads the totals of a unit it refers to: `the number of its unit's Items [that …]`, `the total ⟨attr⟩ of its unit's Items` | a total per period read from another unit |
+| an event or change that would overfill a filtered total is refused by the total's rule | refusing a new entity, or an answer, that would overfill one: its contribution waits |
+| a formula keeps another unit's total as it was at creation | ordering within a relation (`the newest Item`) |
+
+### AA.2 Semantics that slice 26 settles
+
+1. **Filtered totals.** `the number of each ⟨Kind⟩'s ⟨Kinds⟩ that ⟨cond⟩` and `the total ⟨attr⟩ of … that ⟨cond⟩` compile to the implicit binding of F.2.11, with the filter as its `held` condition. The filter is read at each entity of the relation, in its own unit, with no caller or event data. The entity adds its amount (or 1) while the filter holds: when the filter comes to hold, at any status, the binding asks to take, and when it stops holding, a granted take is given back (F.2.10) and a pending one is dropped. The total is named with its filter, `number of Items that are back`, and a binding id carries it: `Unit(number of Items that are back)`. While its filter does not hold, the binding does not keep its parts waiting.
+2. **Refusing.** A filtered total is per-group, and its owner refuses a take that would break one of its rules, as in F.2.8. When an admitted event or change would start such a take, the host asks the owner first, and a refusal refuses the input with that rule: `I2 refused staff Sam receives it: U1 would break rule once with its total number of Items that are back: …`. A new entity's contribution, and one an answer or a timer starts, waits for room, as an unfiltered one does.
+3. **Sibling totals.** From a kind K that refers to a shared kind S through a path ending in a reference, `the number of ⟨path⟩'s ⟨Rs⟩ [that …]` and `the total ⟨attr⟩ of ⟨path⟩'s ⟨Rs⟩ [that …]` read S's total, where R refers to S through exactly one attribute. They compile to `Num::Taken` with the path and S as its `kind`, and the binding is marked `shared`. A unit's fact, as other units carry it, holds its shared totals. Facts with none encode as before. When a take or a give-back changes a shared total, the host refreshes every unit that carries the owner's fact, in the order they started carrying it. A formula that reads a sibling total keeps its value at creation, so `seq: Count = the number of its unit's Items` numbers the items of a unit in the order they were made.
+4. **Rules.** A rule that reads a sibling total, directly or through definitions, is an error: `rule r: it reads `number of Items`, a total of each Unit that other units change without this rule being checked. …`. A refresh is never refused, so such a rule could break unseen. Needs, admits, goals, formulas and the definitions they use may read one.
+5. **Cost.** A take or a give-back on a shared total sends one refresh to each unit that carries the owner, that is, to the owner's siblings. A unit with many referring units pays for each change. `suture build` names each shared total in `choices:` (`…, and each Item reads it`).
+
+### AA.3 Acceptance
+
+- A newer Item supersedes the older ones through `seq` and `the number of its unit's Items`, and an older one can no longer be received.
+- `rule once: the number of each Unit's Items that are back is at most 1` refuses a second Item's `receive` by rule `once`, and leaves the Items of other Units alone.
+- A paid Item makes its siblings unclean. Unpaying it gives the take back, the siblings are refreshed, and they are clean again.
+- A part counts toward a filtered total once its effect's outcome holds, and an answer that would overfill the total leaves the contribution waiting.
+- The returns port expresses the three Solidus behaviours it skipped.
