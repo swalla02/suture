@@ -65,6 +65,19 @@ Slice 24 (spec appendix Y) fixes the trap. A rule on facts that never change now
 
 The port is now 74 lines with 20 clauses, after both changes, and its 18 scenarios take 198 lines.
 
+## After slice 25
+
+Slice 25 (spec appendix Z) adds state attributes. The port's six reception Bools and `expired` became one attribute, `reception: awaiting | received | given | lost | wrong | short | expired`. The defines got shorter: `back` is `not awaiting and not expired`, and the five reception admits use a new define, `open` (awaiting, and its RMA not cancelled). The first version is then 72 lines.
+
+Change 2 replayed on it:
+- `| transit` in the list (+1 −1);
+- `admit forward …` (+1);
+- `when a staff forwards an Item: the Item is transit` (+1).
+
+That is **+3 −1**, against +4 −2 before and Solidus's +2 −1. `back` needs no change now, and the compiler knows the states exclude each other: a lost item that is received is no longer lost, which the lost-item scenario now checks. Suture still costs one line more than Solidus. Solidus declares an event and its transition in one place, while Suture needs an `admit` (who may, and from which states) and a reaction (what it does). Merging the two would close the gap.
+
+After both changes, the port is 74 lines, and its 18 scenarios take 200 lines.
+
 ## How far to trust this
 
 - **Better than eval/claims:**
@@ -81,6 +94,6 @@ The port is now 74 lines with 20 clauses, after both changes, and its 18 scenari
 ## What it suggests next
 
 1. Move on at once when a rule on fixed facts holds a part's send, not only its creation, and count a part's `created` (and any attribute of a part, which v0 never changes) as fixed. That is the trap above. Done in slice 24.
-2. A state form for kinds: `reception is awaiting, received, …`, with transitions on events. That is change 2.
+2. A state form for kinds: `reception is awaiting, received, …`, with transitions on events. That is change 2. Done in slice 25, without transitions.
 3. Relations across units with a filter, at least `the number of the Unit's Items that are received`, kept as a running total like `taking`. That is the three unported behaviours.
 4. Money ratios (`a * b / c` over Money), negative Money literals, and Time literals in scenarios.

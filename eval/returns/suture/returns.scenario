@@ -131,6 +131,8 @@ scenario "an item lost in transit is accepted without a restock, and can still b
            is refused at the gate
   when   staff Sam receives I1
   expect I1's Restock is sent
+  expect I1 is received
+  expect I1 is not lost
 
 scenario "the items of a cancelled authorization are cancelled and cannot be received":
   given  a Customer Ada with name Ada
