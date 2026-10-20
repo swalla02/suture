@@ -9,14 +9,15 @@ role staff
 
 kind Customer { name: Text }
 kind Order    { customer: Customer, number: Text, complete: Bool = yes,
-                shipped: Bool = yes }
+                shipped: Bool = yes, items: Money = 0 EUR, adjustments: Money = 0 EUR }
 kind Location { name: Text, restocks: Bool = yes }
-kind Unit     { order: Order, number: Text, price: Money, discount: Money = 0 EUR,
+kind Unit     { order: Order, number: Text, price: Money,
+                share: Money = price * order's adjustments / order's items,
                 shipped: Bool = yes,
                 resellable: Bool = yes, tracked: Bool = yes }
 kind Rma      { order: Order, location: Location, cancelled: Bool = no }
 kind Item     { rma: Rma, unit: Unit, preferred: Text = "none",
-                amount: Money = unit's price - unit's discount,
+                amount: Money = unit's price + unit's share,
                 seq: Count = the number of its unit's Items,
                 reception: awaiting | received | given | lost | wrong | short | transit | expired,
                 approved: Bool = no, refused: Bool = no, reimbursing: Bool = no }

@@ -19,11 +19,14 @@ scenario "a received item is accepted, and refunded to the original payment":
 scenario "an item is refunded less its share of the order's promotions":
   given  a Customer Ada with name Ada
   and    a Location L1 with name Main
-  when   staff Sam adds a new Order O1 with customer Ada and number R100
-  and    staff Sam adds a new Unit U1 with order O1, number U100, price 30 EUR and discount 3 EUR
+  when   staff Sam adds a new Order O1 with customer Ada, number R100, items 90 EUR and adjustments -10 EUR
+  and    staff Sam adds a new Unit U1 with order O1, number U100 and price 30 EUR
+  and    staff Sam adds a new Unit U2 with order O1, number U101 and price 20 EUR
   and    staff Sam authorizes a new Rma A1 with order O1 and location L1
   and    staff Sam authorizes a new Item I1 with rma A1 and unit U1
-  expect I1's amount is 27 EUR
+  and    staff Sam authorizes a new Item I2 with rma A1 and unit U2
+  expect I1's amount is 26.67 EUR
+  expect I2's amount is 17.78 EUR
 
 scenario "past 90 days since shipping, the item is paid back in store credit":
   given  a Customer Ada with name Ada

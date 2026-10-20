@@ -45,8 +45,8 @@ Nothing in the language says that the statuses exclude each other: the port keep
 - **For the same reason:**
   - an RMA cannot check that its order has shipped units, so the order carries `shipped` as a given fact;
   - cancelling an RMA cannot be refused because one of its items is past cancelling.
-- **Money × Money.** The promotion share is adjustments × price ÷ item total. Suture refuses to multiply Money by Money, so each unit carries its `discount`.
-- **Small gaps in literals.** There is no negative Money literal (a promotion is −3 EUR in Solidus), and no Time literal in scenarios. The port adds an order when it completes, and uses `created`.
+- **Money × Money.** The promotion share is adjustments × price ÷ item total. Suture refused to multiply Money by Money, so each unit carried its `discount` (until slice 27).
+- **Small gaps in literals.** There was no negative Money literal (a promotion is −3 EUR in Solidus), and no Time literal in scenarios (both added in slice 27). The port adds an order when it completes, and uses `created`.
 
 **A trap the author fell into.** `rule window: no Item has a Refund that is sent unless its Refund's created - its unit's created is at most 90 days`. This is the natural way to say "refund only within 90 days of shipping", and the facts in it never change. The author expected a refund outside the window to move on to store credit at once. Instead it waited forever, for two reasons:
 - the slot moves on at once only when a rule forbids the part *existing* (`has a Refund`), not its being *sent*;
@@ -92,6 +92,18 @@ That is **+10 −4** (not counting the `reimbursed` define, which moved up). Sol
 
 **What it cost the language.** `seq` is a workaround: v0 has no order within a relation, so "the newest Item of the unit" is spelled as a count taken at creation. Each change to a total that others read sends one refresh to every Item of the unit, which is cheap at a unit's few return items.
 
+## After slice 27
+
+Slice 27 (spec appendix AB) adds shares of an amount (`a * b / c` over Money, rounded to the cent half away from zero), negative amounts and dates. The port now computes the promotion share as Solidus does, instead of carrying each unit's `discount`:
+
+```
+kind Order { …, items: Money = 0 EUR, adjustments: Money = 0 EUR }
+kind Unit  { …, share: Money = price * order's adjustments / order's items, … }
+kind Item  { …, amount: Money = unit's price + unit's share, … }
+```
+
+That is +2 −1. The share is fixed when the unit ships, as the amount already was. Solidus computes it when the return item is made, from the order as it is then; the two differ only if an order's adjustments change after it ships. A share of nothing is nothing, so an order with no items and no adjustments gives 0, as Solidus's `percentage_of_order_total` does. One with adjustments and no items has an unknown share in the port and 0 in Solidus, a case Solidus's own data never reaches. The promotion scenario now has two units of a 90 EUR order with a −10 EUR promotion, refunded 26.67 EUR and 17.78 EUR. The port is 81 lines and 21 scenarios in 249 lines. Dates in scenarios were not needed: the port's windows are counted from `created`, and `91 days pass` says what it means.
+
 ## How far to trust this
 
 - **Better than eval/claims:**
@@ -110,4 +122,4 @@ That is **+10 −4** (not counting the `reimbursed` define, which moved up). Sol
 1. Move on at once when a rule on fixed facts holds a part's send, not only its creation, and count a part's `created` (and any attribute of a part, which v0 never changes) as fixed. That is the trap above. Done in slice 24.
 2. A state form for kinds: `reception is awaiting, received, …`, with transitions on events. That is change 2. Done in slice 25, without transitions.
 3. Relations across units with a filter, at least `the number of the Unit's Items that are received`, kept as a running total like `taking`. That is the three unported behaviours. Done in slice 26.
-4. Money ratios (`a * b / c` over Money), negative Money literals, and Time literals in scenarios.
+4. Money ratios (`a * b / c` over Money), negative Money literals, and Time literals in scenarios. Done in slice 27.
