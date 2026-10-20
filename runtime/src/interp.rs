@@ -1353,7 +1353,8 @@ fn done_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut Out
 /// refuses the part itself (appendix Y.2.1). Returns whether it moved on.
 fn refused_for_good(prog: &Program, u: &mut Unit, at: &[usize], after: &Node, now: i64, out: &mut Out) -> bool {
     let Some((_, owner)) = at.split_last() else { return false };
-    let Some(r) = newly_broken(prog, View::of(u).acting(now), after).filter(|r| r.fixed) else { return false };
+    let before = View::of(u).acting(now);
+    let Some(r) = prog.rules.iter().find(|r| r.fixed && broken(prog, before.with(after), r) && !broken(prog, before, r)) else { return false };
     let o = node_at(&u.root, owner);
     let kind = node_at(&u.root, at).kind.clone();
     let Some(s) = prog.slots.iter().find(|s| s.owner == o.kind && o.slots.get(&s.name) == Some(&kind)) else { return false };

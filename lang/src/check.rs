@@ -573,13 +573,16 @@ fn sourced_reads(p: &Program, r: &Rule) -> Vec<(String, String)> {
 }
 
 /// The attributes that may change: [`changeable`] ones, and formulas that
-/// read one, a slot, a binding or a total. A formula is set once it can be
+/// read one, a part, a slot, a binding or a total. A formula is set once it can be
 /// known, so such a formula may be unknown when a rule is first checked and
 /// known later (appendix Y.2.2).
 fn changeable_formulas(p: &Program) -> Vec<String> {
     fn reads(n: &Num, ch: &[String]) -> bool {
         match n {
-            Num::Path(x) => matches!(x.steps.last(), Some(Step::Attr(a)) if ch.contains(a)) || x.steps.iter().any(|s| matches!(s, Step::Slot(_) | Step::Bound(_))),
+            Num::Path(x) => {
+                matches!(x.steps.last(), Some(Step::Attr(a)) if ch.contains(a))
+                    || x.steps.iter().any(|s| matches!(s, Step::Part(_) | Step::Slot(_) | Step::Bound(_) | Step::Cand | Step::Elem | Step::Caller | Step::Data(_)))
+            }
             Num::Lit(_) => false,
             Num::Bin(a, _, b) => reads(a, ch) || reads(b, ch),
             Num::Sum { .. } | Num::Count { .. } | Num::Taken { .. } => true,
@@ -607,7 +610,21 @@ fn refused_parts(r: &Rule) -> Vec<(Vec<Step>, String)> {
     fn has(c: &Cond, out: &mut Vec<(Vec<Step>, String)>) {
         match c {
             Cond::Has { node, part, negated: false, .. } => out.push((node.steps.clone(), part.clone())),
-            Cond::And(cs) | Cond::Or(cs) => cs.iter().for_each(|c| has(c, out)),
+            Cond::And(cs) => cs.iter().for_each(|c| has(c, out)),
+            // Under an `or`, a branch that is no part may break the rule
+            // while no part exists: then no part is known to exist.
+            Cond::Or(cs) => {
+                let mut each = vec![];
+                for c in cs {
+                    let before = each.len();
+                    has(c, &mut each);
+                    if each.len() == before {
+                        out.push((vec![Step::Cand], String::new()));
+                        return;
+                    }
+                }
+                out.extend(each);
+            }
             _ => {}
         }
     }

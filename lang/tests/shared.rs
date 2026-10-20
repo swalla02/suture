@@ -299,3 +299,16 @@ rule other: no Order has a Shipment unless its Refund's amount is at most 5 EUR
     assert!(w[0].ends_with("say so on the need: `Order needs Delivery while …`"), "{w:?}");
     assert!(!p.warnings.iter().any(|w| w.contains("rule embargo")), "a refused Shipment moves on to the Refund");
 }
+
+#[test]
+fn a_formula_known_only_once_a_part_exists_is_not_fixed() {
+    let src = REFUNDS.replace("country: Country = customer's country }", "country: Country = customer's country, back: Money = its Refund's amount }");
+    let p = prog(&format!(
+        "{src}rule late: no Order has a Shipment unless its back is at most 5 EUR
+rule both: no Order has a Shipment or a Refund unless its total is at most 50 EUR
+"
+    ));
+    let rule = |n: &str| p.rules.iter().find(|r| r.name == n).unwrap();
+    assert!(!rule("late").fixed, "`back` is known only once a Refund exists");
+    assert!(rule("both").fixed);
+}
