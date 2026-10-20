@@ -168,7 +168,41 @@ From a shared kind, a plural reads every entity that refers to it through its on
 rule daily: for each Sender and day, the total weight of their Parcels is at most 100
 ```
 
-Each Parcel contributes to its sender's running total when it is created, exactly as if it had `uses a Sender where the Sender is its sender, taking its weight`. A rule over the relation is per-group, enforced by refusing the contribution: the parcel waits, as above. In v0 such a relation has no `that` filter.
+Each Parcel contributes to its sender's running total when it is created, exactly as if it had `uses a Sender where the Sender is its sender, taking its weight`. A rule over the relation is per-group, enforced by refusing the contribution: the parcel waits, as above.
+
+### Filtered relations
+
+A relation across units may say which entities count, with `that`:
+
+```suture
+rule open: the number of each Sender's Parcels that are not cancelled is at most 3
+```
+
+A parcel counts toward its sender's total `number of Parcels that are not cancelled` only while the filter holds of it. When it is cancelled, it gives its count back, and a parcel waiting for room may be woken. The filter is read in the parcel's own unit.
+
+A filtered total is enforced as above, by refusing the contribution. When an admitted event or change would make the filter hold and the total's owner refuses, the input itself is refused by that rule, before anything changes. A new parcel, or a contribution an answer starts, waits for room instead.
+
+### Totals of the unit you refer to
+
+A unit can read the totals of a shared entity it refers to. From a Parcel, `its sender's Parcels` are the sender's parcels, and the parcel reads their total as its sender's running total:
+
+```suture
+define: a Parcel is crowded when the number of its sender's Parcels that are not cancelled is more than 2
+```
+
+The parcel carries that total with the rest of its sender's facts. When the total changes, every unit that carries the sender is refreshed, so `crowded` stays true to the count. A formula reads the total once, when its entity is created: `seq: Count = the number of its sender's Parcels` numbers a sender's parcels in the order they were made.
+
+A rule cannot read such a total, directly or through a definition. Other units change it, and the rule is not checked when they do:
+
+```suture fails
+rule calm: no Parcel is crowded
+```
+
+```errors
+main.st:37: rule calm: it reads `number of Parcels that are not cancelled`, a total of each Sender that other units change without this rule being checked. State the rule about each Sender, or read the total in a need, an admit or a definition no rule uses
+```
+
+State the rule about the owner instead, as `rule open` does. Each change to a total that others read costs one refresh per unit that refers to its owner, and `suture build` lists such totals under `choices:` with `and each Parcel reads it`.
 
 ## Cost
 

@@ -30,7 +30,9 @@ Suture v0 is a prototype. Everything earlier in this guide runs and is tested. T
 | changing a reference, a set, a formula, `created`, a part's attribute, or an attribute a pool key reads | model the change as a new entity |
 | refreshing carried facts that a shared entity's own reactions or answers change | a rule that reads such a fact from another unit is a compile error; carry it with a formula or change it with `admit change` |
 | events to one of several parts of a kind (a part per list element) | admit the event on the root and react there |
-| a `that` filter on a relation across units (`their Refunds that are refunded`) | filter on the subject's own relations |
+| a rule that reads the total of a unit it refers to (`the number of its unit's Items`) | state the rule about that unit: `the number of each Unit's Items … is at most …` |
+| refusing a new entity, or an answer, that would overfill a filtered total | its contribution waits for room |
+| ordering within a relation (`the newest Item`) | number them with a formula: `seq: Count = the number of its unit's Items` |
 | sets of values (`set of Text`) | a set of a small kind (`set of Zone`) |
 | references, sets or lists as an event's data | pass the name as Text, or admit a new entity |
 | `attempts` per part kind | one module-wide setting |
