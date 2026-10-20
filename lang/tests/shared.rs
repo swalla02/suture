@@ -281,3 +281,21 @@ rule fee: no Order has a Shipment unless its Shipment's Carrier's fee is at most
     assert!(!r.fixed, "the Carrier is known only once it is bound");
     assert!(p.rules.iter().find(|r| r.name == "embargo").unwrap().fixed);
 }
+
+#[test]
+fn a_rule_reads_the_fixed_attributes_of_the_part_it_refuses_as_fixed() {
+    let p = prog(&format!(
+        "{REFUNDS}rule small: no Order has a Refund that is paid unless its Refund's amount is at most 50 EUR
+rule quick: no Order has a Refund unless its Refund's created - its created is at most 30 days
+rule other: no Order has a Shipment unless its Refund's amount is at most 5 EUR
+"
+    ));
+    let rule = |n: &str| p.rules.iter().find(|r| r.name == n).unwrap();
+    assert!(rule("small").fixed && rule("quick").fixed, "the Refund exists when the rule breaks");
+    assert!(!rule("other").fixed, "a Shipment may break it while no Refund exists yet");
+    let w = p.warnings.iter().filter(|w| w.contains("waits for good")).collect::<Vec<_>>();
+    assert_eq!(w.len(), 2, "{w:?}");
+    assert!(w[0].starts_with("rule small: a Refund it refuses waits for good") && w[0].contains("Refund is the last alternative of Delivery"), "{w:?}");
+    assert!(w[0].ends_with("say so on the need: `Order needs Delivery while …`"), "{w:?}");
+    assert!(!p.warnings.iter().any(|w| w.contains("rule embargo")), "a refused Shipment moves on to the Refund");
+}

@@ -572,10 +572,78 @@ fn sourced_reads(p: &Program, r: &Rule) -> Vec<(String, String)> {
     out
 }
 
+/// The attributes that may change: [`changeable`] ones, and formulas that
+/// read one, a slot, a binding or a total. A formula is set once it can be
+/// known, so such a formula may be unknown when a rule is first checked and
+/// known later (appendix Y.2.2).
+fn changeable_formulas(p: &Program) -> Vec<String> {
+    fn reads(n: &Num, ch: &[String]) -> bool {
+        match n {
+            Num::Path(x) => matches!(x.steps.last(), Some(Step::Attr(a)) if ch.contains(a)) || x.steps.iter().any(|s| matches!(s, Step::Slot(_) | Step::Bound(_))),
+            Num::Lit(_) => false,
+            Num::Bin(a, _, b) => reads(a, ch) || reads(b, ch),
+            Num::Sum { .. } | Num::Count { .. } | Num::Taken { .. } => true,
+        }
+    }
+    let mut ch = changeable(p);
+    loop {
+        let more: Vec<String> = p
+            .kinds
+            .iter()
+            .flat_map(|k| &k.attrs)
+            .filter(|a| !ch.contains(&a.name) && a.formula.as_ref().is_some_and(|f| reads(f, &ch)))
+            .map(|a| a.name.clone())
+            .collect();
+        if more.is_empty() {
+            return ch;
+        }
+        ch.extend(more);
+    }
+}
+
+/// The parts a `no … has` rule refuses, each as the path to its owner and
+/// its kind.
+fn refused_parts(r: &Rule) -> Vec<(Vec<Step>, String)> {
+    fn has(c: &Cond, out: &mut Vec<(Vec<Step>, String)>) {
+        match c {
+            Cond::Has { node, part, negated: false, .. } => out.push((node.steps.clone(), part.clone())),
+            Cond::And(cs) | Cond::Or(cs) => cs.iter().for_each(|c| has(c, out)),
+            _ => {}
+        }
+    }
+    let mut out = vec![];
+    if let Body::No { pred, .. } = &r.body {
+        has(pred, &mut out);
+    }
+    out
+}
+
+/// Whether a path to a node reaches only fixed nodes when the rule is broken:
+/// its unit's own, or the part the rule refuses, which then exists. Through
+/// `its Refund`, every part the rule refuses must be a Refund there; through
+/// `its Payback`, an alternative of that slot (appendix Y.2.2).
+fn fixed_node(p: &Program, parts: &[(Vec<Step>, String)], to: &[Step]) -> bool {
+    if to.iter().all(|s| *s == Step::Owner) {
+        return true;
+    }
+    let Some((last, owner)) = to.split_last() else { return true };
+    !parts.is_empty()
+        && parts.iter().all(|(o, k)| {
+            o.as_slice() == owner
+                && match last {
+                    Step::Part(x) => x == k,
+                    Step::Slot(x) => p.slot(x).is_some_and(|s| s.alternatives.contains(k)),
+                    _ => false,
+                }
+        })
+}
+
 /// Whether a rule's filter and `unless` read only facts that never change
-/// (appendix F.2.15): carried facts, and attributes no reaction or answer sets.
+/// (appendix F.2.15): carried facts, attributes no reaction or answer sets,
+/// and those of the part it refuses (appendix Y.2.2).
 fn fixed_rule(p: &Program, r: &Rule) -> bool {
-    let ch = changeable(p);
+    let ch = changeable_formulas(p);
+    let parts = refused_parts(r);
     let path = |x: &Path| {
         // A bound entity is known only once its binding is granted, after the
         // part exists, so only references are fixed.
@@ -585,7 +653,10 @@ fn fixed_rule(p: &Program, r: &Rule) -> bool {
         if through_ref(x) {
             return !matches!(x.steps.last(), Some(Step::Attr(a)) if ch.contains(a));
         }
-        x.steps.iter().all(|s| matches!(s, Step::Owner | Step::Attr(_))) && matches!(x.steps.last(), Some(Step::Attr(a)) if !ch.contains(a))
+        match x.steps.split_last() {
+            Some((Step::Attr(a), to)) => !ch.contains(a) && fixed_node(p, &parts, to),
+            _ => false,
+        }
     };
     fn num(n: &Num, path: &dyn Fn(&Path) -> bool) -> bool {
         match n {
@@ -595,7 +666,7 @@ fn fixed_rule(p: &Program, r: &Rule) -> bool {
             Num::Sum { .. } | Num::Count { .. } | Num::Taken { .. } => false,
         }
     }
-    fn cond(p: &Program, c: &Cond, ch: &[String], path: &dyn Fn(&Path) -> bool) -> bool {
+    fn cond(p: &Program, c: &Cond, ch: &[String], parts: &[(Vec<Step>, String)], path: &dyn Fn(&Path) -> bool) -> bool {
         match c {
             Cond::Cmp { left, right, .. } => num(left, path) && num(right, path),
             Cond::Contains { set, item, .. } => num(set, path) && num(item, path),
@@ -603,17 +674,44 @@ fn fixed_rule(p: &Program, r: &Rule) -> bool {
                 let bool_attr = p.kinds.iter().any(|k| k.attr(state).is_some_and(|a| a.ty == Ty::Bool));
                 let other = p.defines.iter().any(|d| d.state == *state) || p.effects.iter().any(|e| p.states(&e.kind).contains(state));
                 let carried = through_ref(node) && !node.steps.iter().any(|s| matches!(s, Step::Bound(_) | Step::Cand)) && !ch.contains(state);
-                carried || (bool_attr && !other && !ch.contains(state) && node.steps.iter().all(|s| *s == Step::Owner))
+                carried || (bool_attr && !other && !ch.contains(state) && fixed_node(p, parts, &node.steps))
             }
             Cond::Has { .. } => false,
-            Cond::And(cs) | Cond::Or(cs) => cs.iter().all(|c| cond(p, c, ch, path)),
+            Cond::And(cs) | Cond::Or(cs) => cs.iter().all(|c| cond(p, c, ch, parts, path)),
         }
     }
-    r.filter.iter().all(|c| cond(p, c, &ch, &path))
+    r.filter.iter().all(|c| cond(p, c, &ch, &parts, &path))
         && match &r.body {
-            Body::Every(c) => cond(p, c, &ch, &path),
-            Body::No { unless, .. } => unless.as_ref().is_none_or(|c| cond(p, c, &ch, &path)),
+            Body::Every(c) => cond(p, c, &ch, &parts, &path),
+            Body::No { unless, .. } => unless.as_ref().is_none_or(|c| cond(p, c, &ch, &parts, &path)),
         }
+}
+
+/// What a rule on facts that never change leaves waiting for good: a part
+/// it refuses that is no slot's alternative, or is the last one (appendix Y.2.3).
+fn waits_for_good(p: &Program, r: &Rule) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    let mut seen: Vec<String> = vec![];
+    for (_, k) in refused_parts(r) {
+        if seen.contains(&k) {
+            continue;
+        }
+        seen.push(k.clone());
+        let slot = p.slots.iter().find(|s| s.alternatives.contains(&k));
+        if slot.is_some_and(|s| s.alternatives.last() != Some(&k)) {
+            continue;
+        }
+        let part = slot.map_or(k.clone(), |s| s.name.clone());
+        let Some(need) = p.needs.iter().find(|n| n.part == part) else { continue };
+        let last = slot.map_or(String::new(), |s| format!(", and {k} is the last alternative of {}", s.name));
+        out.push(format!(
+            "rule {}: {} it refuses waits for good, because the rule reads only facts that never change{last}. If none is wanted then, say so on the need: `{} needs {part} while …`",
+            r.name,
+            a(&k),
+            need.owner
+        ));
+    }
+    out
 }
 
 /// Whether a calculation reads a total per period.
@@ -696,6 +794,10 @@ impl Checker {
         self.reactions(src, &mut p);
         for i in 0..p.rules.len() {
             p.rules[i].fixed = fixed_rule(&p, &p.rules[i]);
+            if p.rules[i].fixed {
+                let w = waits_for_good(&p, &p.rules[i]);
+                p.warnings.extend(w);
+            }
             p.rules[i].sources = sourced_reads(&p, &p.rules[i]);
             for (attr, secs) in p.rules[i].fresh.clone() {
                 if !p.rules[i].sources.iter().any(|(_, a)| *a == attr) {
