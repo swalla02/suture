@@ -406,6 +406,8 @@ pub struct Applies {
     pub source: String,
 }
 
+// A rule's body is built once per rule, so its size does not matter.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Body {
     Every(Cond),
