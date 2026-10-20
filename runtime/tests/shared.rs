@@ -306,6 +306,29 @@ fn a_rule_on_fixed_facts_moves_the_slot_on_at_once() {
 }
 
 #[test]
+fn a_rule_on_fixed_facts_that_holds_a_send_moves_the_slot_on_at_once() {
+    let src = REFUNDS
+        .replace("BUDGET", "1000 EUR")
+        .replace("  sends the Order's country\n", "  sends the Order's country\n  marks sent\n")
+        .replace("has a Shipment\n", "has a Shipment that is sent\n");
+    let p = suture_lang::compile(&[("t.st".to_string(), src)]).unwrap_or_else(|e| panic!("{e:?}"));
+    assert!(p.rules.iter().find(|r| r.name == "embargo").unwrap().fixed);
+    let sc = "scenario \"s\":
+  given  a Country IR with restricted yes
+  and    a Customer C2 with country IR
+  when   a new Order O1 with customer C2 and total 30 EUR
+  expect O1 has a Refund
+  expect O1 has no Shipment
+";
+    let sc = &parse_scenarios("t.scenario", sc).unwrap_or_else(|e| panic!("{e}"))[0];
+    let r = run(&p, sc);
+    let trace = r.host.trace.join("\n");
+    assert!(r.passed(), "{:?}\n{trace}", r.failures);
+    assert!(trace.contains("Delivery: Shipment refused by rule embargo, trying Refund"), "{trace}");
+    assert!(!trace.contains("Shipment waits"), "{trace}");
+}
+
+#[test]
 fn a_monthly_cap_makes_a_refund_wait_and_a_new_month_starts_afresh() {
     let r = refunds(
         "1000 EUR",

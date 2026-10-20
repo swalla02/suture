@@ -28,6 +28,7 @@ effect open Locker via lockers within 1 hour
   reports  opened
 rule prepaid: no Application has a Courier that is sent unless it is paid
 prefer Return: Courier, then Collection after 3 days, then Locker
+when a Collection is notified: its Application is paid
 ";
 
 const CREDIT: &str = "module credit version 1, currency EUR
@@ -95,7 +96,8 @@ fn a_model_picks_a_slots_first_alternative() {
 
 #[test]
 fn a_model_picks_the_next_alternative_after_patience_and_after_lost_couriers() {
-    // Patience: the courier waits unpaid for 3 days, then the model picks among the rest.
+    // Patience: the courier waits unpaid for 3 days (a reaction may still
+    // mark it paid), then the model picks among the rest.
     let p = prog(RETURNS, ROUTING);
     let t = trace(
         &p,

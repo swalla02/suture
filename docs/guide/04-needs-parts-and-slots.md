@@ -109,7 +109,7 @@ prefer Return: Courier, then Collection after 3 days
 
 1. has failed on its last attempt, or timed out;
 2. has waited longer than its **patience** (`then Collection after 3 days`: wait 3 days on the courier before giving up on it) without going out;
-3. is refused by a rule on facts that can never change (chapter 7), in which case it moves on at once.
+3. is refused by a rule on facts that can never change (chapter 7), before anything of it went out, in which case it moves on at once.
 
 Patience never abandons a part that reached the outside world: a courier already sent stays, however long it takes. An untouched part is withdrawn when the slot moves on. If moving on would itself break a rule, the slot stays where it is, and the trace says `patience held: rule …`.
 

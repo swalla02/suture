@@ -280,7 +280,6 @@ scenario "the model sends an unpaid application's return to a locker":
   given  an Applicant Ada with name Ada
   when   model "routing@1" picks Courier, then Locker
   and    a new Application A1 with applicant Ada
-  and    3 days pass
   and    lockers answers opened
   expect A1's Locker is opened
 ```
@@ -290,8 +289,7 @@ A1  Return: asking model "routing@1"
       choice: Courier for A1?Return#1 by model "routing@1" (of Courier, Collection, Locker)
 A1  Return: trying Courier
 A1  needs Courier
-A1  Courier waits: rule prepaid
-A1  Return: no Courier after 3 days, asking model "routing@1"
+A1  Return: Courier refused by rule prepaid, asking model "routing@1"
       choice: Locker for A1?Return#2 by model "routing@1" (of Collection, Locker)
 A1  Return: trying Locker
 ```

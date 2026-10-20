@@ -1022,7 +1022,7 @@ fn settle(prog: &Program, u: &mut Unit, out: &mut Out, now: i64) {
         let changed = positions(&u.root).iter().any(|at| {
             needs_pass(prog, u, at, now, out)
                 || bind_pass(prog, u, at, out)
-                || done_pass(prog, u, at, now)
+                || done_pass(prog, u, at, now, out)
                 || request_pass(prog, u, at, now, out)
                 || sources_pass(prog, u, at, now, out)
         });
@@ -1319,7 +1319,7 @@ fn chosen(prog: &Program, u: &mut Unit, key: &str, data: &[(String, Val)], out: 
 /// A part with no effect of its own is done once every active need of it is
 /// done (appendix B.3.2), unless being done would break a rule: then it waits
 /// on that rule. A root is never done; its goals describe it.
-fn done_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64) -> bool {
+fn done_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut Out) -> bool {
     let n = node_at(&u.root, at);
     if at.is_empty() || n.status != Status::Idle || prog.effect_of(&n.kind).is_some() || !needs_done(prog, View::of(u), at) || !bound(prog, &u.root, at) {
         return false;
@@ -1327,6 +1327,9 @@ fn done_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64) -> bool {
     let (kind, waiting) = (n.kind.clone(), n.waiting.clone());
     let mut t = u.root.clone();
     node_at_mut(&mut t, at).status = Status::Done;
+    if refused_for_good(prog, u, at, &t, now, out) {
+        return true;
+    }
     match newly_broken(prog, View::of(u).acting(now), &t) {
         Some(r) if waiting.as_deref() == Some(r.name.as_str()) => false,
         Some(r) => {
@@ -1341,6 +1344,30 @@ fn done_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64) -> bool {
             true
         }
     }
+}
+
+/// When going ahead with the part at `at` (as `after`) newly breaks a rule on
+/// facts that never change, and the part is its slot's current alternative
+/// and nothing of it went out,
+/// the part is withdrawn and the slot moves on, as it does when such a rule
+/// refuses the part itself (appendix Y.2.1). Returns whether it moved on.
+fn refused_for_good(prog: &Program, u: &mut Unit, at: &[usize], after: &Node, now: i64, out: &mut Out) -> bool {
+    let Some((_, owner)) = at.split_last() else { return false };
+    let Some(r) = newly_broken(prog, View::of(u).acting(now), after).filter(|r| r.fixed) else { return false };
+    let o = node_at(&u.root, owner);
+    let kind = node_at(&u.root, at).kind.clone();
+    let Some(s) = prog.slots.iter().find(|s| s.owner == o.kind && o.slots.get(&s.name) == Some(&kind)) else { return false };
+    // One whose own parts went out is never given up, as for patience.
+    if options_of(o, s).is_empty() || current(o, &kind).map(|i| child(owner, i)).as_deref() != Some(at) || !untouched(node_at(&u.root, at)) {
+        return false;
+    }
+    let (slot, rule) = (s.name.clone(), r.name.clone());
+    give_back(&u.label, &u.root, at, out);
+    let i = *at.last().expect("a part");
+    let o = node_at_mut(&mut u.root, owner);
+    o.parts.remove(i);
+    o.held.remove(&kind);
+    move_slot(prog, u, owner, &slot, &format!("{kind} refused by rule {rule}, "), out)
 }
 
 /// Whether every active need of the node at `at` has a current part that is done.
@@ -1365,6 +1392,9 @@ fn request_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut 
     let (kind, waiting) = (n.kind.clone(), n.waiting.clone());
     let mut t = u.root.clone();
     node_at_mut(&mut t, at).status = Status::Requested;
+    if refused_for_good(prog, u, at, &t, now, out) {
+        return true;
+    }
     match broken_rule(prog, View::of(u).with(&t).acting(now)) {
         Some(r) if waiting.as_deref() == Some(r.name.as_str()) => false,
         Some(r) => {

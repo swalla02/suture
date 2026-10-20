@@ -130,6 +130,16 @@ Rules are enforced by **refusal**: a step whose result would break a rule is not
 
 **Fixed refusals.** If a rule refuses something on facts that can never change (given or formula attributes that nothing sets, and fixed carried facts), waiting would be pointless. A slot whose alternative is refused that way moves on at once. In the shop, an order to a restricted country never waits for a Shipment: rule `embargo` reads only fixed facts, so the delivery goes straight to a Refund.
 
+This holds whether the rule refuses the part itself (`has a Shipment`) or its going out (`has a Shipment that is sent`), as long as nothing of the part has gone out. The part's own attributes count as fixed when nothing sets them, `created` included, because the rule can only break once that part exists: `no Item has a Refund that is sent unless its Refund's created - its unit's created is at most 90 days` moves a late refund on to the next alternative at once.
+
+A fixed refusal of a part that is no slot's alternative, or is its last one, can never be lifted, so the part waits for good. `suture build` warns about each:
+
+```text
+warning: rule located: a Restock it refuses waits for good, because the rule reads only facts that never change. If none is wanted then, say so on the need: `Item needs Restock while …`
+```
+
+When no part is wanted in that case, put the condition on the need instead, and nothing is created.
+
 ## Writing good rules
 
 - **One rule, one thing.** Two short rules read back more clearly than one long one, and a refusal names exactly which one failed.

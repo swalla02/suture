@@ -2,7 +2,6 @@ scenario "the model sends an unpaid application's return to a locker":
   given  an Applicant Ada with name Ada
   when   model "routing@1" picks Courier, then Locker
   and    a new Application A1 with applicant Ada
-  and    3 days pass
   and    lockers answers opened
   expect A1's Locker is opened
 
