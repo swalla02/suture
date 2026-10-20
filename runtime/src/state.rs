@@ -153,22 +153,33 @@ pub fn period_key(period: &str, t: i64) -> String {
 }
 
 /// A shared entity as another unit carries it (appendix F.2.3): its kind,
-/// when it was created, and its attributes.
+/// when it was created, its attributes, and the totals across units that
+/// the units referring to it read (appendix AA.2.3).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Fact {
     pub kind: String,
     pub created: i64,
     pub attrs: BTreeMap<String, Val>,
+    pub taken: BTreeMap<String, Val>,
 }
 
 impl Fact {
     fn to_value(&self) -> Value {
-        Value::tuple([text(&self.kind), Value::from(self.created), attrs_value(&self.attrs)])
+        let mut fields = vec![text(&self.kind), Value::from(self.created), attrs_value(&self.attrs)];
+        // Only a fact with totals has the fourth field, so other facts
+        // encode as before.
+        if !self.taken.is_empty() {
+            fields.push(attrs_value(&self.taken));
+        }
+        Value::tuple(fields)
     }
 
     fn from_value(v: &Value) -> Result<Fact, String> {
+        if let Ok([kind, created, attrs, taken]) = fields::<4>(v, "fact") {
+            return Ok(Fact { kind: string(kind)?, created: int(created)?, attrs: attrs_from(attrs)?, taken: attrs_from(taken)? });
+        }
         let [kind, created, attrs] = fields::<3>(v, "fact")?;
-        Ok(Fact { kind: string(kind)?, created: int(created)?, attrs: attrs_from(attrs)? })
+        Ok(Fact { kind: string(kind)?, created: int(created)?, attrs: attrs_from(attrs)?, taken: BTreeMap::new() })
     }
 }
 
@@ -871,7 +882,12 @@ mod tests {
             timers: vec![("O1/Delivery:Shipment".into(), 172_800)],
             facts: Facts::from([(
                 "DE".to_string(),
-                Fact { kind: "Country".into(), created: 0, attrs: BTreeMap::from([("countries".to_string(), Val::Set(vec!["A".into(), "B".into()]))]) },
+                Fact {
+                    kind: "Country".into(),
+                    created: 0,
+                    attrs: BTreeMap::from([("countries".to_string(), Val::Set(vec!["A".into(), "B".into()]))]),
+                    taken: BTreeMap::from([("number of Items".to_string(), Val::Count(2))]),
+                },
             )]),
             taken: BTreeMap::from([("quantity".to_string(), Val::Count(3))]),
             version: 2,

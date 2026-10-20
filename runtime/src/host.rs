@@ -243,7 +243,9 @@ impl Host {
             self.trace.push(format!("{target:<3} refused: {why}"));
             return Err(format!("refused: {why}"));
         }
-        self.fits(&interp::step_at(&self.prog, &unit, &msg, self.clock()).unit)?;
+        let pre = interp::step_at(&self.prog, &unit, &msg, self.clock());
+        self.fits(&pre.unit)?;
+        self.refused_across(&pre, &format!("{} {} {} it", by.role, by.name, by.verb))?;
         self.tell(target, &msg)?;
         let refused = self.unit(target).and_then(|u| u.notes.iter().find_map(|n| n.strip_prefix("refused ")?.split_once(": refused by rule ").map(|(_, r)| r.to_string())));
         match refused {
@@ -274,15 +276,17 @@ impl Host {
         let value = self.seal(&kind, vec![(attr.to_string(), value)])?.remove(0).1;
         self.gate(by, fits, &format!("{target}'s {attr} to {}", interp::shown(&self.prog, attr, &value)), &unit)?;
         let who = by.map_or(String::new(), |c| format!("{} {}", c.role, c.name));
-        let msg = Msg::Change { attr: attr.to_string(), value, by: who };
+        let msg = Msg::Change { attr: attr.to_string(), value, by: who.clone() };
         let refusal = |u: &Unit| u.notes.iter().find_map(|n| n.strip_prefix("refused ")?.split_once(": refused by rule ").map(|(_, r)| r.to_string()));
-        let after = interp::step_at(&self.prog, &unit, &msg, self.clock()).unit;
+        let pre = interp::step_at(&self.prog, &unit, &msg, self.clock());
+        let after = pre.unit.clone();
         if let Some(r) = refusal(&after) {
             self.trace.push(format!("{target:<3} {}", after.notes.join("; ")));
             return Err(format!("refused by rule {r}"));
         }
         self.fits(&after)?;
-        let fact = Fact { kind, created: after.root.created, attrs: after.root.attrs.clone() };
+        self.refused_across(&pre, &format!("{who} changes {attr}"))?;
+        let fact = interp::fact_of(&self.prog, &after);
         let refresh = Msg::Refresh { facts: Facts::from([(target.to_string(), fact)]) };
         let readers: Vec<String> = self.readers.get(target).cloned().unwrap_or_default();
         for r in &readers {
@@ -808,7 +812,7 @@ impl Host {
                 continue;
             }
             let Some(u) = self.unit(&l) else { continue };
-            facts.insert(l, Fact { kind: u.root.kind.clone(), created: u.root.created, attrs: u.root.attrs.clone() });
+            facts.insert(l, interp::fact_of(&self.prog, &u));
             for (k, f) in u.facts {
                 facts.entry(k).or_insert(f);
             }
@@ -1024,7 +1028,7 @@ impl Host {
                     .facts
                     .iter()
                     .map(|(l, f)| match over.get(l) {
-                        Some(c) => (l.clone(), Fact { kind: c.root.kind.clone(), created: c.root.created, attrs: c.root.attrs.clone() }),
+                        Some(c) => (l.clone(), interp::fact_of(new, c)),
                         None => (l.clone(), f.clone()),
                     })
                     .collect();
@@ -1244,6 +1248,11 @@ impl Host {
     fn route(&mut self, hole: HoleId, payload: &Value) -> Result<(), String> {
         let (label, msg) = send_from_value(payload)?;
         let release = matches!(Msg::from_value(&msg), Ok(Msg::Release { .. }));
+        // The totals other units read, before a take or a give-back changes them.
+        let before = match Msg::from_value(&msg) {
+            Ok(Msg::Take { .. } | Msg::Release { .. }) => self.unit(&label).map(|u| interp::fact_of(&self.prog, &u).taken),
+            _ => None,
+        };
         if let Ok(Msg::Granted { facts, .. }) = Msg::from_value(&msg) {
             for l in facts.keys() {
                 self.read_by(l, &label);
@@ -1258,7 +1267,46 @@ impl Host {
         self.machine.inject(inj).map_err(|e| e.to_string())?;
         self.machine.run(None);
         self.note(&label)?;
+        if let (Some(before), Some(u)) = (before, self.unit(&label)) {
+            let fact = interp::fact_of(&self.prog, &u);
+            if fact.taken != before {
+                self.refresh_readers(&label, fact)?;
+            }
+        }
         if release { self.wake(&label) } else { Ok(()) }
+    }
+
+    /// Gives every unit that carries `label` its new totals (appendix AA.2.3).
+    fn refresh_readers(&mut self, label: &str, fact: Fact) -> Result<(), String> {
+        let refresh = Msg::Refresh { facts: Facts::from([(label.to_string(), fact)]) };
+        for r in self.readers.get(label).cloned().unwrap_or_default() {
+            self.post(&r, &refresh)?;
+        }
+        Ok(())
+    }
+
+    /// An event or a change whose step would make a filtered total across
+    /// units take more than its owner's rules allow is refused by that rule,
+    /// before anything changes (appendix AA.2.2).
+    fn refused_across(&mut self, after: &interp::Outcome, what: &str) -> Result<(), String> {
+        for d in &after.decides {
+            let Some(b) = self.prog.bindings.get(d.binding as usize).filter(|b| b.held.is_some()) else { continue };
+            let key = self.pool_key(&after.unit, d);
+            let Some(target) = self.options(&after.unit, d, &key).into_iter().next() else { continue };
+            let take = Msg::Take { from: d.label.clone(), key: d.key(), taken: d.taken.clone() };
+            let o = interp::step_at(&self.prog, &target, &take, self.clock());
+            let refused = o.sends.iter().find_map(|(_, m)| match m {
+                Msg::Refused { rule, .. } if !rule.is_empty() => Some(rule.clone()),
+                _ => None,
+            });
+            if let Some(rule) = refused {
+                let total = b.taking.as_ref().map_or(String::new(), |t| t.name.clone());
+                let paraphrase = self.prog.rules.iter().find(|r| r.name == rule).map_or(String::new(), |r| r.paraphrase.clone());
+                self.trace.push(format!("{:<3} refused {what}: {} would break rule {rule} with its total {total}: {paraphrase}", d.label, target.label));
+                return Err(format!("refused by rule {rule}"));
+            }
+        }
+        Ok(())
     }
 
     /// Adds the unit's notes from its last step to the trace.

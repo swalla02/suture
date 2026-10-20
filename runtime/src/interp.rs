@@ -460,7 +460,7 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
                 Some((name, amount)) => format!("granted {key}: {} {name} taken", amount.show(&prog.currency)),
                 None => format!("granted {key}"),
             });
-            out.sends.push((from.clone(), Msg::Granted { key: key.clone(), by: u.label.clone(), taken: taken.clone(), facts: own_facts(&u) }));
+            out.sends.push((from.clone(), Msg::Granted { key: key.clone(), by: u.label.clone(), taken: taken.clone(), facts: own_facts(prog, &u) }));
             return Outcome::new(u, out);
         }
         Msg::Release { from, key, taken } => {
@@ -512,9 +512,10 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
             let n = node_at_mut(&mut u.root, &at);
             // A woken binding gathered again from scratch (appendix F.2.9), so
             // only this refusal counts.
-            let mut skip = match (n.binds.get(&id).cloned(), n.status) {
-                (Some(Bind::Asked { skip }), Status::Idle) => skip,
-                (Some(Bind::Waiting { .. }), Status::Idle) => vec![],
+            let idle = n.status == Status::Idle || is_held(prog, &id);
+            let mut skip = match (n.binds.get(&id).cloned(), idle) {
+                (Some(Bind::Asked { skip }), true) => skip,
+                (Some(Bind::Waiting { .. }), true) => vec![],
                 _ => return Outcome::kept(unit, format!("ignored a refusal for {key}: not asked"), out),
             };
             skip.push(by.clone());
@@ -572,7 +573,8 @@ fn granted(prog: &Program, u: &mut Unit, key: &str, by: &str, taken: &Option<(St
     };
     let Some((at, id)) = find_bind(u, key) else { return give_back(u, out, "its part is gone") };
     let n = node_at_mut(&mut u.root, &at);
-    if n.status != Status::Idle || !matches!(n.binds.get(&id), Some(Bind::Asked { .. } | Bind::Waiting { .. })) {
+    // A held contribution may be asked for at any status (appendix AA.2.1).
+    if (n.status != Status::Idle && !is_held(prog, &id)) || !matches!(n.binds.get(&id), Some(Bind::Asked { .. } | Bind::Waiting { .. })) {
         return give_back(u, out, "not asked");
     }
     n.binds.insert(id.clone(), Bind::Granted { to: by.to_string(), taken: taken.clone() });
@@ -612,10 +614,18 @@ fn target_of(id: &str) -> String {
 }
 
 /// A unit as other units carry it: its own fact, and the facts it carries.
-fn own_facts(u: &Unit) -> Facts {
+fn own_facts(prog: &Program, u: &Unit) -> Facts {
     let mut facts = u.facts.clone();
-    facts.insert(u.label.clone(), Fact { kind: u.root.kind.clone(), created: u.root.created, attrs: u.root.attrs.clone() });
+    facts.insert(u.label.clone(), fact_of(prog, u));
     facts
+}
+
+/// A unit's own fact, as the units that refer to it carry it: with the
+/// totals across units they read (appendix AA.2.3).
+pub fn fact_of(prog: &Program, u: &Unit) -> Fact {
+    let read = |name: &String| prog.bindings.iter().any(|b| b.shared && b.target == u.root.kind && b.taking.as_ref().is_some_and(|t| t.name == *name));
+    let taken = u.taken.iter().filter(|(n, _)| read(n)).map(|(n, v)| (n.clone(), v.clone())).collect();
+    Fact { kind: u.root.kind.clone(), created: u.root.created, attrs: u.root.attrs.clone(), taken }
 }
 
 /// The part and binding id a binding key names, if the part still has it.
@@ -659,12 +669,56 @@ fn bind_slots(prog: &Program, root: &Node, at: &[usize]) -> Vec<BindSlot> {
     out
 }
 
-/// Whether every binding of the node at `at`, and of each of its owners, is granted.
+/// Whether every binding of the node at `at`, and of each of its owners, is
+/// granted. A contribution held while a filter holds counts only while it
+/// is asked for (appendix AA.2.1).
 fn bound(prog: &Program, root: &Node, at: &[usize]) -> bool {
     (0..=at.len()).all(|d| {
         let n = node_at(root, &at[..d]);
-        bind_slots(prog, root, &at[..d]).iter().all(|(id, ..)| matches!(n.binds.get(id), Some(Bind::Granted { .. })))
+        bind_slots(prog, root, &at[..d]).iter().all(|(id, i, _)| match n.binds.get(id) {
+            Some(Bind::Granted { .. }) => true,
+            None => prog.bindings[*i].held.is_some(),
+            _ => false,
+        })
     })
+}
+
+/// Whether the binding `id` adds to a total only while a filter holds.
+fn is_held(prog: &Program, id: &str) -> bool {
+    prog.bindings.iter().any(|b| b.id == id && b.held.is_some())
+}
+
+/// Adds the node's contribution to a filtered total across units when its
+/// filter comes to hold, and gives it back when the filter stops holding
+/// (appendix AA.2.1). Makes at most one change.
+fn held_pass(prog: &Program, u: &mut Unit, at: &[usize], out: &mut Out) -> bool {
+    for (id, i, _) in bind_slots(prog, &u.root, at) {
+        let Some(filter) = &prog.bindings[i].held else { continue };
+        let holds = eval(prog, View::of(u), at, filter) == T::Yes;
+        let kind = node_at(&u.root, at).kind.clone();
+        let total = id.split_once('(').map_or(id.as_str(), |(_, t)| t.trim_end_matches(')')).to_string();
+        match (holds, node_at(&u.root, at).binds.get(&id).cloned()) {
+            (true, None) => {
+                let Some(d) = decide_for(prog, u, at, &id, vec![]) else { continue };
+                node_at_mut(&mut u.root, at).binds.insert(id, Bind::Asked { skip: vec![] });
+                out.decides.push(d);
+                return true;
+            }
+            (false, Some(b)) => {
+                if let Bind::Granted { to, taken } = &b {
+                    let key = format!("{}@{id}", request_key(&u.label, &u.root, at));
+                    out.sends.push((to.clone(), Msg::Release { from: u.label.clone(), key, taken: taken.clone() }));
+                    u.notes.push(format!("{kind} no longer counts toward {to}'s total {total}"));
+                } else {
+                    u.notes.push(format!("{kind} no longer asks to count toward the total {total}"));
+                }
+                node_at_mut(&mut u.root, at).binds.remove(&id);
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// The choice request for the binding `id` of the part at `at`, if its
@@ -699,8 +753,8 @@ fn bind_pass(prog: &Program, u: &mut Unit, at: &[usize], out: &mut Out) -> bool 
     if node_at(&u.root, at).status != Status::Idle {
         return false;
     }
-    for (id, ..) in bind_slots(prog, &u.root, at) {
-        if node_at(&u.root, at).binds.contains_key(&id) {
+    for (id, i, _) in bind_slots(prog, &u.root, at) {
+        if node_at(&u.root, at).binds.contains_key(&id) || prog.bindings[i].held.is_some() {
             continue;
         }
         let Some(d) = decide_for(prog, u, at, &id, vec![]) else { continue };
@@ -773,7 +827,7 @@ pub fn options(prog: &Program, u: &Unit, d: &Decide, candidates: impl Iterator<I
             break;
         }
         let mut facts = u.facts.clone();
-        facts.extend(own_facts(&c));
+        facts.extend(own_facts(prog, &c));
         let v = View { facts: &facts, cand: Some(&c.label), elem: elem.as_deref(), ..View::of(u) };
         if b.filter.iter().all(|f| eval(prog, v, &at, f) == T::Yes) {
             let scores = b.prefer.iter().map(|cr| score(prog, v, &at, cr)).collect::<Vec<_>>();
@@ -1042,6 +1096,7 @@ fn settle(prog: &Program, u: &mut Unit, out: &mut Out, now: i64) {
         let changed = positions(&u.root).iter().any(|at| {
             needs_pass(prog, u, at, now, out)
                 || bind_pass(prog, u, at, out)
+                || held_pass(prog, u, at, out)
                 || done_pass(prog, u, at, now, out)
                 || request_pass(prog, u, at, now, out)
                 || sources_pass(prog, u, at, now, out)
@@ -1941,7 +1996,7 @@ fn num(prog: &Program, v: View, at: &[usize], n: &Num) -> Option<Val> {
             Some(total)
         }
         Num::Count { of, kind, filter } => Some(Val::Count(relation(prog, v, at, of, kind, filter.as_deref())?.len() as i64)),
-        Num::Taken { of, name, ty, period } => match locate(v, at, &of.steps)? {
+        Num::Taken { of, name, ty, period, .. } => match locate(v, at, &of.steps)? {
             Place::Here(p) if p.is_empty() => {
                 let name = match period {
                     Some(_) => format!("{name}@{}", v.period?),
@@ -1949,6 +2004,8 @@ fn num(prog: &Program, v: View, at: &[usize], n: &Num) -> Option<Val> {
                 };
                 Some(v.taken.get(&name).cloned().unwrap_or_else(|| zero(*ty)))
             }
+            // Another unit's total, as carried and refreshed (appendix AA.2.3).
+            Place::There(l) => v.facts.get(&l).map(|f| f.taken.get(name).cloned().unwrap_or_else(|| zero(*ty))),
             _ => None,
         },
     }
