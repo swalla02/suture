@@ -267,6 +267,9 @@ impl Host {
             (t, v) if v.ty() == t => v,
             (t, v) => return Err(format!("{kind}.{attr} is {t:?}, not {}", v.show(&self.prog.currency))),
         };
+        if let Some(a) = self.prog.kind(&kind).and_then(|k| k.attr(attr)) {
+            interp::state_value(&kind, a, &value)?;
+        }
         let fits = |a: &Admitted| matches!(a, Admitted::Change { kind: k, attr: x } if by.is_some_and(|c| c.verb == "changes") && *k == kind && x == attr);
         let value = self.seal(&kind, vec![(attr.to_string(), value)])?.remove(0).1;
         self.gate(by, fits, &format!("{target}'s {attr} to {}", interp::shown(&self.prog, attr, &value)), &unit)?;

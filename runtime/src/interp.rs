@@ -208,6 +208,14 @@ pub fn part_at(u: &Unit, kind: &str) -> Result<Vec<usize>, String> {
     }
 }
 
+/// A value for a state attribute must be one of its states (appendix Z.2.4).
+pub fn state_value(kind: &str, a: &suture_lang::ir::Attr, v: &Val) -> Result<(), String> {
+    match v {
+        Val::Text(x) if !a.states.is_empty() && !a.states.contains(x) => Err(format!("{kind}.{} is one of {}, not {x}", a.name, a.states.join(", "))),
+        _ => Ok(()),
+    }
+}
+
 /// Sets given attributes, which must exist, have the right type and not be formulas.
 fn give(prog: &Program, kind: &str, n: &mut Node, given: &[(String, Val)]) -> Result<(), String> {
     let k = prog.kind(kind).ok_or_else(|| format!("there is no kind {kind}"))?;
@@ -223,6 +231,7 @@ fn give(prog: &Program, kind: &str, n: &mut Node, given: &[(String, Val)]) -> Re
             let want = a.of.as_ref().map_or_else(|| format!("{:?}", a.ty), |k| format!("{:?} of {k}", a.ty));
             return Err(format!("{kind}.{name} is {want}, not {}", v.show(&prog.currency)));
         }
+        state_value(kind, a, v)?;
         n.attrs.insert(name.clone(), v.clone());
     }
     Ok(())
@@ -1749,6 +1758,9 @@ fn state_at(prog: &Program, v: View, at: &[usize], state: &str) -> bool {
     if let Some(Val::Bool(b)) = n.attrs.get(state) {
         return *b;
     }
+    if let Some(a) = prog.kind(&n.kind).and_then(|k| k.state_attr(state)) {
+        return matches!(n.attrs.get(&a.name), Some(Val::Text(x)) if x == state);
+    }
     if let Some(e) = prog.effect_of(&n.kind) {
         if e.marks.as_deref() == Some(state) {
             return n.status != Status::Idle;
@@ -1858,8 +1870,12 @@ fn eval(prog: &Program, v: View, at: &[usize], c: &Cond) -> T {
         Cond::State { node, state, negated } => {
             let yes = match locate(v, at, &node.steps) {
                 Some(Place::Here(n)) => state_at(prog, v, &n, state),
-                // A shared entity's only states are its Bool attributes (appendix F.2.3).
-                Some(Place::There(l)) => v.facts.get(&l).is_some_and(|f| f.attrs.get(state) == Some(&Val::Bool(true))),
+                // A shared entity's only states are its Bool attributes and
+                // the states of its state attributes (appendix F.2.3, Z.2.2).
+                Some(Place::There(l)) => v.facts.get(&l).is_some_and(|f| match prog.kind(&f.kind).and_then(|k| k.state_attr(state)) {
+                    Some(a) => matches!(f.attrs.get(&a.name), Some(Val::Text(x)) if x == state),
+                    None => f.attrs.get(state) == Some(&Val::Bool(true)),
+                }),
                 None => false,
             };
             truth(yes != *negated)
