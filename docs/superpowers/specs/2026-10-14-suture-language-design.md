@@ -1695,3 +1695,30 @@ The returns comparison left three Solidus behaviours unported. Each one reads th
 - A paid Item makes its siblings unclean. Unpaying it gives the take back, the siblings are refreshed, and they are clean again.
 - A part counts toward a filtered total once its effect's outcome holds, and an answer that would overfill the total leaves the contribution waiting.
 - The returns port expresses the three Solidus behaviours it skipped.
+
+## Appendix AB. Prototype slice 27: shares of an amount, negative amounts and dates (2026-10-20)
+
+The returns port carried each unit's `discount` as given, because Solidus computes it as a share of the order's adjustments, `adjustments × price ÷ item total`, and v0 could not multiply an amount by an amount. Promotions are negative amounts, which v0 could not write, and scenarios could not say what day it is.
+
+### AB.1 What slice 27 adds
+
+| Added in slice 27 | Still waits |
+|---|---|
+| `a * b / c` over amounts is an amount: a share of `a` | multiplying two amounts on their own, or by a ratio such as `b / c` |
+| negative amounts: `-3 EUR`, `-0.50 EUR` | negative counts and durations |
+| dates: `2026-03-01`, `2026-03-01 14:30`, in UTC | conditions that read the clock (they still read `created` and timers) |
+| `when it is 2026-03-01` in scenarios | other time zones |
+
+### AB.2 Semantics that slice 27 settles
+
+1. **Shares.** `a * b / c` where `a`, `b` and `c` are all amounts is an amount: `a × b ÷ c`, computed exactly and rounded to the cent, half away from zero, as Solidus's `BigDecimal` rounding does when it stores the result. The expression must be written in that order, so `price * order's promo / order's items` is a share and `price * (order's promo / order's items)` is an error. When `c` is zero, the share is unknown, so a formula holding it has no value. Multiplying two amounts otherwise is an error that names the form. Totals over elements (`the total of … over …`) accept the same form.
+2. **Negative amounts.** A `-` or `−` directly before an amount makes it negative, in source and in scenarios: `promo: Money = -2.50 EUR`, `with promo -10 EUR`. Only amounts may be negative. `-3` alone is an error. Read-backs show `-2.50 EUR`. A `-` between two values is still a subtraction.
+3. **Dates.** `YYYY-MM-DD`, optionally followed by `H:MM` or `HH:MM`, is a `Time`. The runtime clock's 0 is 2026-01-01 00:00 UTC (F.2.12), so a date is the seconds from then, and dates before it are negative. A day that does not exist, an hour above 23 or a minute above 59 is an error. Four digits, a `-`, two digits, a `-` and two digits always read as a date, never as a subtraction of counts. Read-backs show `2026-03-01`, with the time only when it is not midnight.
+4. **The scenario clock.** `when it is ⟨date⟩` (or `given` or `and`) moves the clock forward to that time, firing timers on the way as `when … pass` does. The trace shows `… it is 2026-03-01`. A date before the clock's present fails the step: `it is already past 2026-02-01: the clock only moves forward`.
+
+### AB.3 Acceptance
+
+- `share: Money = price * order's promo / order's items` gives -3.33 EUR for a 10 EUR unit of a 30 EUR order with a -10 EUR promotion, and -1.67 EUR for a 5 EUR unit.
+- A share of a zero item total is unknown, and `a * b`, `a * b / 2` over amounts, `-3`, `2026-02-30` and `24:00` are errors.
+- `when it is 2026-02-01 12:30` moves the clock, an entity created after it has that `created`, and going back fails the step.
+- The returns port computes the promotion share instead of carrying `discount`.
