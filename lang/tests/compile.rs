@@ -324,3 +324,50 @@ fn taking_a_count_names_the_total_after_the_kind_that_takes() {
     let e = errors(&format!("{base}Repair uses a Garage where the Garage's region is the Claim's region, taking 2 EUR\n"));
     assert!(e.iter().any(|m| m.contains("or take a count, as in `taking 1`")), "{e:?}");
 }
+
+const COPIES: &str = "role staff
+kind Copy { title: Text, condition: shelved | lent | lost | mending, late: Bool = no }
+kind Loan { copy: Copy }
+define: a Copy is out when it is lent or it is lost
+admit lend Copy by staff where the Copy is shelved
+admit change Copy's condition by staff
+when a staff lends a Copy: the Copy is lent
+";
+
+#[test]
+fn a_state_attribute_holds_one_of_its_states() {
+    let files = vec![("t.st".to_string(), format!("module t version 1, currency EUR\n{COPIES}"))];
+    let p = compile(&files).unwrap_or_else(|e| panic!("{e:?}"));
+    let a = p.kind("Copy").unwrap().attr("condition").unwrap();
+    assert_eq!(a.states, ["shelved", "lent", "lost", "mending"]);
+    assert_eq!(a.default, Some(Lit::Text("shelved".into())), "it starts in its first state");
+    assert!(p.states("Copy").contains(&"mending".to_string()));
+    let lend = &p.reactions[0].actions[0];
+    assert_eq!((lend.attr.as_str(), &lend.becomes), ("condition", &Some(Num::Lit(Lit::Text("lent".into())))));
+    let d = &p.defines[0];
+    assert_eq!(d.cond, Cond::Or(vec![
+        Cond::State { node: path(&[]), state: "lent".into(), negated: false },
+        Cond::State { node: path(&[]), state: "lost".into(), negated: false },
+    ]));
+    let other = format!("module t version 1, currency EUR\n{}", COPIES.replace("shelved | lent | lost | mending", "shelved | lent | lost | mending = mending"));
+    let p = compile(&[("t.st".to_string(), other)]).unwrap();
+    assert_eq!(p.kind("Copy").unwrap().attr("condition").unwrap().default, Some(Lit::Text("mending".into())));
+}
+
+#[test]
+fn state_attribute_mistakes_are_errors() {
+    let e = errors("kind Tape { state: new | worn = broken }\n");
+    assert!(e[0].contains("Tape.state starts in broken, which is not one of its states: new, worn"), "{e:?}");
+    let e = errors("kind Tape { state: new | worn | new }\n");
+    assert!(e[0].contains("lists the state new twice"), "{e:?}");
+    let e = errors("kind Tape { state: new | done }\n");
+    assert!(e[0].contains("`done` is a state of every kind"), "{e:?}");
+    let e = errors("kind Tape { worn: Bool = no, state: new | worn }\n");
+    assert!(e[0].contains("Tape has an attribute called worn"), "{e:?}");
+    let e = errors("kind Tape { state: new | worn, look: new | old }\n");
+    assert!(e[0].contains("new is already a state of Tape.state"), "{e:?}");
+    let e = errors(&format!("{COPIES}rule r: no Copy is out unless its condition is broken\n"));
+    assert!(e.iter().any(|e| e.contains("is never broken; its states are shelved, lent, lost, mending")), "{e:?}");
+    let e = errors(&format!("{COPIES}admit lose Copy by staff\nwhen a staff loses a Copy: the Copy is not lent\n"));
+    assert!(e.iter().any(|e| e.contains("`is not lent` does not say which state a Copy's condition goes to")), "{e:?}");
+}

@@ -147,6 +147,8 @@ pub struct AttrDecl {
     pub default: Option<Literal>,
     /// `= order's total`: computed once at creation (appendix E.2.5).
     pub formula: Option<Num>,
+    /// `awaiting | received | lost`: the states it holds (appendix Z.2.1).
+    pub states: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

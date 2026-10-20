@@ -271,6 +271,10 @@ pub struct Attr {
     pub formula: Option<Num>,
     #[serde(default)]
     pub mark: Option<Mark>,
+    /// `reception: awaiting | received | lost`: a Text that holds one of these
+    /// states, the first by default (appendix Z.2.1). Empty for any other attribute.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub states: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -607,6 +611,18 @@ impl Program {
     /// The states a node of `kind` can be in (spec B.3): its Bool attributes,
     /// its defined states, its effect's marks and outcomes (`timed out` among
     /// them), `done` and `failed`.
+    /// The attributes a state may be read from, matched by name across kinds:
+    /// the state's own name, and each state attribute that holds it.
+    pub fn state_attrs<'a>(&'a self, state: &'a str) -> Vec<&'a str> {
+        let mut out = vec![state];
+        for a in self.kinds.iter().filter_map(|k| k.state_attr(state)) {
+            if !out.contains(&a.name.as_str()) {
+                out.push(&a.name);
+            }
+        }
+        out
+    }
+
     pub fn states(&self, kind: &str) -> Vec<String> {
         let mut out: Vec<String> = vec![];
         if self.slot(kind).is_some() {
@@ -614,6 +630,7 @@ impl Program {
         }
         if let Some(k) = self.kind(kind) {
             out.extend(k.attrs.iter().filter(|a| a.ty == Ty::Bool).map(|a| a.name.clone()));
+            out.extend(k.attrs.iter().flat_map(|a| a.states.iter().cloned()));
         }
         out.extend(self.defines.iter().filter(|d| d.kind == kind).map(|d| d.state.clone()));
         if let Some(e) = self.effect_of(kind) {
@@ -631,5 +648,10 @@ impl Program {
 impl Kind {
     pub fn attr(&self, name: &str) -> Option<&Attr> {
         self.attrs.iter().find(|a| a.name == name)
+    }
+
+    /// The state attribute that holds `state` as one of its states (appendix Z.2.2).
+    pub fn state_attr(&self, state: &str) -> Option<&Attr> {
+        self.attrs.iter().find(|a| a.states.iter().any(|s| s == state))
     }
 }

@@ -91,7 +91,7 @@ fn not_known_at_creation(p: &Program, kind: &str, n: &Num) -> Option<String> {
 /// A sourced attribute that `n`, read from a `kind`, reads, if any.
 fn sourced_in(p: &Program, kind: &str, n: &Num) -> Option<String> {
     let mut found = None;
-    num_reads(n, &mut |path, last| {
+    num_reads(p, n, &mut |path, last| {
         let (Some(attr), Some((_, rest))) = (last, path.steps.split_last()) else { return };
         if found.is_none() && end_kind(p, kind, rest).is_some_and(|k| p.source_of(&k, attr).is_some()) {
             found = Some(attr.to_string());
@@ -450,7 +450,7 @@ fn key_reads(p: &Program, b: &Binding) -> Vec<(String, String)> {
 /// The changeable attributes of other units a rule reads through carried
 /// facts: each needs a watch (appendix G.2.7).
 fn watched(p: &Program, r: &Rule) -> Vec<String> {
-    carried_reads(r, &admitted_changes(p))
+    carried_reads(p, r, &admitted_changes(p))
 }
 
 /// The attributes a reaction or an answer sets, as (kind, attribute), with
@@ -463,7 +463,7 @@ fn set_inside(p: &Program) -> Vec<(String, String)> {
 
 /// The attributes in `changes` that `r` reads from another unit, through a
 /// reference or a binding, named `K's a` (or `a`).
-fn carried_reads(r: &Rule, changes: &[(String, String)]) -> Vec<String> {
+fn carried_reads(p: &Program, r: &Rule, changes: &[(String, String)]) -> Vec<String> {
     let mut out = vec![];
     let mut see = |x: &Path, last: Option<&str>| {
         if !x.steps.iter().any(|s| matches!(s, Step::Ref(_) | Step::Bound(_))) {
@@ -478,59 +478,59 @@ fn carried_reads(r: &Rule, changes: &[(String, String)]) -> Vec<String> {
             }
         }
     };
-    rule_reads(r, &mut see);
+    rule_reads(p, r, &mut see);
     out
 }
 
 /// Calls `see` for every path a rule reads, with its last attribute, or for
 /// a state, the state's name.
-fn rule_reads(r: &Rule, see: &mut dyn FnMut(&Path, Option<&str>)) {
+fn rule_reads(p: &Program, r: &Rule, see: &mut dyn FnMut(&Path, Option<&str>)) {
     for c in &r.filter {
-        cond_reads(c, see);
+        cond_reads(p, c, see);
     }
     match &r.body {
-        Body::Every(c) => cond_reads(c, see),
+        Body::Every(c) => cond_reads(p, c, see),
         Body::No { pred, unless } => {
-            cond_reads(pred, see);
+            cond_reads(p, pred, see);
             if let Some(u) = unless {
-                cond_reads(u, see);
+                cond_reads(p, u, see);
             }
         }
     }
 }
 
-fn num_reads(n: &Num, see: &mut dyn FnMut(&Path, Option<&str>)) {
+fn num_reads(p: &Program, n: &Num, see: &mut dyn FnMut(&Path, Option<&str>)) {
     match n {
         Num::Path(x) => see(x, match x.steps.last() { Some(Step::Attr(a)) => Some(a.as_str()), _ => None }),
         Num::Bin(a, _, b) => {
-            num_reads(a, see);
-            num_reads(b, see);
+            num_reads(p, a, see);
+            num_reads(p, b, see);
         }
         Num::Sum { calc, filter, .. } => {
-            num_reads(calc, see);
+            num_reads(p, calc, see);
             if let Some(f) = filter {
-                cond_reads(f, see);
+                cond_reads(p, f, see);
             }
         }
-        Num::Count { filter: Some(f), .. } => cond_reads(f, see),
+        Num::Count { filter: Some(f), .. } => cond_reads(p, f, see),
         _ => {}
     }
 }
 
-fn cond_reads(c: &Cond, see: &mut dyn FnMut(&Path, Option<&str>)) {
+fn cond_reads(p: &Program, c: &Cond, see: &mut dyn FnMut(&Path, Option<&str>)) {
     match c {
         Cond::Cmp { left, right, .. } => {
-            num_reads(left, see);
-            num_reads(right, see);
+            num_reads(p, left, see);
+            num_reads(p, right, see);
         }
         Cond::Contains { set, item, .. } => {
-            num_reads(set, see);
-            num_reads(item, see);
+            num_reads(p, set, see);
+            num_reads(p, item, see);
         }
-        Cond::State { node, state, .. } => see(node, Some(state)),
-        Cond::Has { state: Some(st), node, .. } => see(node, Some(st)),
+        Cond::State { node, state, .. } => p.state_attrs(state).into_iter().for_each(|a| see(node, Some(a))),
+        Cond::Has { state: Some(st), node, .. } => p.state_attrs(st).into_iter().for_each(|a| see(node, Some(a))),
         Cond::Has { .. } => {}
-        Cond::And(cs) | Cond::Or(cs) => cs.iter().for_each(|c| cond_reads(c, see)),
+        Cond::And(cs) | Cond::Or(cs) => cs.iter().for_each(|c| cond_reads(p, c, see)),
     }
 }
 
@@ -540,7 +540,7 @@ fn cond_reads(c: &Cond, see: &mut dyn FnMut(&Path, Option<&str>)) {
 fn sourced_reads(p: &Program, r: &Rule) -> Vec<(String, String)> {
     let mut names: Vec<String> = vec![];
     let mut states: Vec<String> = vec![];
-    rule_reads(r, &mut |_, last| {
+    rule_reads(p, r, &mut |_, last| {
         if let Some(a) = last {
             names.push(a.to_string());
         }
@@ -552,7 +552,7 @@ fn sourced_reads(p: &Program, r: &Rule) -> Vec<(String, String)> {
         if !states.contains(&n) {
             states.push(n.clone());
             for d in p.defines.iter().filter(|d| d.state == n) {
-                cond_reads(&d.cond, &mut |_, last| {
+                cond_reads(p, &d.cond, &mut |_, last| {
                     if let Some(a) = last {
                         names.push(a.to_string());
                     }
@@ -688,10 +688,15 @@ fn fixed_rule(p: &Program, r: &Rule) -> bool {
             Cond::Cmp { left, right, .. } => num(left, path) && num(right, path),
             Cond::Contains { set, item, .. } => num(set, path) && num(item, path),
             Cond::State { node, state, .. } => {
-                let bool_attr = p.kinds.iter().any(|k| k.attr(state).is_some_and(|a| a.ty == Ty::Bool));
-                let other = p.defines.iter().any(|d| d.state == *state) || p.effects.iter().any(|e| p.states(&e.kind).contains(state));
-                let carried = through_ref(node) && !node.steps.iter().any(|s| matches!(s, Step::Bound(_) | Step::Cand)) && !ch.contains(state);
-                carried || (bool_attr && !other && !ch.contains(state) && fixed_node(p, parts, &node.steps))
+                let attrs = p.state_attrs(state);
+                let value_attr = p.kinds.iter().any(|k| k.attr(state).is_some_and(|a| a.ty == Ty::Bool) || k.state_attr(state).is_some());
+                let other = p.defines.iter().any(|d| d.state == *state)
+                    || p.effects.iter().any(|e| e.marks.as_deref() == Some(state.as_str()) || e.success == *state || e.failures.contains(state))
+                    || state == "done"
+                    || state == "failed"
+                    || state == TIMED_OUT;
+                let carried = through_ref(node) && !node.steps.iter().any(|s| matches!(s, Step::Bound(_) | Step::Cand)) && !attrs.iter().any(|a| ch.iter().any(|c| c == a));
+                carried || (value_attr && !other && !attrs.iter().any(|a| ch.iter().any(|c| c == a)) && fixed_node(p, parts, &node.steps))
             }
             Cond::Has { .. } => false,
             Cond::And(cs) | Cond::Or(cs) => cs.iter().all(|c| cond(p, c, ch, parts, path)),
@@ -827,7 +832,7 @@ impl Checker {
             // A carried fact that the other unit's own reactions or answers
             // change is never refreshed in v0 (appendix G.1), so the rule
             // could be broken without anyone knowing: refuse it.
-            let stale = carried_reads(&p.rules[i], &set_inside(&p));
+            let stale = carried_reads(&p, &p.rules[i], &set_inside(&p));
             if !stale.is_empty() {
                 let r = &p.rules[i];
                 let at = src.rules.iter().find(|x| x.name == r.name).map_or_else(|| Loc { file: String::new(), line: 0 }, |x| x.at.clone());
@@ -956,6 +961,9 @@ impl Checker {
                     continue;
                 }
                 let Some(ty) = value_type(&a.ty) else { continue }; // an owner reference: see `owners`
+                if !a.states.is_empty() && !self.states_ok(k, a) {
+                    continue;
+                }
                 let default = match &a.default {
                     None => None,
                     Some(l) => match self.lit(&k.at, l, &p.currency) {
@@ -978,7 +986,7 @@ impl Checker {
                         self.errors.push(err(&k.at, format!("{}.{} is secret, so it has no default", k.name, a.name)));
                     }
                 }
-                attrs.push(Attr { name: a.name.clone(), ty, of: None, default, formula: None, mark: a.mark });
+                attrs.push(Attr { name: a.name.clone(), ty, of: None, default, formula: None, mark: a.mark, states: a.states.clone() });
             }
             let plural = k.plural.clone().unwrap_or_else(|| plural_of(&k.name));
             // `all Boxes` and the like must name one kind (appendix T.2.3).
@@ -989,6 +997,34 @@ impl Checker {
             }
             p.kinds.push(Kind { name: k.name.clone(), plural, attrs, owner: None });
         }
+    }
+
+    /// A state attribute's states (appendix Z.2.1): each a new name on its
+    /// kind, and its default one of them.
+    fn states_ok(&mut self, k: &ast::KindDecl, a: &ast::AttrDecl) -> bool {
+        let mut ok = true;
+        for (i, st) in a.states.iter().enumerate() {
+            let msg = if st == "done" || st == "failed" {
+                Some(format!("{}.{}: `{st}` is a state of every kind", k.name, a.name))
+            } else if a.states[..i].contains(st) {
+                Some(format!("{}.{} lists the state {st} twice", k.name, a.name))
+            } else if k.attrs.iter().any(|x| x.name == *st) {
+                Some(format!("{}.{}: {} has an attribute called {st}, so it cannot also be a state", k.name, a.name, k.name))
+            } else {
+                k.attrs.iter().take_while(|x| x.name != a.name).find(|x| x.states.contains(st)).map(|x| format!("{}.{}: {st} is already a state of {}.{}", k.name, a.name, k.name, x.name))
+            };
+            if let Some(m) = msg {
+                self.errors.push(err(&k.at, m));
+                ok = false;
+            }
+        }
+        if let Some(Literal::Text(d)) = &a.default
+            && !a.states.contains(d)
+        {
+            self.errors.push(err(&k.at, format!("{}.{} starts in {d}, which is not one of its states: {}", k.name, a.name, a.states.join(", "))));
+            ok = false;
+        }
+        ok
     }
 
     /// A literal's value and type. Money must be in the module's currency.
@@ -1099,7 +1135,7 @@ impl Checker {
                     self.errors.push(err(&k.at, format!("{}.{} refers to {}; it has no default", k.name, a.name, a_(target))));
                 }
                 let kind = p.kinds.iter_mut().find(|x| x.name == k.name).expect("declared kinds are compiled");
-                kind.attrs.push(Attr { name: a.name.clone(), ty, of: Some(target.clone()), default: None, formula: None, mark: None });
+                kind.attrs.push(Attr { name: a.name.clone(), ty, of: Some(target.clone()), default: None, formula: None, mark: None, states: vec![] });
                 if a.mark.is_some() {
                     self.errors.push(err(&k.at, format!("{}.{} refers to shared entities; only a value can be marked", k.name, a.name)));
                 }
@@ -1454,7 +1490,7 @@ impl Checker {
                         continue;
                     }
                     Some(_) => {}
-                    None => kind.attrs.push(Attr { name: name.clone(), ty, of: None, default: None, formula: None, mark: None }),
+                    None => kind.attrs.push(Attr { name: name.clone(), ty, of: None, default: None, formula: None, mark: None, states: vec![] }),
                 }
                 data.push((name.clone(), ty));
             }
@@ -1701,6 +1737,8 @@ impl Checker {
                     self.errors.push(err(&e.at, format!("`{name}` is a state of every kind; {}'s effect cannot mark or report it", e.kind)));
                 } else if kind.attr(name).is_some() {
                     self.errors.push(err(&e.at, format!("{} has an attribute called {name}, so its effect cannot also mark or report {name}", e.kind)));
+                } else if let Some(x) = kind.state_attr(name) {
+                    self.errors.push(err(&e.at, format!("{name} is a state of {}.{}, so its effect cannot also mark or report it", e.kind, x.name)));
                 } else if seen.contains(&name.as_str()) {
                     self.errors.push(err(&e.at, format!("{}'s effect uses the name {name} twice", e.kind)));
                 }
@@ -1932,8 +1970,16 @@ impl Checker {
                     }
                     Some((target, End::Node(k))) => {
                         let is_bool = p.kind(&k).and_then(|x| x.attr(&a.attr)).is_some_and(|x| x.ty == Ty::Bool);
+                        let state = p.kind(&k).and_then(|x| x.state_attr(&a.attr));
                         if is_bool {
                             actions.push(Action { target, attr: a.attr.clone(), value: a.value, becomes: None });
+                        } else if let Some(x) = state {
+                            // `the Item is received` puts its reception in that state (appendix Z.2.3).
+                            if a.value {
+                                actions.push(Action { target, attr: x.name.clone(), value: true, becomes: Some(Num::Lit(Lit::Text(a.attr.clone()))) });
+                            } else {
+                                self.errors.push(err(&r.at, format!("`is not {}` does not say which state a {k}'s {} goes to; name one: {}", a.attr, x.name, x.states.join(", "))));
+                            }
                         } else {
                             self.errors.push(err(&r.at, format!("a {k} has no Bool attribute `{}` to set", a.attr)));
                         }
@@ -2556,7 +2602,7 @@ impl Checker {
                 let (path, end) = self.np(p, at, from, left)?;
                 match end {
                     End::Node(k) if matches!(path.steps.last(), Some(Step::Cand | Step::Bound(_))) => {
-                        let bools: Vec<String> = p.kind(&k).map(|x| x.attrs.iter().filter(|a| a.ty == Ty::Bool).map(|a| a.name.clone()).collect()).unwrap_or_default();
+                        let bools = shared_states(p, &k);
                         match right {
                             Term::Word(s) if bools.contains(s) => Some(Cond::State { node: path, state: s.clone(), negated: *negated }),
                             _ => {
@@ -2588,6 +2634,13 @@ impl Checker {
                     }
                     End::Value(ty) => {
                         let right = self.operand(p, at, from, right, ty)?;
+                        if let (Some(Step::Attr(x)), Num::Lit(Lit::Text(v))) = (path.steps.last(), &right)
+                            && let Some(a) = p.kinds.iter().find_map(|k| k.attr(x).filter(|a| !a.states.is_empty()))
+                            && !a.states.contains(v)
+                        {
+                            self.errors.push(err(at, format!("`{}` is never {v}; its states are {}", show(left), a.states.join(", "))));
+                            return None;
+                        }
                         Some(Cond::Cmp { left: Num::Path(path), op: if *negated { Op::Ne } else { Op::Eq }, right })
                     }
                 }
@@ -2610,7 +2663,7 @@ impl Checker {
         negated: bool,
         right: &Term,
     ) -> Option<Cond> {
-        let bools: Vec<String> = p.kind(k).map(|x| x.attrs.iter().filter(|a| a.ty == Ty::Bool).map(|a| a.name.clone()).collect()).unwrap_or_default();
+        let bools = shared_states(p, k);
         match right {
             Term::Word(s) if bools.contains(s) => {
                 let Some((Step::Attr(a), rest)) = reference.steps.split_last() else { unreachable!("a reference ends at its attribute") };
@@ -2666,6 +2719,13 @@ impl Checker {
         self.errors.push(err(at, format!("{} has no state `{s}`; its states are {}", a(kind), states.join(", "))));
         None
     }
+}
+
+/// The states a shared entity is read in: its Bool attributes and the
+/// states of its state attributes (appendix F.2.3, Z.2.2).
+fn shared_states(p: &Program, k: &str) -> Vec<String> {
+    let Some(x) = p.kind(k) else { return vec![] };
+    x.attrs.iter().filter(|a| a.ty == Ty::Bool).map(|a| a.name.clone()).chain(x.attrs.iter().flat_map(|a| a.states.iter().cloned())).collect()
 }
 
 fn plural_name(p: &Program, kind: &str) -> String {

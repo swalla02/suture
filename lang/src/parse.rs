@@ -183,7 +183,15 @@ fn kind(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
         loop {
             let attr = c.word()?;
             c.expect_sym(':')?;
-            let ty = type_name(&mut c)?;
+            // `reception: awaiting | received | lost`: a state attribute (appendix Z.2.1).
+            let mut states = vec![];
+            if matches!(c.peek(), Some(Tok::Word(w)) if w.starts_with(char::is_lowercase)) && matches!(c.peek_at(1), Some(Tok::Sym('|'))) {
+                states.push(c.word()?);
+                while c.eat_sym('|') {
+                    states.push(c.word()?);
+                }
+            }
+            let ty = if states.is_empty() { type_name(&mut c)? } else { TypeName::Text };
             let mark = if c.eat_word("secret") {
                 Some(crate::ir::Mark::Secret)
             } else if c.eat_word("personal") {
@@ -192,7 +200,11 @@ fn kind(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
                 None
             };
             let (mut default, mut formula) = (None, None);
-            if c.eat_sym('=') {
+            if !states.is_empty() {
+                // A state attribute starts in its first state, or the one after `=`.
+                let first = if c.eat_sym('=') { c.word()? } else { states[0].clone() };
+                default = Some(Literal::Text(first));
+            } else if c.eat_sym('=') {
                 // A lone literal is a default; anything else is a formula.
                 let saved = c.clone();
                 match literal(&mut c)? {
@@ -203,7 +215,7 @@ fn kind(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
                     }
                 }
             }
-            attrs.push(AttrDecl { name: attr, ty, mark, default, formula });
+            attrs.push(AttrDecl { name: attr, ty, mark, default, formula, states });
             if c.eat_sym('}') {
                 break;
             }
