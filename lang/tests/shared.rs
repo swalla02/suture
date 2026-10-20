@@ -97,6 +97,35 @@ rule order: every Trial's ends is at least its created + 1 day
 }
 
 #[test]
+fn shares_negative_amounts_and_dates() {
+    let p = prog(
+        "kind Order { promo: Money = -2.50 EUR, items: Money, opens: Time = 2026-03-01 14:30 }
+kind Unit  { order: Order, price: Money, share: Money = price * order's promo / order's items }
+rule floor: every Order's promo is at least -100 EUR
+rule start: every Order's opens is at least 2026-02-01
+",
+    );
+    let o = p.kind("Order").unwrap();
+    assert_eq!(o.attr("promo").unwrap().default, Some(suture_lang::ir::Lit::Money(-250)));
+    assert_eq!(o.attr("opens").unwrap().default, Some(suture_lang::ir::Lit::Time((59 * 86_400) + 14 * 3_600 + 30 * 60)));
+    assert_eq!(p.kind("Unit").unwrap().attr("share").unwrap().ty, Ty::Money);
+    let floor = p.rules.iter().find(|r| r.name == "floor").unwrap();
+    assert_eq!(floor.paraphrase, "each order on its own: its promo is at least -100 EUR");
+    let start = p.rules.iter().find(|r| r.name == "start").unwrap();
+    assert_eq!(start.paraphrase, "each order on its own: its opens is at least 2026-02-01");
+    let e = errors("kind T { a: Money, b: Money, c: Money = a * b }\n");
+    assert!(e.iter().any(|e| e.contains("cannot multiply a Money by a Money; for a share of an amount")), "{e:?}");
+    let e = errors("kind T { a: Money, b: Money, c: Money = a * b / 2 }\n");
+    assert!(e.iter().any(|e| e.contains("cannot multiply a Money by a Money")), "{e:?}");
+    let e = errors("kind T { a: Count = -3 }\n");
+    assert!(e.iter().any(|e| e.contains("only an amount can be negative")), "{e:?}");
+    let e = errors("kind T { a: Time = 2026-02-30 }\n");
+    assert!(e.iter().any(|e| e.contains("`2026-02-30` is not a date")), "{e:?}");
+    let e = errors("kind T { a: Time = 2026-02-01 24:00 }\n");
+    assert!(e.iter().any(|e| e.contains("`2026-02-01 24:00` is not a date")), "{e:?}");
+}
+
+#[test]
 fn reference_mistakes_are_errors() {
     let e = errors("kind A { b: B }\n");
     assert!(e.iter().any(|e| e.contains("t.st:2: A.b: unknown kind B")), "{e:?}");

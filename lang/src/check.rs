@@ -197,11 +197,24 @@ fn arith_type(op: char, lt: Ty, rt: Ty) -> Result<(Arith, Ty), String> {
             return Err(match op {
                 '+' => format!("cannot add a {lt:?} and a {rt:?}"),
                 '-' => format!("cannot subtract a {rt:?} from a {lt:?}"),
+                '*' if (lt, rt) == (Ty::Money, Ty::Money) => {
+                    "cannot multiply a Money by a Money; for a share of an amount, divide by an amount at once: `a * b / c`".to_string()
+                }
                 '*' => format!("cannot multiply a {lt:?} by a {rt:?}"),
                 _ => format!("cannot divide a {lt:?} by a {rt:?}"),
             })
         }
     })
+}
+
+/// The type of `a * b / c`: a share of an amount when all three are
+/// amounts (appendix AB.2.1), and otherwise a product, then a quotient.
+fn product_quotient(ta: Ty, tb: Ty, tc: Ty) -> Result<Ty, String> {
+    if (ta, tb, tc) == (Ty::Money, Ty::Money, Ty::Money) {
+        return Ok(Ty::Money);
+    }
+    let (_, t) = arith_type('*', ta, tb)?;
+    arith_type('/', t, tc).map(|(_, ty)| ty)
 }
 
 /// The kind of the parts of `owner` whose plural is `word`, if any.
@@ -1127,6 +1140,7 @@ impl Checker {
             Literal::Bool(b) => (Lit::Bool(*b), Ty::Bool),
             Literal::Count(n) => (Lit::Count(*n), Ty::Count),
             Literal::Duration(secs) => (Lit::Duration(*secs), Ty::Duration),
+            Literal::Time(t) => (Lit::Time(*t), Ty::Time),
             Literal::Set(_) => {
                 self.errors.push(err(at, "a set of names is written only in scenarios"));
                 return None;
@@ -2242,6 +2256,20 @@ impl Checker {
                     None
                 }
             },
+            // `a * b / c` over amounts: a share of an amount (appendix AB.2.1).
+            ast::Num::Bin(x, '/', y) if matches!(x.as_ref(), ast::Num::Bin(_, '*', _)) => {
+                let ast::Num::Bin(a, _, b) = x.as_ref() else { unreachable!("matched above") };
+                let (na, ta) = self.num(p, at, from, a)?;
+                let (nb, tb) = self.num(p, at, from, b)?;
+                let (r, rt) = self.num(p, at, from, y)?;
+                match product_quotient(ta, tb, rt) {
+                    Ok(ty) => Some((Num::Bin(Box::new(Num::Bin(Box::new(na), Arith::Mul, Box::new(nb))), Arith::Div, Box::new(r)), ty)),
+                    Err(what) => {
+                        self.errors.push(err(at, format!("`{}`: {what}", show_num(n))));
+                        None
+                    }
+                }
+            }
             ast::Num::Bin(x, op, y) => {
                 let (l, lt) = self.num(p, at, from, x)?;
                 let (r, rt) = self.num(p, at, from, y)?;
@@ -2466,6 +2494,19 @@ impl Checker {
                 Some((Num::Path(Path { steps }), ty))
             }
             ast::Num::Lit(_) => self.num(p, at, owner, n),
+            ast::Num::Bin(x, '/', y) if matches!(x.as_ref(), ast::Num::Bin(_, '*', _)) => {
+                let ast::Num::Bin(a, _, b) = x.as_ref() else { unreachable!("matched above") };
+                let (na, ta) = self.over(p, at, owner, element, names, a)?;
+                let (nb, tb) = self.over(p, at, owner, element, names, b)?;
+                let (r, rt) = self.over(p, at, owner, element, names, y)?;
+                match product_quotient(ta, tb, rt) {
+                    Ok(ty) => Some((Num::Bin(Box::new(Num::Bin(Box::new(na), Arith::Mul, Box::new(nb))), Arith::Div, Box::new(r)), ty)),
+                    Err(what) => {
+                        self.errors.push(err(at, format!("`{}`: {what}", show_num(n))));
+                        None
+                    }
+                }
+            }
             ast::Num::Bin(x, op, y) => {
                 let (l, lt) = self.over(p, at, owner, element, names, x)?;
                 let (r, rt) = self.over(p, at, owner, element, names, y)?;

@@ -58,6 +58,9 @@ pub enum ScenarioStep {
     ExpectPart { name: String, part: String, state: String, negated: bool },
     /// `when 3 days pass`: the clock moves forward (appendix C.1).
     Pass { secs: u64 },
+    /// `when it is 2026-03-01`: the clock moves forward to that time
+    /// (appendix AB.2.3).
+    Until { at: i64 },
     /// `expect [an|no] alert for O1`
     Alert { name: String, negated: bool },
     /// `expect the number of P1's Shipments is 3`: any condition, with the
@@ -146,6 +149,14 @@ fn step(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {
         *given = false;
     } else if !c.eat_word("and") {
         return Err(c.error(format!("expected `given`, `when`, `and` or `expect`, found {}", c.found())));
+    }
+    if c.is_word("it") && word_at(c, 1, "is") {
+        c.next();
+        c.next();
+        return match literal(c)? {
+            Some(Literal::Time(at)) if c.at_end() => Ok(ScenarioStep::Until { at }),
+            _ => Err(c.error("`it is` takes a date, as in `when it is 2026-03-01` or `when it is 2026-03-01 14:30`")),
+        };
     }
     if matches!(c.peek(), Some(Tok::Num(_))) {
         let secs = duration(c)?;
@@ -408,4 +419,8 @@ mod tests {
         let e = parse_scenarios("o.scenario", "scenario \"x\":\n  then O1 is paid\n").unwrap_err();
         assert!(e.msg.contains("expected `given`, `when`, `and` or `expect`"), "{e}");
     }
+}
+
+fn word_at(c: &Cursor, k: usize, w: &str) -> bool {
+    matches!(c.peek_at(k), Some(Tok::Word(x)) if x == w)
 }

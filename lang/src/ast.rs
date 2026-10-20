@@ -33,6 +33,8 @@ pub enum Literal {
     Count(i64),
     /// `2 days`, in seconds (appendix F.2.14).
     Duration(i64),
+    /// `2026-03-01 14:30`, in seconds on the runtime clock (appendix AB.2.3).
+    Time(i64),
     /// `{DE, FR}`: the names of shared entities, in scenarios only.
     Set(Vec<String>),
     /// `file "dent.png"`: a media file beside the scenario, in scenarios only

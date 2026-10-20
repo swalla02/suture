@@ -312,6 +312,8 @@ pub enum Lit {
     Count(i64),
     /// In seconds.
     Duration(i64),
+    /// In seconds on the runtime clock, whose 0 is 2026-01-01 00:00 UTC.
+    Time(i64),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

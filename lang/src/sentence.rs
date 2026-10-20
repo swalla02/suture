@@ -4,9 +4,21 @@
 use crate::ast::*;
 use crate::lex::{Cursor, Error, Tok};
 
-/// A literal, if one is next: `"text"`, `3`, `120 EUR`, `12.50 EUR`, `yes`,
-/// `no`, and in scenarios `file "dent.png"`.
+/// A literal, if one is next: `"text"`, `3`, `120 EUR`, `12.50 EUR`,
+/// `-3 EUR`, `2026-03-01`, `2026-03-01 14:30`, `yes`, `no`, and in
+/// scenarios `file "dent.png"`.
 pub fn literal(c: &mut Cursor) -> Result<Option<Literal>, Error> {
+    if matches!(c.peek(), Some(Tok::Sym('-' | '−'))) && matches!(c.peek_at(1), Some(Tok::Num(_))) {
+        // Only an amount is negative (appendix AB.2.2).
+        c.next();
+        return match literal(c)? {
+            Some(Literal::Money { cents, currency }) => Ok(Some(Literal::Money { cents: -cents, currency })),
+            _ => Err(c.error("only an amount can be negative, as in `-3 EUR`")),
+        };
+    }
+    if let Some(t) = date(c)? {
+        return Ok(Some(Literal::Time(t)));
+    }
     match c.peek() {
         Some(Tok::Str(s)) => {
             let s = s.clone();
@@ -70,6 +82,62 @@ fn time_unit(t: Option<&Tok>) -> Option<i64> {
 }
 
 /// An amount in cents: at most two decimals.
+/// `2026-03-01` or `2026-03-01 14:30`, in UTC, as seconds on the runtime
+/// clock, whose 0 is 2026-01-01 00:00 (appendix AB.2.3).
+fn date(c: &mut Cursor) -> Result<Option<i64>, Error> {
+    let digits = |k: usize, n: usize| matches!(c.peek_at(k), Some(Tok::Num(x)) if x.len() == n && x.bytes().all(|b| b.is_ascii_digit()));
+    let dash = |k: usize| matches!(c.peek_at(k), Some(Tok::Sym('-')));
+    if !(digits(0, 4) && dash(1) && digits(2, 2) && dash(3) && digits(4, 2)) {
+        return Ok(None);
+    }
+    let num = |k: usize| match c.peek_at(k) {
+        Some(Tok::Num(x)) => x.parse::<i64>().unwrap_or(0),
+        _ => 0,
+    };
+    let (y, m, d) = (num(0), num(2), num(4));
+    let clock = (digits(5, 1) || digits(5, 2)) && matches!(c.peek_at(6), Some(Tok::Sym(':'))) && digits(7, 2);
+    let (h, min) = if clock { (num(5), num(7)) } else { (0, 0) };
+    let text = if clock { format!("{y:04}-{m:02}-{d:02} {h}:{min:02}") } else { format!("{y:04}-{m:02}-{d:02}") };
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let days_in = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if !(1..=12).contains(&m) || d < 1 || d > days_in[(m - 1) as usize] || h > 23 || min > 59 {
+        return Err(c.error(format!("`{text}` is not a date: write a year, month and day, as in `2026-03-01`, and a time as in `14:30`")));
+    }
+    for _ in 0..if clock { 8 } else { 5 } {
+        c.next();
+    }
+    Ok(Some((days_from_civil(y, m, d) - DAY_ZERO) * 86_400 + h * 3_600 + min * 60))
+}
+
+/// `2026-03-01`, or `2026-03-01 14:30` for a time that is not midnight.
+pub fn date_text(t: i64) -> String {
+    let z = DAY_ZERO + t.div_euclid(86_400) + 719_468;
+    let secs = t.rem_euclid(86_400);
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    let day = format!("{y:04}-{m:02}-{d:02}");
+    if secs == 0 { day } else { format!("{day} {}:{:02}", secs / 3_600, secs % 3_600 / 60) }
+}
+
+/// 2026-01-01, the runtime clock's 0, as days since 1970-01-01.
+const DAY_ZERO: i64 = 20_454;
+
+/// Days since 1970-01-01 of a civil date (Howard Hinnant's algorithm).
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
 fn money(n: &str) -> Result<i64, String> {
     let bad = || format!("`{n}` is not an amount with at most two decimals");
     let (whole, frac) = n.split_once('.').unwrap_or((n, ""));
@@ -87,7 +155,9 @@ pub fn starts_noun_phrase(c: &Cursor) -> bool {
 
 /// Whether a calculation starts here: a noun phrase, a number or `(`.
 pub fn starts_calc(c: &Cursor) -> bool {
-    starts_noun_phrase(c) || matches!(c.peek(), Some(Tok::Num(_) | Tok::Sym('(')))
+    starts_noun_phrase(c)
+        || matches!(c.peek(), Some(Tok::Num(_) | Tok::Sym('(')))
+        || matches!((c.peek(), c.peek_at(1)), (Some(Tok::Sym('-' | '−')), Some(Tok::Num(_))))
 }
 
 /// `it`, `its x`, `their x`, `the Kind`, `the x`, followed by any number of `'s y`.

@@ -515,8 +515,10 @@ pub fn lit_text(p: &Program, l: &Lit) -> String {
         Lit::Bool(false) => "no".into(),
         Lit::Count(n) => n.to_string(),
         Lit::Duration(secs) => duration_text(*secs),
+        Lit::Money(c) if *c < 0 => format!("-{}", lit_text(p, &Lit::Money(-c))),
         Lit::Money(c) if c % 100 == 0 => format!("{} {}", c / 100, p.currency),
         Lit::Money(c) => format!("{}.{:02} {}", c / 100, (c % 100).abs(), p.currency),
+        Lit::Time(t) => crate::sentence::date_text(*t),
     }
 }
 
