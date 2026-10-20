@@ -2,6 +2,7 @@
 """Counts what eval/returns/RESULTS.md reports.
 
     count.py ⟨solidus checkout⟩ [⟨solidus commit⟩ [⟨suture commit⟩]]
+    count.py ⟨solidus checkout⟩ --change ⟨solidus commit⟩
 
 Lines that are not blank or comments. In Ruby, control-flow statements; in
 Suture, which has none, the clauses that make a condition or a fallback.
@@ -89,6 +90,27 @@ def suture_logic(rel):
 
 RUBY_FLOW = r"\b(if|unless|elsif|else|case|when|while|until|loop|return|break|next)\b|\.each\b"
 SUTURE_CONDITIONS = r"\b(unless|where|whose|while|otherwise|after|fails with)\b"
+
+if solidus_rev == "--change":
+    # `count.py ⟨checkout⟩ --change ⟨commit⟩`: the counted lines a Solidus
+    # commit adds and removes in core/app, by the same filter.
+    import difflib
+    commit = sys.argv[3]
+    changed = subprocess.run(["git", "-C", str(solidus), "show", "--format=", "--name-only", commit, "--", "core/app"],
+                             capture_output=True, text=True, check=True).stdout.split()
+    def at(r, f):
+        try:
+            return ruby_logic(git(solidus, r, f))
+        except subprocess.CalledProcessError:
+            return []
+    plus = minus = 0
+    for f in changed:
+        for d in difflib.ndiff(at(commit + "^", f), at(commit, f)):
+            plus += d.startswith("+ ")
+            minus += d.startswith("- ")
+        print(f"  {f}")
+    print(f"{commit}: +{plus} −{minus} counted lines")
+    sys.exit(0)
 
 ruby = [l for f in FILES for l in ruby_logic(git(solidus, solidus_rev, f))]
 st = suture_logic("suture/returns.st")

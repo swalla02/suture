@@ -1,6 +1,6 @@
 # Returns: Suture against Solidus
 
-The second measured comparison, and the first against code its designer did not write. The returns flow of [Solidus](https://github.com/solidusio/solidus), an open-source Rails shop, was ported to Suture (`REQUIREMENTS.md` says what was ported and what was not). Then two real changes from Solidus's history were made to the port, and compared with what they cost Solidus.
+The second measured comparison, and the first against code its designer did not write. The returns flow of [Solidus](https://github.com/solidusio/solidus), an open-source Rails shop, was ported to Suture (`REQUIREMENTS.md` says what was ported and what was not). Then two real changes from Solidus's history were made to the port, and compared with what they cost Solidus; six more followed after slice 27.
 
 `python3 count.py ⟨solidus checkout⟩ ⟨solidus commit⟩ [⟨suture commit⟩]` gives the numbers below.
 
@@ -14,7 +14,9 @@ The second measured comparison, and the first against code its designer did not 
 | Change 1, `2741034ae`, a return item's unit must be on the RMA's order | **+1 −1** (a `where` on the gate) | +7 −0 counted (+9 raw): a validation, its registration, and a guard |
 | Change 2, `65c411211`, an `in_transit` reception state | +4 −2 (+3 −1 after slice 25) | **+2 −1** |
 | After both | 75 (74 after slices 24 and 25; 80 with the three behaviours of slice 26) | 663 |
-| Scenarios | 18, in 201 lines (21 in 246 after slice 26) | Solidus's own specs, which were not run against the port |
+| Changes 3–8 (below) | +13 −9 in all; fewer added lines each time | +71 −17 |
+| After all eight | 82 | 661 at `bafb57f` |
+| Scenarios | 18, in 201 lines (21 in 246 after slice 26, 22 in 268 after change 6) | Solidus's own specs, which were not run against the port |
 
 Solidus's count is over the 23 files that do what the port does. It leaves out, by name and pattern, the lines and methods for exchanges, taxes, simulation, the tolerance check and `errored`, splitting refunds over payments, the override type, display, generated numbers and admin search. The filter is coarse: a few lines either way. Rails gives Solidus a database, transactions, an admin and an API. Suture gives the port:
 - a durable log and replay;
@@ -44,7 +46,7 @@ Nothing in the language says that the statuses exclude each other: the port keep
   In Suture, each return item is its own unit, and v0 has no `that` filter on a relation across units (guide chapter 16). This is the biggest gap. Many real workflows have the shape "an X per thing, and at most one live X per thing".
 - **For the same reason:**
   - an RMA cannot check that its order has shipped units, so the order carries `shipped` as a given fact;
-  - cancelling an RMA cannot be refused because one of its items is past cancelling.
+  - cancelling an RMA cannot be refused because one of its items is past cancelling (possible since slice 26: change 6 below).
 - **Money × Money.** The promotion share is adjustments × price ÷ item total. Suture refused to multiply Money by Money, so each unit carried its `discount` (until slice 27).
 - **Small gaps in literals.** There was no negative Money literal (a promotion is −3 EUR in Solidus), and no Time literal in scenarios (both added in slice 27). The port adds an order when it completes, and uses `created`.
 
@@ -104,6 +106,35 @@ kind Item  { …, amount: Money = unit's price + unit's share, … }
 
 That is +2 −1. The share is fixed when the unit ships, as the amount already was. Solidus computes it when the return item is made, from the order as it is then; the two differ only if an order's adjustments change after it ships. A share of nothing is nothing, so an order with no items and no adjustments gives 0, as Solidus's `percentage_of_order_total` does. One with adjustments and no items has an unknown share in the port and 0 in Solidus, a case Solidus's own data never reaches. The promotion scenario now has two units of a 90 EUR order with a −10 EUR promotion, refunded 26.67 EUR and 17.78 EUR. The port is 81 lines and 21 scenarios in 249 lines. Dates in scenarios were not needed: the port's windows are counted from `created`, and `91 days pass` says what it means.
 
+## Six more changes
+
+After slice 27, the port was measured against six more Solidus commits to the files it covers. They are every commit since 2015 to those files that changes a behaviour the port claims. Commits that only rename, restyle or deprecate were left out, and so were commits about exchanges, taxes and splitting refunds. So were three commits that make a reference mandatory or nil-safe (`5003808b9`, `943372e9a`, `0e6da3f04`). Those cost Suture nothing, because a reference is always set, and counting them would flatter it. `count.py ⟨checkout⟩ --change ⟨commit⟩` counts Solidus's side with the same filter as the totals; it reproduces changes 1 and 2.
+
+| Change | What it does | Suture | Solidus |
+|---|---|---|---|
+| 3, `a35d77f4f` (2026) | only a shipped unit is received, given, lost… (a customer return needs returnable units) | +3 −3 | +5 −0 |
+| 4, `a12050bf9` (2015) | an item of an incomplete order is ineligible, and its time counts from the order's completion | +3 −3 | +17 −1 |
+| 5, `4651baf3b` (2014) | a preferred refund past 90 days is not paid at all, instead of in store credit | +1 | +16 −4 |
+| 6, `52d41009e` (2015) | cancelling an RMA is refused unless one of its items is awaiting, or it has none | +2 −1 | +5 −2 |
+| 7, `5dc7684ea` (2015) | a second completed item of a unit is refused when it is received, not only when it is made | 0 | +3 −3 |
+| 8, `e98d4dcf0` (2015) | a `lost` reception, and a given or lost item may still be received | +4 −2 | +25 −7 |
+
+**Two were replayed, four were read off the port.** Changes 3 and 6 were not in the port, and were made to it as changes 1 and 2 were. The port already had the other four, ported from the final code, so their cost is the lines that express them, measured by taking them out:
+- without the `complete` test and the order's `created`, `timely` is just `recent` from the unit's `created`;
+- without `rule kept`, a late preferred refund falls back to credit;
+- without `| lost`, `admit lose` and its reaction, and with `receive` from `awaiting` only, there is no lost state;
+- change 7 is `rule once`, which was already in the port.
+
+Removing changes 4 and 5 fails the scenario that tests each. No scenario tells the two time origins of change 4 apart, because the scenarios ship each unit when its order completes. These four are weaker evidence than a replay, because the port was written knowing where they ended up.
+
+**What they show.**
+- Every change adds fewer lines to Suture than to Solidus, and four cost much less in all. Change 3 touches one line more (six against five). The gap is widest where Solidus adds a class or a module: an eligibility validator (change 4, 16 lines for one condition) and a reimbursement type validator (change 5, 12 lines for one rule).
+- Change 3 is the closest: +3 −3 against +5 −0. Solidus needs one validation for every reception in a customer return. The port has no customer return, so the condition goes on each reception gate, through the `open` define and `receive`, and `expire` has to step out of `open`. Folding CustomerReturn into receiving (REQUIREMENTS) made this change dearer. It also made `undecided`, the manual-intervention state for an unshipped unit, unreachable. Solidus's `InventoryShipped` validator is now dead code there too.
+- Change 7 costs nothing because a Suture rule holds at every step, and not on a chosen callback. Solidus's first version checked only `on: :create`, a bug that cannot be written in Suture.
+- Change 6 needed slice 26: the RMA's gate counts its items in other units, `the number of its Items that are awaiting`. Before slice 26 the port could only note that it could not refuse the cancel. Conditions have no parentheses, so the `or` went into a define, `an Rma is cancellable when …`.
+
+After the eight changes, the port is 82 lines against Solidus's 661 at `bafb57f`, and 22 scenarios take 268 lines.
+
 ## How far to trust this
 
 - **Better than eval/claims:**
@@ -111,7 +142,7 @@ That is +2 −1. The share is fixed when the unit ships, as the amount already w
   - the changes are real commits, chosen from the history of these files before the port was measured, the latest behavioural change and one small 2015 feature.
 - **Still weak:**
   - Suture's designer chose the workflow and wrote the port;
-  - two changes, both small;
+  - eight changes, all small, and four of them read off a port written from the final code (see Six more changes);
   - Solidus's specs were ported as 18 scenarios, not run, so the port matches Solidus only as far as those reach. A first review against the Solidus code found four places where the port had misread it: the `manual_intervention_required` outcome, a preferred refund past 90 days, the 365-day boundary, and an RMA that could be un-cancelled. All four were fixed in the first version before the changes were replayed;
   - Solidus's lines include Rails declarations that a port elsewhere would also need, and its counted files still have code for the gateway, admin and record shapes;
   - until slice 26, the port left out three behaviours it could not express, which made its line count look better than it was.
@@ -123,3 +154,4 @@ That is +2 −1. The share is fixed when the unit ships, as the amount already w
 2. A state form for kinds: `reception is awaiting, received, …`, with transitions on events. That is change 2. Done in slice 25, without transitions.
 3. Relations across units with a filter, at least `the number of the Unit's Items that are received`, kept as a running total like `taking`. That is the three unported behaviours. Done in slice 26.
 4. Money ratios (`a * b / c` over Money), negative Money literals, and Time literals in scenarios. Done in slice 27.
+5. From the six more changes: parentheses in conditions (`… and (A or B)`), so that a one-off `or` needs no define. Also one gate for several events (`admit receive, give or lose Item by staff where …`), so that a condition on every reception is one edit. Change 2's lesson still stands too: an event's admit and its reaction are two statements, where Solidus has one.

@@ -10,7 +10,7 @@ Each line names the Solidus code that does it.
 
 1. **Authorizing a return.** Staff create a return authorization (RMA) for an order that has shipped units, at a stock location (`return_authorization.rb`, `must_have_shipped_units`). Its return items each name one inventory unit.
 2. **The amount.** A return item's amount is its line's total before tax divided by the quantity, plus a share of the order's other adjustments, weighted by that amount (`calculator/returns/default_refund_amount.rb`). The port takes the unit's price as given and computes the share from the order's `items` and `adjustments`.
-3. **Reception.** A return item starts `awaiting` and may be `received`, `given_to_customer`, `lost_in_transit`, `shipped_wrong_item` or `short_shipped`, each only from `awaiting`. It may be `received` later from any of those, and it may `expire` (`state_machines/return_item/reception_status.rb`).
+3. **Reception.** A return item starts `awaiting` and may be `received`, `given_to_customer`, `lost_in_transit`, `shipped_wrong_item` or `short_shipped`, each only from `awaiting`. It may be `received` later from any of those, and it may `expire` (`state_machines/return_item/reception_status.rb`). Every reception but expiry comes with a customer return, which needs the unit to have shipped (`customer_return.rb`, `return_items_have_returnable_inventory_units`, since `a35d77f4f`).
 4. **Acceptance on reception.** When an item reaches one of those states, it is checked (`acceptance_status.rb`, `attempt_accept`, and `eligibility_validator/*`, in order, stopping at the first that fails):
    - the order must be complete, and fewer than 365 days must have passed since it completed, or the item is rejected;
    - the unit must have shipped, or the item waits for staff to decide (`manual_intervention_required`);
@@ -20,7 +20,7 @@ Each line names the Solidus code that does it.
 7. **Reimbursing.** Staff reimburse accepted items only (`validate_acceptance_status_for_reimbursement`). The payment is chosen by `reimbursement_type_engine.rb` and `reimbursement_type_validator.rb`:
    - with no preference: the original payment is refunded, or, after 90 days since shipping, the item is paid in store credit;
    - with a preference: that type, if it is valid. A preferred refund is not valid after 90 days, and then the item is not paid at all.
-8. **Cancelling an RMA** cancels its items that are still awaiting. They can then no longer be received (`return_authorization.rb`, `cancel_return_items`). A cancelled RMA stays cancelled.
+8. **Cancelling an RMA** cancels its items that are still awaiting. They can then no longer be received (`return_authorization.rb`, `cancel_return_items`). It is refused unless one of its items is awaiting or it has none (`can_cancel_return_items?`). A cancelled RMA stays cancelled.
 
 ## What the port leaves out
 
@@ -40,12 +40,11 @@ The filter is coarse: a few lines either way may be miscounted. `customer_return
 
 Each of these is a finding (RESULTS.md):
 
-- **A second return item for the same unit.** Solidus cancels the other active return items for that unit (`cancel_others`). It also refuses a second completed one (`validate_no_other_completed_return_items`), and treats a unit with an earlier reimbursed item as ineligible (`no_reimbursements.rb`). All three read other return items of the unit. Suture cannot express any of them: each return item is its own unit, and v0 has no `that` filter on a relation across units (guide chapter 16).
+- **A second return item for the same unit.** Solidus cancels the other active return items for that unit (`cancel_others`). It also refuses a second completed one (`validate_no_other_completed_return_items`), and treats a unit with an earlier reimbursed item as ineligible (`no_reimbursements.rb`). All three read other return items of the unit. Each return item is its own unit, so they need a `that` filter on a relation across units, which slice 26 added; they are ported since.
 - **The order has shipped units.** The port carries this as a given fact on the order (`shipped`), because an RMA cannot look at the order's units across units.
 - **The promotion share.** Solidus computes it as order adjustments × the unit's price ÷ the order's item total, when the return item is made. The port computes it the same way, when the unit ships (since slice 27).
-- **Times.** There is no Time literal in scenarios, so an Order is added when it completes and a Unit when it ships, and `created` stands for those moments.
+- **Times.** An Order is added when it completes and a Unit when it ships, and `created` stands for those moments (a program cannot write a date).
 - **CustomerReturn** is folded into receiving. Solidus groups received items into a customer return at a stock location; the port uses the RMA's location.
-- **Cancelling an RMA.** Solidus refuses it when one of its items cannot be cancelled. The port cancels the items still awaiting and leaves the others, because the gate cannot read the RMA's items in other units.
 - **A refund that fails** is tried `attempts` times, then paid in store credit unless a refund was preferred, by Suture's slot policy. In Solidus, the reimbursement becomes `errored` and staff retry it.
 
 ## The changes replayed
