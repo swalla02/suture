@@ -56,6 +56,15 @@ The same happened to `rule wanted` and `rule kept`, about a preferred payment. T
 
 **Implicit policy, again.** A refund the payments adapter declines is tried 3 times, and then paid in store credit (unless a refund was preferred), by the slot's policy. In Solidus, the reimbursement becomes `errored`, and staff retry it. Neither the requirements nor the author chose Suture's behaviour. The slice-22 read-back now prints it, which is how it was noticed.
 
+## After slice 24
+
+Slice 24 (spec appendix Y) fixes the trap. A rule on facts that never change now moves a slot on when it refuses a part's send, and a refused part's own `created` counts as fixed. So `rule window` moves a late refund on to store credit at once:
+- the port drops `after 1 minute` from `prefer Payback`, and its scenarios drop the three `1 minute passes`;
+- `suture build` now warns when a fixed refusal leaves a part waiting for good. It warned about `rule located`, whose Restock waited for ever at a location that does not restock. The port now says that on the need (`Item needs Restock while … and its rma's location is restocks`), and the rule is gone (−1 line);
+- it also warns about `rule kept`: a preferred refund past 90 days is not paid at all. That is what Solidus does, so the warning stays.
+
+The port is now 74 lines with 20 clauses, after both changes, and its 18 scenarios take 198 lines.
+
 ## How far to trust this
 
 - **Better than eval/claims:**
@@ -71,7 +80,7 @@ The same happened to `rule wanted` and `rule kept`, about a preferred payment. T
 
 ## What it suggests next
 
-1. Move on at once when a rule on fixed facts holds a part's send, not only its creation, and count a part's `created` (and any attribute of a part, which v0 never changes) as fixed. That is the trap above.
+1. Move on at once when a rule on fixed facts holds a part's send, not only its creation, and count a part's `created` (and any attribute of a part, which v0 never changes) as fixed. That is the trap above. Done in slice 24.
 2. A state form for kinds: `reception is awaiting, received, …`, with transitions on events. That is change 2.
 3. Relations across units with a filter, at least `the number of the Unit's Items that are received`, kept as a running total like `taking`. That is the three unported behaviours.
 4. Money ratios (`a * b / c` over Money), negative Money literals, and Time literals in scenarios.

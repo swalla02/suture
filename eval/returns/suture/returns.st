@@ -39,7 +39,7 @@ define: an Item is reimbursed when its Payback is done
 
 Item needs Inspection while it is back
 Item needs Payback while it is accepted and it is reimbursing and it is not refused
-Item needs Restock while it is received and its unit is resellable and its unit is tracked
+Item needs Restock while it is received and its unit is resellable and its unit is tracked and its rma's location is restocks
 Payback is Refund or Credit
 
 effect refund Refund via payments within 1 day
@@ -58,9 +58,8 @@ effect restock Restock via stock within 1 day
 rule window:  no Item has a Refund that is sent unless its Refund's created - its unit's created is at most 90 days
 rule wanted:  no Item has a Refund that is sent unless its preferred is not "credit"
 rule kept:    no Item has a Credit that is sent unless its preferred is not "refund"
-rule located: no Item has a Restock that is sent unless its rma's location is restocks
 
-prefer Payback: Refund, then Credit after 1 minute
+prefer Payback: Refund, then Credit
 
 admit authorize a new Rma by staff where the Rma's order is shipped
 admit authorize a new Item by staff where the Item's rma is not cancelled and the Item's unit's order is the Item's rma's order

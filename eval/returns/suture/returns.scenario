@@ -35,7 +35,6 @@ scenario "past 90 days since shipping, the item is paid back in store credit":
   and    staff Sam receives I1
   and    91 days pass
   and    staff Sam reimburses I1
-  and    1 minute passes
   expect I1's Credit is sent
   when   credits answers credited
   expect I1 is reimbursed
@@ -49,7 +48,6 @@ scenario "a preferred store credit is used within the window too":
   and    staff Sam authorizes a new Item I1 with rma A1, unit U1 and preferred credit
   and    staff Sam receives I1
   and    staff Sam reimburses I1
-  and    1 minute passes
   expect I1's Credit is sent
 
 scenario "an item received more than 365 days after the order completed is rejected":
@@ -116,7 +114,7 @@ scenario "no restock at a location that does not restock, or for an untracked un
   and    staff Sam authorizes a new Item I2 with rma A2 and unit U2
   and    staff Sam receives I1
   and    staff Sam receives I2
-  expect I1's Restock is not sent
+  expect I1 has no Restock
   expect I2 has no Restock
 
 scenario "an item lost in transit is accepted without a restock, and can still be received":
@@ -186,7 +184,6 @@ scenario "a preferred refund past 90 days is not paid at all":
   and    staff Sam receives I1
   and    91 days pass
   and    staff Sam reimburses I1
-  and    1 minute passes
   expect I1 has no Refund
   expect I1's Credit is not sent
 

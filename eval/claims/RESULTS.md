@@ -104,3 +104,7 @@ The bug is fixed: a withdrawn claim's fetch stops at its next timeout (`score: n
 4. ~~Say when a source is asked: in the read-back, and in the explanation of a step that waits for it.~~ Slices 22 and 23.
 5. ~~Print the policies the runtime applies to every slot in the read-back.~~ Slice 22.
 6. Then the same comparison on a workflow from a design partner, written by someone who did not design the language.
+
+## After slice 24
+
+Slice 24 (spec appendix Y) moves a slot on when a rule on fixed facts refuses an alternative's send. `rule limit` reads only fixed facts, so a write-off over the policy limit now moves on to the next alternative instead of waiting. When the last one, Cash, is refused too, it waits for good, and `suture build` warns about it: `rule limit: a Cash it refuses waits for good …`. The scenario for it expects no Writeoff instead of an unsent one. The baseline waits on the write-off, so the two differ there: Suture now tries a repair first. Neither the requirements nor the author chose that, so it is another policy the runtime decides.

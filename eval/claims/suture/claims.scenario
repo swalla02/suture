@@ -39,7 +39,7 @@ scenario "a write-off over the policy limit is never paid, approved or not":
   when   model "assessor@1" picks Writeoff
   and    holder Ada files a new Claim C1 with policy P1, photo file "wreck.png", damage roof and amount 4300 EUR
   and    adjuster Bo changes C1's approved to yes
-  expect C1's Writeoff is not sent
+  expect C1 has no Writeoff
   and    14 days pass
   expect an alert for C1
 
