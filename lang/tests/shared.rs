@@ -263,8 +263,6 @@ fn relation_and_period_mistakes_are_errors() {
     assert!(e[0].contains("a period is a day, week, month or year"), "{e:?}");
     let e = errors(&format!("{REFUNDS}rule cap: for each Order and month, its total is at most 5 EUR\n"));
     assert!(e[0].contains("a total per period adds up a relation across units"), "{e:?}");
-    let e = errors(&format!("{REFUNDS}rule cap: the number of each Customer's Refunds that are paid is at most 2\n"));
-    assert!(e[0].contains("cannot be filtered yet"), "{e:?}");
     let e = errors(&format!("{REFUNDS}rule cap: the total amount of all Pigs is at most 2 EUR, checked globally\n"));
     assert!(e[0].contains("no kind is called Pigs"), "{e:?}");
 }
@@ -311,4 +309,50 @@ rule both: no Order has a Shipment or a Refund unless its total is at most 50 EU
     let rule = |n: &str| p.rules.iter().find(|r| r.name == n).unwrap();
     assert!(!rule("late").fixed, "`back` is known only once a Refund exists");
     assert!(rule("both").fixed);
+}
+
+const ITEMS: &str = "role staff
+kind Unit { number: Text }
+kind Item { unit: Unit, seq: Count = the number of its unit's Items, paid: Bool = no }
+define: an Item is superseded when the number of its unit's Items is more than its seq + 1
+define: an Item is clean when the number of its unit's Items that are paid is 0 or it is paid
+admit pay Item by staff where the Item is clean
+when a staff pays an Item: the Item is paid
+";
+
+#[test]
+fn a_relation_across_units_can_be_filtered() {
+    let p = prog(&format!("{REFUNDS}rule cap: the number of each Customer's Refunds that are paid is at most 2\n"));
+    let b = p.bindings.iter().find(|b| b.id == "Customer(number of Refunds that are paid)").expect("the filtered total");
+    assert_eq!(b.subject, "Refund");
+    assert!(b.held.is_some() && !b.shared);
+    let rule = p.rules.iter().find(|r| r.name == "cap").unwrap();
+    assert_eq!(rule.tier, "per-group");
+    assert!(rule.formula.contains("count(r in Refund where r.customer = c and r is paid)"), "{}", rule.formula);
+    assert!(rule.paraphrase.contains("the number of its Refunds that are paid"), "{}", rule.paraphrase);
+}
+
+#[test]
+fn a_unit_reads_the_totals_of_the_unit_it_refers_to() {
+    let p = prog(ITEMS);
+    let seq = p.kind("Item").unwrap().attr("seq").unwrap().formula.clone().unwrap();
+    assert_eq!(seq, Num::Taken { of: path(&[Step::Ref("unit".into())]), name: "number of Items".into(), ty: Ty::Count, period: None, kind: "Unit".into() });
+    let shared: Vec<&str> = p.bindings.iter().filter(|b| b.shared).map(|b| b.id.as_str()).collect();
+    assert_eq!(shared, ["Unit(number of Items)", "Unit(number of Items that are paid)"]);
+    let clean = p.defines.iter().find(|d| d.state == "clean").unwrap();
+    assert!(format!("{:?}", clean.cond).contains("number of Items that are paid"), "{:?}", clean.cond);
+}
+
+#[test]
+fn sibling_total_mistakes_are_errors() {
+    let e = errors(&format!("{ITEMS}rule fresh: no Item is superseded\n"));
+    assert!(e.iter().any(|e| e.contains("rule fresh: it reads `number of Items`, a total of each Unit that other units change")), "{e:?}");
+    let e = errors(&format!("{ITEMS}rule few: every Item's seq is at most the number of its unit's Items\n"));
+    assert!(e.iter().any(|e| e.contains("rule few: it reads `number of Items`")), "{e:?}");
+    let e = errors(
+        "kind Unit { number: Text }
+kind Item { unit: Unit, spare: Unit, seq: Count = the number of its unit's Items }
+",
+    );
+    assert!(e.iter().any(|e| e.contains("Item has 2 attributes of kind Unit, and a relation across units needs exactly one")), "{e:?}");
 }

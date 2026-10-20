@@ -141,15 +141,22 @@ fn num_formula(p: &Program, kind: &str, v: &str, n: &Num) -> String {
             let filter = filter.as_ref().map_or_else(String::new, |f| format!(" where {}", cond_formula(p, k, &e, f)));
             format!("count({e} in {}{filter})", relation_formula(p, kind, v, of, k))
         }
-        Num::Taken { of, name, .. } => match contribution(p, kind, name) {
+        Num::Taken { of, name, kind: owner, .. } => match contribution(p, if owner.is_empty() { kind } else { owner }, name) {
             Some(b) => {
                 let e = element_var(&b.subject, v);
+                // Read from a unit that refers to the total's owner (appendix AA.2.3).
+                let at = if owner.is_empty() { v.to_string() } else { path_formula(p, kind, v, of) };
                 let rel = match &b.key {
                     Num::Path(Path { steps }) => match steps.as_slice() {
-                        [Step::Attr(a)] => format!("{} where {e}.{a} = {v}", b.subject),
+                        [Step::Attr(a)] => format!("{} where {e}.{a} = {at}", b.subject),
                         _ => b.subject.clone(),
                     },
                     _ => format!("all {}", b.subject),
+                };
+                // A filtered total counts each entity while its filter holds (appendix AA.2.1).
+                let rel = match &b.held {
+                    Some(c) => format!("{rel} and {}", cond_formula(p, &b.subject, &e, c)),
+                    None => rel,
                 };
                 let t = b.taking.as_ref().expect("a contribution takes an amount");
                 let per = t.period.as_ref().map_or_else(String::new, |per| format!(", per {per} of {e}.created"));
@@ -187,12 +194,18 @@ fn num_words(p: &Program, kind: &str, n: &Num) -> String {
         Num::Count { of, kind: k, filter } => {
             format!("the number of {}{}", relation_words(p, kind, of, k), that_words(p, k, filter.as_deref()))
         }
-        Num::Taken { of, name, .. } => match contribution(p, kind, name) {
+        Num::Taken { of, name, kind: owner, .. } => match contribution(p, if owner.is_empty() { kind } else { owner }, name) {
             Some(b) => {
                 let t = b.taking.as_ref().expect("a contribution takes an amount");
                 let base = t.period.as_ref().map_or(name.as_str(), |per| name.strip_suffix(&format!(" per {per}")).unwrap_or(name));
                 let (what, plural) = base.split_once(" of ").unwrap_or(("", base));
-                let whose = if matches!(b.key, Num::Lit(_)) { "all" } else { "its" };
+                let whose = if !owner.is_empty() {
+                    format!("{}'s", path_words(p, kind, of))
+                } else if matches!(b.key, Num::Lit(_)) {
+                    "all".to_string()
+                } else {
+                    "its".to_string()
+                };
                 let per = t.period.as_ref().map_or_else(String::new, |per| format!(" in a {per}"));
                 if what == "number" {
                     format!("the number of {whose} {plural}{per}")
@@ -266,7 +279,7 @@ fn relation_words(p: &Program, kind: &str, of: &Path, k: &str) -> String {
 }
 
 /// ` that are lost`, from the condition about each entity.
-fn that_words(p: &Program, k: &str, f: Option<&Cond>) -> String {
+pub(crate) fn that_words(p: &Program, k: &str, f: Option<&Cond>) -> String {
     let Some(f) = f else { return String::new() };
     let one = |c: &Cond| {
         let w = cond_words(p, k, c);
@@ -298,7 +311,8 @@ pub fn choice(p: &Program, b: &crate::ir::Binding) -> String {
         if b.target.starts_with("all ") {
             return format!("each {} adds to {to} total {t} (one total for the whole system: a bottleneck)", b.subject);
         }
-        return format!("each {} adds to {to} total {t} (no choice: the key names the {})", b.subject, b.target);
+        let shared = if b.shared { format!(", and each {} reads it", b.subject) } else { String::new() };
+        return format!("each {} adds to {to} total {t} (no choice: the key names the {}{shared})", b.subject, b.target);
     }
     let key = match b.per.as_ref().and_then(|l| p.lists.iter().find(|x| x.name == *l)) {
         Some(l) => key.replace("its element", &format!("the {}", l.singular())),

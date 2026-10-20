@@ -84,6 +84,9 @@ fn not_known_at_creation(p: &Program, kind: &str, n: &Num) -> Option<String> {
             Some(format!("its {plural}, which do not exist yet when {} is created", a(&owner)))
         }
         Num::Sum { .. } | Num::Count { .. } => None,
+        // Another unit's total is carried, so it is known: the formula keeps
+        // its value at creation (appendix AA.2.3).
+        Num::Taken { kind: k, .. } if !k.is_empty() => None,
         Num::Taken { name, .. } => Some(format!("the total {name} taken from it, which changes")),
     }
 }
@@ -476,6 +479,65 @@ fn set_inside(p: &Program) -> Vec<(String, String)> {
     out
 }
 
+/// The totals across units that `r` reads from another unit, directly or
+/// through definitions (appendix AA.2.4), as (kind, total).
+fn others_totals(p: &Program, r: &Rule) -> Vec<(String, String)> {
+    fn num(p: &Program, n: &Num, seen: &mut Vec<String>, out: &mut Vec<(String, String)>) {
+        match n {
+            Num::Taken { kind, name, .. } if !kind.is_empty() => {
+                let t = (kind.clone(), name.clone());
+                if !out.contains(&t) {
+                    out.push(t);
+                }
+            }
+            Num::Bin(a, _, b) => {
+                num(p, a, seen, out);
+                num(p, b, seen, out);
+            }
+            Num::Sum { calc, filter, .. } => {
+                num(p, calc, seen, out);
+                if let Some(f) = filter {
+                    cond(p, f, seen, out);
+                }
+            }
+            Num::Count { filter: Some(f), .. } => cond(p, f, seen, out),
+            _ => {}
+        }
+    }
+    fn cond(p: &Program, c: &Cond, seen: &mut Vec<String>, out: &mut Vec<(String, String)>) {
+        match c {
+            Cond::Cmp { left, right, .. } | Cond::Contains { set: left, item: right, .. } => {
+                num(p, left, seen, out);
+                num(p, right, seen, out);
+            }
+            Cond::State { state, .. } | Cond::Has { state: Some(state), .. } => {
+                if !seen.contains(state) {
+                    seen.push(state.clone());
+                    for d in p.defines.iter().filter(|d| d.state == *state) {
+                        cond(p, &d.cond, seen, out);
+                    }
+                }
+            }
+            Cond::Has { .. } => {}
+            Cond::And(cs) | Cond::Or(cs) => cs.iter().for_each(|c| cond(p, c, seen, out)),
+        }
+    }
+    let (mut seen, mut out) = (vec![], vec![]);
+    for c in &r.filter {
+        cond(p, c, &mut seen, &mut out);
+    }
+    match &r.body {
+        Body::Every(c) => cond(p, c, &mut seen, &mut out),
+        Body::No { pred, unless } => {
+            cond(p, pred, &mut seen, &mut out);
+            if let Some(u) = unless {
+                cond(p, u, &mut seen, &mut out);
+            }
+        }
+    }
+    out
+}
+
 /// The attributes in `changes` that `r` reads from another unit, through a
 /// reference or a binding, named `K's a` (or `a`).
 fn carried_reads(p: &Program, r: &Rule, changes: &[(String, String)]) -> Vec<String> {
@@ -829,6 +891,9 @@ impl Checker {
         self.roles(src, &mut p);
         self.admits(src, &mut p);
         self.reactions(src, &mut p);
+        // Totals across units read outside rules: in formulas, definitions,
+        // needs and admits (appendix AA.2.3).
+        self.add_contribs(&mut p);
         for i in 0..p.rules.len() {
             p.rules[i].fixed = fixed_rule(&p, &p.rules[i]);
             if p.rules[i].fixed {
@@ -847,6 +912,19 @@ impl Checker {
             // A carried fact that the other unit's own reactions or answers
             // change is never refreshed in v0 (appendix G.1), so the rule
             // could be broken without anyone knowing: refuse it.
+            // Other units change a total across units without the reader's
+            // rules being checked (appendix AA.2.4).
+            for (kind, total) in others_totals(&p, &p.rules[i]) {
+                let r = &p.rules[i];
+                let at = src.rules.iter().find(|x| x.name == r.name).map_or_else(|| Loc { file: String::new(), line: 0 }, |x| x.at.clone());
+                self.errors.push(err(
+                    &at,
+                    format!(
+                        "rule {}: it reads `{total}`, a total of each {kind} that other units change without this rule being checked. State the rule about each {kind}, or read the total in a need, an admit or a definition no rule uses",
+                        r.name
+                    ),
+                ));
+            }
             let stale = carried_reads(&p, &p.rules[i], &set_inside(&p));
             if !stale.is_empty() {
                 let r = &p.rules[i];
@@ -1417,6 +1495,8 @@ impl Checker {
                 taking,
                 prefer: vec![],
                 source: u.source.clone(),
+                held: None,
+                shared: false,
             });
         }
         for pr in &src.prefers {
@@ -1842,11 +1922,7 @@ impl Checker {
                 ));
                 continue;
             }
-            for b in self.contribs.drain(..) {
-                if !p.bindings.iter().any(|x| x.subject == b.subject && x.id == b.id) {
-                    p.bindings.push(b);
-                }
-            }
+            self.add_contribs(p);
             let tier = if global.is_some() {
                 "global (bottleneck)"
             } else if body_sums(&body) {
@@ -2186,7 +2262,10 @@ impl Checker {
                             return None;
                         }
                     };
-                    return self.contribution(p, at, from, &kind, by, Some((attr, ty)), filter.is_some());
+                    return self.contribution(p, at, from, &kind, by, Some((attr, ty)), filter.as_deref());
+                }
+                if let Some(r) = self.sibling(p, at, from, of, Some(attr), filter.as_deref()) {
+                    return r;
                 }
                 let (path, kind) = self.rel(p, at, from, of)?;
                 let ty = match p.kind(&kind).and_then(|k| k.attr(attr)).map(|a| a.ty) {
@@ -2209,7 +2288,10 @@ impl Checker {
             }
             ast::Num::Number { of, filter } => {
                 if let Some((kind, by)) = across(p, from, of) {
-                    return self.contribution(p, at, from, &kind, by, None, filter.is_some());
+                    return self.contribution(p, at, from, &kind, by, None, filter.as_deref());
+                }
+                if let Some(r) = self.sibling(p, at, from, of, None, filter.as_deref()) {
+                    return r;
                 }
                 let (path, kind) = self.rel(p, at, from, of)?;
                 let filter = match filter {
@@ -2247,7 +2329,7 @@ impl Checker {
                     self.errors.push(err(at, format!("`{}`: no `uses a {k}` takes {attr}", show_num(n))));
                     return None;
                 };
-                Some((Num::Taken { of: path, name: attr.clone(), ty: t.ty, period: None }, t.ty))
+                Some((Num::Taken { of: path, name: attr.clone(), ty: t.ty, period: None, kind: String::new() }, t.ty))
             }
         }
     }
@@ -2255,16 +2337,25 @@ impl Checker {
     /// A total over a relation across units (appendix F.2.11): each entity
     /// of `kind` adds its `attr` (or 1, to count) to a running total of
     /// `from`'s, as an implicit `uses a ⟨from⟩ where the ⟨from⟩ is its ⟨by⟩`.
+    /// With `that`, it adds only while the filter holds of it (appendix AA.2.1).
     #[allow(clippy::too_many_arguments)]
-    fn contribution(&mut self, p: &Program, at: &Loc, from: &str, kind: &str, by: Option<String>, attr: Option<(&String, Ty)>, filtered: bool) -> Option<(Num, Ty)> {
+    fn contribution(&mut self, p: &Program, at: &Loc, from: &str, kind: &str, by: Option<String>, attr: Option<(&String, Ty)>, filter: Option<&ast::Cond>) -> Option<(Num, Ty)> {
         let plural = p.kind(kind).map_or_else(|| plural_of(kind), |k| k.plural.clone());
-        if filtered {
-            self.errors.push(err(at, format!("`{plural}` of {}: a relation across units cannot be filtered yet; add up all of them", a(from))));
-            return None;
-        }
+        let held = match filter {
+            Some(f) => {
+                // The filter is about each entity of the relation, in its own
+                // unit: there is no caller or event data there.
+                let saved = (self.caller.take(), std::mem::take(&mut self.data));
+                let c = self.cond(p, at, kind, f);
+                (self.caller, self.data) = saved;
+                Some(c?)
+            }
+            None => None,
+        };
+        let that = held.as_ref().map_or_else(String::new, |c| readback::that_words(p, kind, Some(c)));
         let (what, amount, ty) = match attr {
-            Some((a, ty)) => (format!("{a} of {plural}"), Num::Path(Path { steps: vec![Step::Attr(a.clone())] }), ty),
-            None => (format!("number of {plural}"), Num::Lit(Lit::Count(1)), Ty::Count),
+            Some((a, ty)) => (format!("{a} of {plural}{that}"), Num::Path(Path { steps: vec![Step::Attr(a.clone())] }), ty),
+            None => (format!("number of {plural}{that}"), Num::Lit(Lit::Count(1)), Ty::Count),
         };
         let name = match &self.period {
             Some(per) => format!("{what} per {per}"),
@@ -2290,8 +2381,72 @@ impl Checker {
             taking: Some(Taking { name: name.clone(), amount, ty, period: self.period.clone() }),
             prefer: vec![],
             source,
+            held,
+            shared: false,
         });
-        Some((Num::Taken { of: Path::default(), name, ty, period: self.period.clone() }, ty))
+        Some((Num::Taken { of: Path::default(), name, ty, period: self.period.clone(), kind: String::new() }, ty))
+    }
+
+    /// Adds the implicit bindings of the totals across units found so far,
+    /// once each; a total any referring unit reads is shared.
+    fn add_contribs(&mut self, p: &mut Program) {
+        for b in self.contribs.drain(..) {
+            match p.bindings.iter_mut().find(|x| x.subject == b.subject && x.id == b.id) {
+                Some(x) => x.shared |= b.shared,
+                None => p.bindings.push(b),
+            }
+        }
+    }
+
+    /// A total across units read from a unit that refers to their target:
+    /// from an Item, `the number of its unit's Items that are received` is
+    /// its unit's running total, carried and refreshed (appendix AA.2.3).
+    /// `None` when the phrase is no such relation, and nothing was reported.
+    fn sibling(&mut self, p: &Program, at: &Loc, from: &str, of: &NounPhrase, attr: Option<&String>, filter: Option<&ast::Cond>) -> Option<Option<(Num, Ty)>> {
+        let (last, rest) = of.steps.split_last()?;
+        if rest.is_empty() && matches!(of.head, Head::It) {
+            return None;
+        }
+        let kind = p.kinds.iter().find(|k| k.plural == *last)?.name.clone();
+        let owner = NounPhrase { head: of.head.clone(), steps: rest.to_vec() };
+        let errors = self.errors.len();
+        let (mut path, end) = match self.np(p, at, from, &owner) {
+            Some((path, End::Ref(target))) => (path, target),
+            _ => {
+                self.errors.truncate(errors);
+                return None;
+            }
+        };
+        let target = end;
+        // The path goes into the referred unit, whose carried fact holds the total.
+        if let Some(Step::Attr(a)) = path.steps.last().cloned() {
+            *path.steps.last_mut().expect("a last step") = Step::Ref(a);
+        }
+        let refs: Vec<&Attr> = p.kind(&kind)?.attrs.iter().filter(|a| a.ty == Ty::Ref && a.of.as_deref() == Some(target.as_str())).collect();
+        let [by] = refs.as_slice() else {
+            self.errors.push(err(at, format!("`{}`: {kind} has {} attributes of kind {target}, and a relation across units needs exactly one", show(of), refs.len())));
+            return Some(None);
+        };
+        let by = by.name.clone();
+        if self.period.is_some() {
+            self.errors.push(err(at, format!("`{}`: a total per period is read only by its own unit", show(of))));
+            return Some(None);
+        }
+        let attr = match attr {
+            Some(x) => match p.kind(&kind).and_then(|k| k.attr(x)).map(|a| a.ty) {
+                Some(t @ (Ty::Money | Ty::Count)) => Some((x, t)),
+                _ => {
+                    self.errors.push(err(at, format!("`the total {x} of {}`: {} has no amount or count `{x}`", show(of), a(&kind))));
+                    return Some(None);
+                }
+            },
+            None => None,
+        };
+        let Some((Num::Taken { name, ty, .. }, _)) = self.contribution(p, at, &target, &kind, Some(by), attr, filter) else { return Some(None) };
+        if let Some(b) = self.contribs.last_mut() {
+            b.shared = true;
+        }
+        Some(Some((Num::Taken { of: path, name, ty, period: None, kind: target }, ty)))
     }
 
     /// The calculation inside `the total of … over its lines`, evaluated at

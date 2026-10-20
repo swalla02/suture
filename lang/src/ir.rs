@@ -154,6 +154,14 @@ pub struct Binding {
     pub taking: Option<Taking>,
     pub prefer: Vec<Criterion>,
     pub source: String,
+    /// For a relation across units with `that`: the subject adds to the
+    /// total only while this holds, read at the subject (appendix AA.2.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<Cond>,
+    /// For a relation across units: whether the units that refer to the
+    /// target read the total, so they carry it (appendix AA.2.3).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shared: bool,
 }
 
 impl Binding {
@@ -482,8 +490,16 @@ pub enum Num {
     /// How many parts of `kind` there are under the node at `of`.
     Count { of: Path, kind: String, filter: Option<Box<Cond>> },
     /// The running total of the amounts taken as `name` from the unit at `of`
-    /// (appendix F.2.8).
-    Taken { of: Path, name: String, ty: Ty, period: Option<String> },
+    /// (appendix F.2.8). `kind` is that unit's kind; empty when `of` is the
+    /// unit itself, else read through a reference (appendix AA.2.3).
+    Taken {
+        of: Path,
+        name: String,
+        ty: Ty,
+        period: Option<String>,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        kind: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
