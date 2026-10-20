@@ -608,9 +608,6 @@ impl Program {
         }
     }
 
-    /// The states a node of `kind` can be in (spec B.3): its Bool attributes,
-    /// its defined states, its effect's marks and outcomes (`timed out` among
-    /// them), `done` and `failed`.
     /// The attributes a state may be read from, matched by name across kinds:
     /// the state's own name, and each state attribute that holds it.
     pub fn state_attrs<'a>(&'a self, state: &'a str) -> Vec<&'a str> {
@@ -623,6 +620,9 @@ impl Program {
         out
     }
 
+    /// The states a node of `kind` can be in (spec B.3): its Bool attributes,
+    /// the states of its state attributes, its defined states, its effect's
+    /// marks and outcomes (`timed out` among them), `done` and `failed`.
     pub fn states(&self, kind: &str) -> Vec<String> {
         let mut out: Vec<String> = vec![];
         if self.slot(kind).is_some() {

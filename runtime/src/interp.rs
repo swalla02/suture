@@ -330,6 +330,9 @@ pub fn upgrade_breaks(old: &Program, prog: &Program, unit: &Unit, goals: &[Optio
                     let ty = |t: Ty, of: &Option<String>| of.clone().unwrap_or_else(|| format!("{t:?}"));
                     out.push(format!("{}'s {} changes from {} to {}", k.name, a.name, ty(w.ty, &w.of), ty(a.ty, &a.of)))
                 }
+                (_, Some(Val::Text(v))) if !a.states.is_empty() && !a.states.contains(v) => {
+                    out.push(format!("{}'s {} is {v}, which this version no longer has: {}", k.name, a.name, a.states.join(", ")))
+                }
                 (Some(w), Some(_)) if (w.mark == Some(Mark::Secret)) != (a.mark == Some(Mark::Secret)) => {
                     let how = if a.mark == Some(Mark::Secret) { "becomes secret" } else { "stops being secret" };
                     out.push(format!("{}'s {} {how}, and live values are held as they were", k.name, a.name))
@@ -855,7 +858,11 @@ fn answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[(Strin
     }
     for (name, v) in data {
         match effect.data.iter().find(|(n, _)| n == name) {
-            Some((_, ty)) if *ty == v.ty() => {}
+            Some((_, ty)) if *ty == v.ty() => {
+                if let Some(Err(why)) = prog.kind(&kind).and_then(|k| k.attr(name)).map(|a| state_value(&kind, a, v)) {
+                    return Err(refuse(why));
+                }
+            }
             Some((_, ty)) => return Err(refuse(format!("{name} must be {ty:?}, not {}", v.show(&prog.currency)))),
             None => return Err(refuse(format!("a {kind} answer has no field {name}"))),
         }
@@ -1020,6 +1027,10 @@ fn apply(prog: &Program, root: &mut Node, facts: &Facts, at: &[usize], actions: 
                 Some(v) => v,
             };
             let n = node_at_mut(root, &target);
+            if let Some(Err(why)) = prog.kind(&n.kind).and_then(|k| k.attr(&a.attr)).map(|x| state_value(&n.kind, x, &value)) {
+                notes.push(format!("{} not set: {why}", a.attr));
+                continue;
+            }
             notes.push(format!("{}'s {} becomes {}", n.kind, a.attr, shown(prog, &a.attr, &value)));
             n.attrs.insert(a.attr.clone(), value);
         }

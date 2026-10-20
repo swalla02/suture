@@ -12,8 +12,8 @@ The second measured comparison, and the first against code its designer did not 
 | Control-flow statements (`if`, `unless`, `case`, `return`, `.each`, …) | none: the language has none | 47 (not counting `&&`, `\|\|`, `.all?` or `.any?`) |
 | Condition and fallback clauses (`unless`, `where`, `while`, `after`, …) | 21 | (inside the 47) |
 | Change 1, `2741034ae`, a return item's unit must be on the RMA's order | **+1 −1** (a `where` on the gate) | +7 −0 counted (+9 raw): a validation, its registration, and a guard |
-| Change 2, `65c411211`, an `in_transit` reception state | +4 −2 | **+2 −1** |
-| After both | 75 | 663 |
+| Change 2, `65c411211`, an `in_transit` reception state | +4 −2 (+3 −1 after slice 25) | **+2 −1** |
+| After both | 75 (74 after slices 24 and 25) | 663 |
 | Scenarios | 18, in 201 lines | Solidus's own specs, which were not run against the port |
 
 Solidus's count is over the 23 files that do what the port does. It leaves out, by name and pattern, the lines and methods for exchanges, taxes, simulation, the tolerance check and `errored`, splitting refunds over payments, the override type, display, generated numbers and admin search. The filter is coarse: a few lines either way. Rails gives Solidus a database, transactions, an admin and an API. Suture gives the port:

@@ -368,6 +368,17 @@ fn state_attribute_mistakes_are_errors() {
     assert!(e[0].contains("new is already a state of Tape.state"), "{e:?}");
     let e = errors(&format!("{COPIES}rule r: no Copy is out unless its condition is broken\n"));
     assert!(e.iter().any(|e| e.contains("is never broken; its states are shelved, lent, lost, mending")), "{e:?}");
+    let e = errors(&format!("{COPIES}admit burn Copy by staff\nwhen a staff burns a Copy: the Copy's condition becomes \"burnt\"\n"));
+    assert!(e.iter().any(|e| e.contains("Copy.condition is one of shelved, lent, lost, mending, so it cannot become burnt")), "{e:?}");
+    let e = errors("kind Shop { name: Text }\nkind Visit { shop: Shop, stage: booked | seen }\nShop needs Visit\neffect see Visit via desk within 1 day\n  sends its stage\n  reports checked with seen: Bool\n");
+    assert!(e.iter().any(|e| e.contains("seen is a state of Visit.stage, so an answer cannot also carry it")), "{e:?}");
     let e = errors(&format!("{COPIES}admit lose Copy by staff\nwhen a staff loses a Copy: the Copy is not lent\n"));
     assert!(e.iter().any(|e| e.contains("`is not lent` does not say which state a Copy's condition goes to")), "{e:?}");
+}
+
+#[test]
+fn a_text_is_checked_against_the_states_of_its_own_kind() {
+    let src = format!("{COPIES}kind Book {{ condition: Text }}\nrule fine: every Book's condition is \"worn\"\n");
+    let files = vec![("t.st".to_string(), format!("module t version 1, currency EUR\n{src}"))];
+    compile(&files).unwrap_or_else(|e| panic!("a Book's condition is any text: {e:?}"));
 }

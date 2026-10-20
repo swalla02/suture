@@ -4,7 +4,7 @@
 //! program; nothing guesses (D4).
 
 use crate::ast::Source;
-use crate::ir::{Mark, Program, Ty};
+use crate::ir::{Lit, Mark, Program, Ty};
 use crate::lex::{statements, tokens, Error, Stmt, Tok};
 use crate::parse::statement;
 
@@ -80,14 +80,16 @@ pub fn kind_text(p: &Program, name: &str) -> Option<String> {
         out.push_str(&format!("\npart of a {} (its {})\n", o.kind, o.attr));
     }
     for a in &k.attrs {
-        let mut line = format!("- {}: {}", a.name, ty_text(p, a.ty, &a.of));
+        let mut line = if a.states.is_empty() { format!("- {}: {}", a.name, ty_text(p, a.ty, &a.of)) } else { format!("- {}: {}", a.name, a.states.join(" | ")) };
         match a.mark {
             Some(Mark::Secret) => line.push_str(" secret"),
             Some(Mark::Personal) => line.push_str(" personal"),
             None => {}
         }
-        if let Some(d) = &a.default {
-            line.push_str(&format!(" = {}", crate::readback::lit_text(p, d)));
+        match &a.default {
+            Some(Lit::Text(d)) if !a.states.is_empty() => line.push_str(&format!(" = {d}")),
+            Some(d) => line.push_str(&format!(" = {}", crate::readback::lit_text(p, d))),
+            None => {}
         }
         if a.formula.is_some() {
             line.push_str(" (computed)");

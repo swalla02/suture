@@ -154,6 +154,7 @@ impl Decls {
         }
         for k in &src.kinds {
             states.extend(k.attrs.iter().filter(|a| a.ty == TypeName::Bool).map(|a| a.name.clone()));
+            states.extend(k.attrs.iter().flat_map(|a| a.states.iter().cloned()));
         }
         Decls { kinds, attrs, states }
     }

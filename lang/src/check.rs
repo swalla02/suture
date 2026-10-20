@@ -113,6 +113,21 @@ fn end_kind(p: &Program, kind: &str, steps: &[Step]) -> Option<String> {
     Some(cur)
 }
 
+/// The kind of the node or shared entity a path to a value's owner ends at,
+/// through parts, owners and references.
+fn value_kind(p: &Program, kind: &str, steps: &[Step]) -> Option<String> {
+    let mut cur = kind.to_string();
+    for s in steps {
+        cur = match s {
+            Step::Part(k) => k.clone(),
+            Step::Owner => p.kind(&cur)?.owner.as_ref()?.kind.clone(),
+            Step::Ref(a) => p.kind(&cur)?.attr(a)?.of.clone()?,
+            _ => return None,
+        };
+    }
+    Some(cur)
+}
+
 /// The formula attributes of `kind` that read each other in a circle, if any.
 fn formula_cycle(p: &Program, kind: &str) -> Option<Vec<String>> {
     let k = p.kind(kind)?;
@@ -1484,6 +1499,10 @@ impl Checker {
                     continue;
                 };
                 let kind = p.kinds.iter_mut().find(|k| k.name == e.kind).expect("checked above");
+                if let Some(x) = kind.state_attr(name) {
+                    self.errors.push(err(&e.at, format!("{name} is a state of {}.{}, so an answer cannot also carry it", e.kind, x.name)));
+                    continue;
+                }
                 match kind.attr(name).map(|a| a.ty) {
                     Some(have) if have != ty => {
                         self.errors.push(err(&e.at, format!("{}.{name} is {have:?}, but the answer gives {ty:?}", e.kind)));
@@ -1960,6 +1979,14 @@ impl Checker {
                         let Some((num, ty)) = self.num(p, &r.at, &r.kind, a.becomes.as_ref().expect("checked above")) else { continue };
                         if ty != want {
                             self.errors.push(err(&r.at, format!("{k}.{} is {want:?}, but it would become a {ty:?}", a.attr)));
+                            continue;
+                        }
+                        let states = p.kind(&k).and_then(|x| x.attr(&a.attr)).map(|x| x.states.clone()).unwrap_or_default();
+                        if let Num::Lit(Lit::Text(v)) = &num
+                            && !states.is_empty()
+                            && !states.contains(v)
+                        {
+                            self.errors.push(err(&r.at, format!("{k}.{} is one of {}, so it cannot become {v}", a.attr, states.join(", "))));
                             continue;
                         }
                         if let Some(x) = sourced_in(p, &r.kind, &num) {
@@ -2634,8 +2661,8 @@ impl Checker {
                     }
                     End::Value(ty) => {
                         let right = self.operand(p, at, from, right, ty)?;
-                        if let (Some(Step::Attr(x)), Num::Lit(Lit::Text(v))) = (path.steps.last(), &right)
-                            && let Some(a) = p.kinds.iter().find_map(|k| k.attr(x).filter(|a| !a.states.is_empty()))
+                        if let (Some((Step::Attr(x), rest)), Num::Lit(Lit::Text(v))) = (path.steps.split_last(), &right)
+                            && let Some(a) = value_kind(p, from, rest).and_then(|k| p.kind(&k)).and_then(|k| k.attr(x)).filter(|a| !a.states.is_empty())
                             && !a.states.contains(v)
                         {
                             self.errors.push(err(at, format!("`{}` is never {v}; its states are {}", show(left), a.states.join(", "))));
