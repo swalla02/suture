@@ -40,6 +40,7 @@ pub fn explain_at(prog: &Program, unit: &Unit, now: Option<i64>, due: impl Fn(&s
         });
     }
     sourced(prog, &unit.root, now, 1, &mut out);
+    out.extend(crate::interp::unasked_lines(prog, unit, &[]).into_iter().map(|l| format!("  {} {l}", unit.root.kind)));
     slots(prog, &unit.root, 1, &mut out);
     for (i, _) in unit.root.parts.iter().enumerate() {
         part(prog, unit, &[i], now, &due, &mut out);
@@ -119,6 +120,7 @@ fn part(prog: &Program, unit: &Unit, at: &[usize], now: Option<i64>, due: &impl 
     let attrs = if attrs.is_empty() { String::new() } else { format!(" — {}", attrs.join(", ")) };
     out.push(format!("{}{}{attempt}: {what}{attrs}", "  ".repeat(depth), n.kind));
     sourced(prog, n, now, depth + 1, out);
+    out.extend(crate::interp::unasked_lines(prog, unit, at).into_iter().map(|l| format!("{}{} {l}", "  ".repeat(depth + 1), n.kind)));
     slots(prog, n, depth + 1, out);
     for i in 0..n.parts.len() {
         let mut child = at.to_vec();

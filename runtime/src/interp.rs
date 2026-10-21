@@ -324,7 +324,7 @@ pub fn carry_over(prog: &Program, u: &mut Unit) -> Vec<String> {
         carry_attrs(prog, &kind, &mut n.attrs, &mut dropped);
     }
     // Every position each round: formulas may read each other in any order.
-    while all.iter().map(|at| formulas(prog, &mut u.root, &u.facts, at)).filter(|changed| *changed).count() > 0 {}
+    recompute(prog, u);
     dropped
 }
 
@@ -652,8 +652,17 @@ fn granted(prog: &Program, u: &mut Unit, key: &str, by: &str, taken: &Option<(St
 /// What a waiting binding waits for: `a Stock`, or room in a total.
 fn wanted(id: &str) -> String {
     match id.split_once('(') {
-        Some((t, total)) if t.starts_with("all ") => format!("room in the total {}", total.trim_end_matches(')')),
-        Some((t, total)) => format!("room in a {t}'s total {}", total.trim_end_matches(')')),
+        Some(_) => format!("room in {}", toward(id)),
+        None => format!("a {}", target_of(id)),
+    }
+}
+
+/// `a Policy's total payout`, `the total amount`: the total a binding counts
+/// toward, or `a Stock`.
+pub fn toward(id: &str) -> String {
+    match id.split_once('(') {
+        Some((t, total)) if t.starts_with("all ") => format!("the total {}", total.trim_end_matches(')')),
+        Some((t, total)) => format!("a {t}'s total {}", total.trim_end_matches(')')),
         None => format!("a {}", target_of(id)),
     }
 }
@@ -728,13 +737,14 @@ fn bind_slots(prog: &Program, root: &Node, at: &[usize]) -> Vec<BindSlot> {
 
 /// Whether every binding of the node at `at`, and of each of its owners, is
 /// granted. A contribution held while a filter holds counts only while it
-/// is asked for (appendix AA.2.1).
-fn bound(prog: &Program, root: &Node, at: &[usize]) -> bool {
+/// is asked for (appendix AA.2.1), or while its filter holds and its amount
+/// is not known yet (appendix AG.2.2).
+fn bound(prog: &Program, u: &Unit, at: &[usize]) -> bool {
     (0..=at.len()).all(|d| {
-        let n = node_at(root, &at[..d]);
-        bind_slots(prog, root, &at[..d]).iter().all(|(id, i, _)| match n.binds.get(id) {
+        let n = node_at(&u.root, &at[..d]);
+        bind_slots(prog, &u.root, &at[..d]).iter().all(|(id, i, _)| match n.binds.get(id) {
             Some(Bind::Granted { .. }) => true,
-            None => prog.bindings[*i].held.is_some(),
+            None => prog.bindings[*i].held.is_some() && !unasked(prog, u, &at[..d]).iter().any(|(x, _)| x == id),
             _ => false,
         })
     })
@@ -1080,6 +1090,9 @@ fn goal_due(prog: &Program, u: &mut Unit, goal: u32) {
                 u.notes.push(format!("  because {} waits for {}", n.kind, wanted(id)));
             }
         }
+        for line in unasked_lines(prog, u, &at) {
+            u.notes.push(format!("  because {} {line}", n.kind));
+        }
         let Some((&i, owner)) = at.split_last() else { continue };
         if current(node_at(&u.root, owner), &n.kind) != Some(i) {
             continue;
@@ -1250,8 +1263,9 @@ fn needs_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut Ou
                 let part = node_at(&t, &pos).clone();
                 let next = slot.filter(|s| !options_of(n, s).is_empty());
                 change = match newly_broken(prog, View::of(u).acting(now), &t) {
-                    // Refused on facts that never change: move on at once (appendix F.2.15).
-                    Some(r) if r.fixed && next.is_some() => {
+                    // Refused on facts that never change: move on at once (appendix F.2.15),
+                    // once they are known (appendix AG.2.3).
+                    Some(r) if r.fixed && next.is_some() && surely_broken(prog, View::of(u).with(&t), r) => {
                         let s = next.expect("checked above");
                         Some(Change::Move(s.name.clone(), format!("{want} refused by rule {}, ", r.name)))
                     }
@@ -1468,7 +1482,7 @@ fn chosen(prog: &Program, u: &mut Unit, key: &str, data: &[(String, Val)], out: 
 /// on that rule. A root is never done; its goals describe it.
 fn done_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut Out) -> bool {
     let n = node_at(&u.root, at);
-    if at.is_empty() || n.status != Status::Idle || prog.effect_of(&n.kind).is_some() || !needs_done(prog, View::of(u), at) || !bound(prog, &u.root, at) {
+    if at.is_empty() || n.status != Status::Idle || prog.effect_of(&n.kind).is_some() || !needs_done(prog, View::of(u), at) || !bound(prog, u, at) {
         return false;
     }
     let (kind, waiting) = (n.kind.clone(), n.waiting.clone());
@@ -1501,7 +1515,8 @@ fn done_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut Out
 fn refused_for_good(prog: &Program, u: &mut Unit, at: &[usize], after: &Node, now: i64, out: &mut Out) -> bool {
     let Some((_, owner)) = at.split_last() else { return false };
     let before = View::of(u).acting(now);
-    let Some(r) = prog.rules.iter().find(|r| r.fixed && broken(prog, before.with(after), r) && !broken(prog, before, r)) else { return false };
+    let known = |r: &Rule| surely_broken(prog, View::of(u).with(after), r);
+    let Some(r) = prog.rules.iter().find(|r| r.fixed && broken(prog, before.with(after), r) && !broken(prog, before, r) && known(r)) else { return false };
     let o = node_at(&u.root, owner);
     let kind = node_at(&u.root, at).kind.clone();
     let Some(s) = prog.slots.iter().find(|s| s.owner == o.kind && o.slots.get(&s.name) == Some(&kind)) else { return false };
@@ -1534,7 +1549,7 @@ fn needs_done(prog: &Program, v: View, at: &[usize]) -> bool {
 fn request_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut Out) -> bool {
     let n = node_at(&u.root, at);
     let Some(effect) = prog.effect_of(&n.kind) else { return false };
-    if n.status != Status::Idle || !needs_done(prog, View::of(u), at) || !bound(prog, &u.root, at) {
+    if n.status != Status::Idle || !needs_done(prog, View::of(u), at) || !bound(prog, u, at) {
         return false;
     }
     let (kind, waiting) = (n.kind.clone(), n.waiting.clone());
@@ -1643,10 +1658,59 @@ fn find_fetch(u: &Unit, key: &str, open: bool) -> Option<(Vec<usize>, String)> {
     })
 }
 
+/// The bindings of the node at `at` that cannot be asked yet because their
+/// amount reads a sourced value not in yet (appendix AG.2.2), as (id, index).
+pub fn unasked(prog: &Program, u: &Unit, at: &[usize]) -> Vec<(String, usize)> {
+    let n = node_at(&u.root, at);
+    bind_slots(prog, &u.root, at)
+        .into_iter()
+        .filter(|(id, i, _)| !n.binds.contains_key(id) && !prog.bindings[*i].sources.is_empty())
+        .filter(|(_, i, _)| match &prog.bindings[*i].held {
+            Some(c) => matches!(eval(prog, View::of(u), at, c), T::Yes),
+            None => n.status == Status::Idle,
+        })
+        .filter(|(id, ..)| decide_for(prog, u, at, id, vec![]).is_none())
+        .map(|(id, i, _)| (id, i))
+        .collect()
+}
+
+/// `waits for its amount, to count toward a Policy's total payout`, for each
+/// binding at `at` that cannot be asked yet.
+pub fn unasked_lines(prog: &Program, u: &Unit, at: &[usize]) -> Vec<String> {
+    unasked(prog, u, at)
+        .into_iter()
+        .map(|(id, i)| {
+            let attrs: Vec<&str> = prog.bindings[i].sources.iter().map(|(_, a)| a.as_str()).collect();
+            format!("waits for its {}, to count toward {}", attrs.join(" and "), toward(&id))
+        })
+        .collect()
+}
+
 /// Fetches what a waiting part's strict rules need (appendix I.2.5): each
 /// sourced value a rule it waits on reads that is not fresh for that rule
-/// and has no open or failed fetch. Makes at most one change.
+/// and has no open or failed fetch, and each one a binding's amount waits
+/// for (appendix AG.2.2). Makes at most one change.
 fn sources_pass(prog: &Program, u: &mut Unit, at: &[usize], now: i64, out: &mut Out) -> bool {
+    for (id, i) in unasked(prog, u, at) {
+        for (kind, attr) in &prog.bindings[i].sources {
+            for pos in positions(&u.root) {
+                let node = node_at(&u.root, &pos);
+                if node.kind != *kind || node.status == Status::Failed || node.attrs.contains_key(attr) {
+                    continue;
+                }
+                let f = node.fetched.get(attr).cloned().unwrap_or_default();
+                let picking = format!("{}?source", fetch_key(&u.label, &u.root, &pos, attr, f.n));
+                if f.sends > 0 || f.failed || node.choosing.contains_key(&picking) {
+                    continue;
+                }
+                let fetch = node_at_mut(&mut u.root, &pos).fetched.entry(attr.clone()).or_default();
+                fetch.n += 1;
+                fetch.tried.clear();
+                pick_source(prog, u, &pos, attr, &format!("for {}, ", toward(&id)), out);
+                return true;
+            }
+        }
+    }
     let n = node_at(&u.root, at);
     let mut waits: Vec<String> = n.held.values().cloned().collect();
     if n.status == Status::Idle {
@@ -1695,7 +1759,14 @@ fn needed(prog: &Program, u: &Unit, kind: &str, attr: &str) -> bool {
         let idle = n.status == Status::Idle;
         let waits = n.held.values().chain(n.waiting.iter().filter(|_| idle));
         n.status != Status::Failed && waits.into_iter().any(|name| prog.rules.iter().any(|r| r.name == *name && r.sources.iter().any(|(k, a)| k == kind && a == attr)))
+            || unasked(prog, u, &at).into_iter().any(|(_, i)| prog.bindings[i].sources.iter().any(|(k, a)| k == kind && a == attr))
     })
+}
+
+/// Computes the formulas a new value lets the unit know (appendix AG.2.1).
+fn recompute(prog: &Program, u: &mut Unit) {
+    let all = positions(&u.root);
+    while all.iter().map(|at| formulas(prog, &mut u.root, &u.facts, at)).filter(|changed| *changed).count() > 0 {}
 }
 
 /// A fetch's answer (appendix I.2.2): the value is recorded as fetched now,
@@ -1725,15 +1796,25 @@ fn fetch_answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[
     n.attrs.insert(attr.clone(), value);
     let f = n.fetched.entry(attr.clone()).or_default();
     *f = Fetch { sends: 0, at: Some(now), until: src.good_for.map(|g| now + g as i64), failed: false, fallback: false, tried: vec![], ..f.clone() };
+    recompute(prog, u);
     let from = if src.model { format!("read by model \"{}\"", src.adapter) } else { format!("from {}", src.adapter) };
     match src.good_for {
         Some(g) => {
             u.notes.push(format!("{attr}: {shown} {from}, trusted for {}", duration(g)));
-            u.timers.push((format!("{key}:stale"), g));
+            fetch_timer(u, key, "stale", g);
         }
         None => u.notes.push(format!("{attr}: {shown} {from}")),
     }
     Ok(())
+}
+
+/// Wants the timer `O1~credit#2:stale`. The timers of the attribute's earlier
+/// fetches are already started and now fire for a fetch that is over, so
+/// they are dropped: a value asked again for weeks keeps one.
+fn fetch_timer(u: &mut Unit, key: &str, what: &str, secs: u64) {
+    let fetches = key.rsplit_once('#').map_or(key, |(k, _)| k);
+    u.timers.retain(|(id, _)| id.rsplit_once('#').is_none_or(|(k, _)| k != fetches) || !is_fetch(id));
+    u.timers.push((format!("{key}:{what}"), secs));
 }
 
 /// A fetch's deadline: it is asked again with the same key, or after the
@@ -1792,13 +1873,14 @@ fn fail(prog: &Program, u: &mut Unit, at: &[usize], src: &Source, key: &str, why
             n.attrs.insert(attr.clone(), v);
             let f = n.fetched.entry(attr.clone()).or_default();
             *f = Fetch { sends: 0, at: Some(now), until: src.good_for.map(|g| now + g as i64), failed: false, fallback: true, tried: vec![], ..f.clone() };
+            recompute(prog, u);
             if let Some(g) = src.good_for {
-                u.timers.push((format!("{key}:stale"), g));
+                fetch_timer(u, key, "stale", g);
             }
         }
         Otherwise::Again(secs) => {
             u.notes.push(format!("{failed}: asking again in {}", duration(*secs)));
-            u.timers.push((format!("{key}:again"), *secs));
+            fetch_timer(u, key, "again", *secs);
         }
         Otherwise::Act(actions) => {
             u.notes.push(failed);
@@ -1974,6 +2056,23 @@ fn broken(prog: &Program, v: View, r: &Rule) -> bool {
                     t == T::No || (strict && t == T::Unknown)
                 }
                 Body::No { pred, unless } => may(eval(prog, v, at, pred)) && unless.as_ref().is_none_or(|u| eval(prog, v, at, u) != T::Yes),
+            }
+    })
+}
+
+/// Whether a rule is broken on what is known: nothing unknown counts against
+/// it, so a fixed rule refuses for good only once its facts are in
+/// (appendix AG.2.3).
+fn surely_broken(prog: &Program, v: View, r: &Rule) -> bool {
+    if !applies_to(r, v.root, v.version) {
+        return false;
+    }
+    positions(v.root).iter().any(|at| {
+        node_at(v.root, at).kind == r.subject
+            && r.filter.iter().all(|f| eval(prog, v, at, f) == T::Yes)
+            && match &r.body {
+                Body::Every(c) => eval(prog, v, at, c) == T::No,
+                Body::No { pred, unless } => eval(prog, v, at, pred) == T::Yes && unless.as_ref().is_none_or(|u| eval(prog, v, at, u) == T::No),
             }
     })
 }

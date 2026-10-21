@@ -162,6 +162,10 @@ pub struct Binding {
     /// target read the total, so they carry it (appendix AA.2.3).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub shared: bool,
+    /// The sourced attributes its amount reads through formulas, as (kind,
+    /// attribute): fetched for it while it cannot be asked (appendix AG.2.2).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<(String, String)>,
 }
 
 impl Binding {

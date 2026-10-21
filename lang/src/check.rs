@@ -81,8 +81,10 @@ fn not_known_at_creation(p: &Program, kind: &str, n: &Num) -> Option<String> {
             let (last, rest) = path.steps.split_last()?;
             let Step::Attr(attr) = last else { return None };
             let at = end_kind(p, kind, rest)?;
-            if p.source_of(&at, attr).is_some() {
-                return Some(format!("{attr}, which comes from its source and goes stale"));
+            // A value read once is computed with once it comes (appendix AG.2.1).
+            if let Some(s) = p.sources_of(&at, attr).into_iter().find(|s| s.good_for.is_some()) {
+                let every = readback::duration_text(s.good_for.unwrap_or(0) as i64);
+                return Some(format!("{attr}, which its source reads again every {every}; a formula is computed once, so it reads only a source with no `good for`"));
             }
             let answered = p.effect_of(&at).is_some_and(|e| e.data.iter().any(|(d, _)| d == attr));
             answered.then(|| format!("{attr}, which an answer sets later"))
@@ -98,6 +100,17 @@ fn not_known_at_creation(p: &Program, kind: &str, n: &Num) -> Option<String> {
         Num::Taken { kind: k, .. } if !k.is_empty() => None,
         Num::Taken { name, .. } => Some(format!("the total {name} taken from it, which changes")),
     }
+}
+
+/// `Claim's payout`, for the first formula that reads an attribute `attr`.
+fn formula_reading(p: &Program, attr: &str) -> Option<String> {
+    p.kinds.iter().find_map(|k| {
+        k.attrs.iter().find_map(|a| {
+            let mut hit = false;
+            num_reads(p, a.formula.as_ref()?, &mut |_, last| hit |= last == Some(attr));
+            hit.then(|| format!("{}'s {}", k.name, a.name))
+        })
+    })
 }
 
 /// A sourced attribute that `n`, read from a `kind`, reads, if any.
@@ -417,9 +430,16 @@ fn across(p: &Program, from: &str, of: &NounPhrase) -> Option<(String, Option<St
 fn changeable(p: &Program) -> Vec<String> {
     let mut out: Vec<String> = p.reactions.iter().flat_map(|r| r.actions.iter().map(|a| a.attr.clone())).collect();
     out.extend(p.effects.iter().flat_map(|e| e.data.iter().map(|(n, _)| n.clone())));
-    out.extend(p.sources.iter().map(|s| s.attr.clone()));
+    // A value read once, and not again for a rule, stays as it came (appendix AG.2.3).
+    out.extend(p.sources.iter().filter(|s| !read_once(p, &s.kind, &s.attr)).map(|s| s.attr.clone()));
     out.extend(admitted_changes(p).into_iter().map(|(_, a)| a));
     out
+}
+
+/// Whether a sourced attribute is read once: no source of it is good for a
+/// while, and no rule wants it fresh, so it is read again by none.
+fn read_once(p: &Program, kind: &str, attr: &str) -> bool {
+    p.sources_of(kind, attr).iter().all(|s| s.good_for.is_none()) && !p.rules.iter().any(|r| r.fresh.iter().any(|(a, _)| a == attr))
 }
 
 /// The attributes callers may change, as (kind, attribute).
@@ -644,12 +664,32 @@ fn cond_reads(p: &Program, c: &Cond, see: &mut dyn FnMut(&Path, Option<&str>)) {
 /// so a rule may be strict about more than it needs, never less.
 fn sourced_reads(p: &Program, r: &Rule) -> Vec<(String, String)> {
     let mut names: Vec<String> = vec![];
-    let mut states: Vec<String> = vec![];
     rule_reads(p, r, &mut |_, last| {
         if let Some(a) = last {
             names.push(a.to_string());
         }
     });
+    sourced_through(p, names)
+}
+
+/// The sourced attributes the amount a binding takes reads, through
+/// formulas (appendix AG.2.2).
+fn taking_sources(p: &Program, b: &Binding) -> Vec<(String, String)> {
+    let mut names: Vec<String> = vec![];
+    if let Some(t) = &b.taking {
+        num_reads(p, &t.amount, &mut |_, last| {
+            if let Some(a) = last {
+                names.push(a.to_string());
+            }
+        });
+    }
+    sourced_through(p, names)
+}
+
+/// The sourced attributes among `names` and what they read, through
+/// definitions and formulas.
+fn sourced_through(p: &Program, mut names: Vec<String>) -> Vec<(String, String)> {
+    let mut states: Vec<String> = vec![];
     // A state may be a definition, which reads further.
     let mut i = 0;
     while i < names.len() {
@@ -930,6 +970,9 @@ impl Checker {
         // Totals across units read outside rules: in formulas, definitions,
         // needs and admits (appendix AA.2.3).
         self.add_contribs(&mut p);
+        for i in 0..p.bindings.len() {
+            p.bindings[i].sources = taking_sources(&p, &p.bindings[i]);
+        }
         for i in 0..p.rules.len() {
             p.rules[i].fixed = fixed_rule(&p, &p.rules[i]);
             if p.rules[i].fixed {
@@ -938,11 +981,14 @@ impl Checker {
             }
             p.rules[i].sources = sourced_reads(&p, &p.rules[i]);
             for (attr, secs) in p.rules[i].fresh.clone() {
-                if !p.rules[i].sources.iter().any(|(_, a)| *a == attr) {
-                    let r = &p.rules[i];
-                    let at = src.rules.iter().find(|x| x.name == r.name).map_or_else(|| Loc { file: String::new(), line: 0 }, |x| x.at.clone());
-                    let old = readback::duration_text(secs as i64);
+                let r = &p.rules[i];
+                let at = src.rules.iter().find(|x| x.name == r.name).map_or_else(|| Loc { file: String::new(), line: 0 }, |x| x.at.clone());
+                let old = readback::duration_text(secs as i64);
+                if !r.sources.iter().any(|(_, a)| *a == attr) {
                     self.errors.push(err(&at, format!("rule {}: `with {attr} at most {old} old`: the rule reads no sourced `{attr}`", r.name)));
+                } else if let Some(f) = formula_reading(&p, &attr) {
+                    // Read again, it would leave the formula's value behind (appendix AG.2.1).
+                    self.errors.push(err(&at, format!("rule {}: `with {attr} at most {old} old`: the formula of {f} reads {attr} once, so it is not read again", r.name)));
                 }
             }
             // A carried fact that the other unit's own reactions or answers
@@ -1371,7 +1417,8 @@ impl Checker {
                     continue;
                 }
                 if let Some(why) = not_known_at_creation(p, &k.name, &num) {
-                    self.errors.push(err(&k.at, format!("{}.{} reads {why}; a formula is computed when the entity is created", k.name, a.name)));
+                    let why = if why.contains("computed once") { why } else { format!("{why}; a formula is computed when the entity is created") };
+                    self.errors.push(err(&k.at, format!("{}.{} reads {why}", k.name, a.name)));
                     continue;
                 }
                 let kind = p.kinds.iter_mut().find(|x| x.name == k.name).expect("declared kinds are compiled");
@@ -1540,6 +1587,7 @@ impl Checker {
                 source: u.source.clone(),
                 held: None,
                 shared: false,
+                sources: vec![],
             });
         }
         for pr in &src.prefers {
@@ -2479,6 +2527,7 @@ impl Checker {
             source,
             held,
             shared: false,
+            sources: vec![],
         });
         Some((Num::Taken { of: Path::default(), name, ty, period: self.period.clone(), kind: String::new() }, ty))
     }
