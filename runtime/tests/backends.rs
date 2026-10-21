@@ -137,9 +137,9 @@ fn models_json_names_backends() {
     let names: Vec<&str> = loaded.iter().map(|(n, _)| n.as_str()).collect();
     assert_eq!(names, ["routing@1", "sources@1"]);
     let bad = |t: &str| backend::load(t, || Box::new(fake.clone())).err().unwrap();
-    assert_eq!(bad(r#"{"m@1": {"backend": "magic"}}"#), "models.json: m@1: unknown backend `magic`; use \"jev\" or \"custom\"");
+    assert_eq!(bad(r#"{"m@1": {"backend": "magic"}}"#), "models.json: m@1: unknown backend `magic`; use \"jev\", \"custom\" or \"workers-ai\"");
     assert_eq!(bad(r#"{"m@1": {"modle": "jev-latest"}}"#), "models.json: m@1: unknown field `modle` for backend `jev`");
-    assert_eq!(bad(r#"{"m@1": {"backend": "custom", "url": "u"}}"#), "models.json: m@1: a custom backend needs `pick`, a JSON pointer such as \"/result/pick\"");
+    assert_eq!(bad(r#"{"m@1": {"backend": "custom", "url": "u"}}"#), "models.json: m@1: a custom backend needs `pick`, a JSON pointer such as \"/result/pick\", or `value` for a model that reads");
     assert_eq!(bad(r#"{"m@1": {"min_confidence": 2}}"#), "models.json: m@1: `min_confidence` must be a number from 0 to 1");
 }
 

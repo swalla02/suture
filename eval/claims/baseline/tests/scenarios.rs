@@ -29,7 +29,7 @@ fn model(pick: Option<Kind>) -> Model {
 
 /// Reads the photo, as the scenarios' reader does: the next reading each time.
 fn reads(readings: &[(i64, f64)]) -> Reader {
-    let mut readings = readings.to_vec().into_iter();
+    let mut readings = Vec::from(readings).into_iter();
     Box::new(move |_| readings.next())
 }
 

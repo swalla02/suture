@@ -848,7 +848,7 @@ impl Service {
         loop {
             let due = |k: &String| self.retry.get(k).is_none_or(|at| *at <= now);
             let mine = |a: &Ask| owner(&a.label, &pods) == Some(&self.pod);
-            let next = self.host.pending().into_iter().find(|a| self.adapters.contains_key(&a.adapter) && !self.posted.contains(&a.key) && due(&a.key) && mine(a)).cloned();
+            let next = self.host.pending().into_iter().find(|a| a.verb != crate::interp::READ_VERB && self.adapters.contains_key(&a.adapter) && !self.posted.contains(&a.key) && due(&a.key) && mine(a)).cloned();
             let Some(ask) = next else { return Ok(()) };
             // A long run of slow posts does not let this pod's beat lapse.
             self.beat(now + began.elapsed().as_secs())?;

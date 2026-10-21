@@ -225,7 +225,7 @@ fn a_total_across_units_is_not_a_choice_and_never_asks_a_model() {
 fn a_scenario_cannot_script_a_model_no_decide_names() {
     let p = prog("decide Carrier with model \"carriers@1\"\n");
     let r = scenario(&p, &format!("  when   model \"carrier@1\" picks Fast\n{ORDER}"));
-    assert!(r.failures.iter().any(|f| f.contains("no `decide` names model \"carrier@1\"")), "{:?}", r.failures);
+    assert!(r.failures.iter().any(|f| f.contains("no `decide` or source names model \"carrier@1\"")), "{:?}", r.failures);
 }
 
 #[test]
