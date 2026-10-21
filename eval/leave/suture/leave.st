@@ -26,7 +26,7 @@ define: an Application is short when its type's longest is 0 or its days is at m
 define: an Application is entitled when its type's after is 0 days or its from is less than its employee's joined or its from - its employee's joined is at least its type's after
 define: an Application is timely when its from is more than its created - 1 day or its employee's company is backdating
 define: an Application is sound when it is fitting and it is affordable and it is short and it is entitled
-define: an Application is valid when its to is at least its from and its days is more than 0 and it is sound and its approver's user is not ""
+define: an Application is valid when its to is at least its from and its days is more than 0 and it is sound
 define: an Application is permitted when its employee's company is selfish
 
 define: an Allocation is pending when the total days of its Applications that are open is more than 0

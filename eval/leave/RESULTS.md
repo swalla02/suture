@@ -46,7 +46,7 @@ hrms's count drops, by pattern, its lines about holidays and half days, attendan
 - **Finding the allocation.** hrms finds the allocation whose period holds the dates. The port has the caller name it, and checks that it fits. A `uses` could choose it, but `uses` belongs on a part, and an application is a root.
 
 **Smaller frictions.**
-- A required reference can be left out. `approver` has no default, but creating an application without one succeeds, and the gate refuses it only because `its approver's user` is unknown. An attribute with no default should be required.
+- A required reference could be left out. `approver` has no default, but creating an application without one succeeded, and the gate refused it only because `its approver's user` was unknown. Since slice 29 an attribute with no default is required, and the port drops that condition.
 - No admit can mix `and` and `or`, so each "unless the company allows it" became its own `define` (`permitted`, `timely`), and self-approval needs two admits.
 - An expectation about a calculation (`expect AT's leaves - the total days … is 26`) is refused: an `expect` is about one unit.
 
@@ -57,7 +57,6 @@ Slice 28 lets an entity count toward every day it spans: `rule apart: for each E
 ## Next
 
 Slices from these gaps, most valuable first:
-1. required attributes;
-2. runs across entities (consecutive leave);
-3. a way to keep a total that only a reader or an `expect` uses;
-4. days between dates.
+1. runs across entities (consecutive leave);
+2. a way to keep a total that only a reader or an `expect` uses;
+3. days between dates.

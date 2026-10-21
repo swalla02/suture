@@ -871,28 +871,6 @@
               "state": "sound",
               "negated": false
             }
-          },
-          {
-            "Cmp": {
-              "left": {
-                "Path": {
-                  "steps": [
-                    {
-                      "Ref": "approver"
-                    },
-                    {
-                      "Attr": "user"
-                    }
-                  ]
-                }
-              },
-              "op": "Ne",
-              "right": {
-                "Lit": {
-                  "Text": ""
-                }
-              }
-            }
           }
         ]
       }

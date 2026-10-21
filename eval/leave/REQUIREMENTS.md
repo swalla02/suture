@@ -38,4 +38,4 @@ Each of these is a finding (RESULTS.md):
 - **Settings.** hrms reads its switches from HR Settings, one for the site. The port puts the two it needs on the Company (`selfish`, `backdating`), and always requires an approver.
 - **Approve is one step.** hrms sets the status, then submits; the port's `approve` does both.
 - **The balance at application.** hrms checks it on save. The port checks it at the gate when applying, and the rule checks it again when approving.
-- **A missing approver** is not refused because it is missing, but because the gate reads `its approver's user`, which is unknown. Suture lets an attribute with no default be left out.
+- **A missing approver** was refused only because the gate read `its approver's user`, which was unknown: Suture let an attribute with no default be left out. Since slice 29 an attribute with no default is required, and the application is refused at the gate because it has no approver.
