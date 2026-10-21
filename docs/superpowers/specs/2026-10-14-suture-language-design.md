@@ -1775,9 +1775,9 @@ The leave comparison found that an application could be made without its approve
 
 ### AE.2 Semantics that slice 29 settles
 
-1. **Required.** An attribute written with no `=` and no source is required. Every new root entity, and every element of its lists, must be given it, by `given`, by `when a new …`, by an admitted input or over HTTP. An element's reference to its owner (`parcel: Parcel` on an Item of a Parcel) is set for it and is not given. State attributes have their first state as a default, and formulas are computed. The error names every missing attribute in alphabetical order: `a new Leave needs its approver and days: they have no default`.
+1. **Required.** An attribute written with no `=`, no source, and not set by an effect's answer (`reports priced with offer: Money`) is required. Every new root entity, and every element of its lists, must be given it, by `given`, by `when a new …`, by an admitted input or over HTTP. An element's reference to its owner (`parcel: Parcel` on an Item of a Parcel) is set for it and is not given. State attributes have their first state as a default, and formulas are computed. The error names every missing attribute in alphabetical order: `a new Leave needs its approver and days: they have no default`.
 2. **At the gate.** An input with a caller that leaves a required attribute out is refused at the gate with that error, before its `admit` is read, and the gate's log records it. Without a caller, the creation fails with the same error.
-3. **Deploys.** A new attribute without a default, on a kind with live units, is already an error (chapter 18), so existing entities never lack a required attribute.
+3. **Deploys and logs.** A new attribute without a default, on a kind with live units, is already an error (chapter 18), so a deploy never leaves an entity without a required attribute. A log written before slice 29 may hold a creation that left one out. Replaying it now refuses that creation, and the inputs about it after it, as replay refuses any input the program no longer admits.
 
 ### AE.3 Acceptance
 

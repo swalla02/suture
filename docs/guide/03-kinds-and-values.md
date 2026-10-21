@@ -55,7 +55,7 @@ What follows `=` decides whether an attribute is a default or a formula.
 
 - **A literal is a default.** `rare: Bool = no` starts as `no`, and a reaction or an admitted change may set it later.
 - **Anything else is a formula**, computed once when the entity is created and never changed afterwards.
-- **With no `=`, the attribute is required.** Every new entity must be given it, unless it comes from a source (chapter 14). A state attribute starts in its first state, and an element's reference to its owner is set for it. An input that leaves one out is refused at the gate: `a new Leave needs its approver: it has no default`. In a scenario, a `given` that leaves one out fails its step.
+- **With no `=`, the attribute is required.** Every new entity must be given it, unless it comes from a source (chapter 14) or an effect's answer sets it (chapter 5). A state attribute starts in its first state, and an element's reference to its owner is set for it. An input that leaves one out is refused at the gate: `a new Leave needs its approver: it has no default`. In a scenario, a `given` that leaves one out fails its step.
 
 ```suture
 kind Loan { member: Member, book: Book, days: Count,

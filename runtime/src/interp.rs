@@ -218,7 +218,7 @@ pub fn state_value(kind: &str, a: &suture_lang::ir::Attr, v: &Val) -> Result<(),
     }
 }
 
-/// An attribute with no default, formula or source must be given when its
+/// An attribute with no default, formula, source or effect answer that sets it must be given when its
 /// entity, or an element of its lists, is made (appendix AE.2.1); an
 /// element's reference to its owner is not given.
 pub fn required(prog: &Program, kind: &str, given: &[(String, Val)], items: &[(String, Vec<(String, Val)>)]) -> Result<(), String> {
@@ -237,7 +237,7 @@ fn missing(prog: &Program, kind: &str, given: &[(String, Val)], owner: Option<&s
         .attrs
         .iter()
         .filter(|a| a.default.is_none() && a.formula.is_none() && !given.iter().any(|(n, _)| *n == a.name))
-        .filter(|a| prog.source_of(kind, &a.name).is_none())
+        .filter(|a| !is_answered(prog, kind, &a.name))
         .filter(|a| !(a.ty == Ty::Ref && owner.is_some() && a.of.as_deref() == owner))
         .map(|a| a.name.as_str())
         .collect();

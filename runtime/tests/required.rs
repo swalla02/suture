@@ -51,3 +51,19 @@ fn a_given_entity_without_a_required_attribute_is_an_error() {
     let e = h.create("Approver", "A", &[]).unwrap_err();
     assert_eq!(e, "a new Approver needs its user: it has no default");
 }
+
+#[test]
+fn an_attribute_an_effects_answer_sets_is_not_required() {
+    let src = "module quotes version 1, currency EUR
+role staff
+kind Quote { amount: Money }
+effect price Quote via pricing within 1 hour
+  sends    its amount
+  reports  priced with offer: Money
+admit ask a new Quote by staff
+";
+    let mut h = Host::new(prog(src));
+    let ask = Caller { role: "staff".into(), name: "Sam".into(), verb: "asks".into() };
+    h.input_new(Some(&ask), "Quote", "Q1", &[("amount".into(), Val::Money(500))], &[]).unwrap_or_else(|e| panic!("{e}"));
+    assert!(h.unit("Q1").is_some());
+}
