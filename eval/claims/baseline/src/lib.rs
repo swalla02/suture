@@ -23,6 +23,8 @@ const SENDS: u32 = 3;
 /// The outcomes, best first: one that fails gives way to the next not yet tried.
 const PREFER: [Kind; 3] = [Kind::Repair, Kind::Writeoff, Kind::Cash];
 const YEARLY: i64 = 25000_00;
+const READ_SURE: f64 = 0.8;
+const READ_AGAIN: u64 = 3600;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Role {
@@ -102,6 +104,9 @@ pub struct Claim {
     pub tried: Vec<Kind>,
     /// Whether its payout counts toward its policy's yearly total.
     pub counted: bool,
+    /// The repair cost the reader read off the photo, and when to read again.
+    pub estimate: Option<i64>,
+    pub read_again: Option<u64>,
 }
 
 impl Claim {
@@ -127,6 +132,9 @@ pub struct ModelInput<'a> {
 
 pub type Model = Box<dyn FnMut(&ModelInput) -> Option<Kind>>;
 
+/// Reads the repair cost off the photo, with how sure it is.
+pub type Reader = Box<dyn FnMut(&[u8]) -> Option<(i64, f64)>>;
+
 #[derive(Default)]
 pub struct System {
     pub now: u64,
@@ -139,6 +147,7 @@ pub struct System {
     /// Every decision, for audit: who or what picked, and why.
     pub journal: Vec<String>,
     pub model: Option<Model>,
+    pub reader: Option<Reader>,
 }
 
 impl System {
@@ -206,6 +215,8 @@ impl System {
             alerted: false,
             tried: vec![],
             counted: false,
+            estimate: None,
+            read_again: None,
         };
         self.claims.insert(id.into(), claim);
         self.progress(id);
@@ -377,6 +388,27 @@ impl System {
         }
     }
 
+    /// Whether the photo lets a payout go: the amount at most the cost read
+    /// off it, or an adjuster's approval. Reads it when there is no reading
+    /// yet, and an hour after one the reader was not sure of.
+    fn estimate_clear(&mut self, id: &str) -> bool {
+        let now = self.now;
+        let c = self.claims.get_mut(id).unwrap();
+        if c.approved {
+            return true;
+        }
+        if c.estimate.is_none() && c.read_again.is_none_or(|at| now >= at) {
+            match self.reader.as_mut().and_then(|r| r(&c.photo)) {
+                Some((cost, sure)) if sure >= READ_SURE => {
+                    c.estimate = Some(cost);
+                    self.journal.push(format!("{id}: the photo shows a cost of {cost}, at {sure}"));
+                }
+                _ => c.read_again = Some(now + READ_AGAIN),
+            }
+        }
+        c.estimate.is_some_and(|e| c.amount <= e)
+    }
+
     /// Counts the claim toward its policy's total for the year it was filed
     /// in, if there is room; a claim without room waits.
     fn count_yearly(&mut self, id: &str) -> bool {
@@ -439,6 +471,9 @@ impl System {
                     return;
                 }
                 if payout > BIG && !c.approved {
+                    return;
+                }
+                if !self.estimate_clear(id) {
                     return;
                 }
                 if !self.fraud_clear(id) {

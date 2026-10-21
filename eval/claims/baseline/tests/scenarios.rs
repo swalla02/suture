@@ -27,6 +27,12 @@ fn model(pick: Option<Kind>) -> Model {
     Box::new(move |_| pick)
 }
 
+/// Reads the photo, as the scenarios' reader does: the next reading each time.
+fn reads(readings: &[(i64, f64)]) -> Reader {
+    let mut readings = readings.to_vec().into_iter();
+    Box::new(move |_| readings.next())
+}
+
 fn world(limit: i64) -> System {
     let mut s = System::default();
     s.add_holder(&ops(), "Ada", "Ada").unwrap();
@@ -61,6 +67,7 @@ fn a_dent_is_repaired_at_the_garage_with_the_most_room() {
 fn a_total_loss_is_written_off_for_the_claim_less_the_deductible() {
     let mut s = world(20000_00);
     s.model = Some(model(Some(Kind::Writeoff)));
+    s.reader = Some(reads(&[(4300_00, 0.95)]));
     s.file_claim(&ada(), "C1", "P1", WRECK.to_vec(), "roof", 4300_00).unwrap();
     s.fraud_answers("C1", Some(10));
     assert!(s.outbox.contains(&Request::Pay { claim: "C1".into(), amount: 4000_00, iban: "NL01".into() }));
@@ -72,6 +79,7 @@ fn a_total_loss_is_written_off_for_the_claim_less_the_deductible() {
 fn a_big_write_off_waits_for_an_adjuster() {
     let mut s = world(20000_00);
     s.model = Some(model(Some(Kind::Writeoff)));
+    s.reader = Some(reads(&[(9300_00, 0.95)]));
     s.file_claim(&ada(), "C1", "P1", WRECK.to_vec(), "roof", 9300_00).unwrap();
     assert!(!sent_pay(&s, "C1"));
     s.set_approved(&bo(), "C1", true).unwrap();
@@ -82,6 +90,7 @@ fn a_big_write_off_waits_for_an_adjuster() {
 fn a_write_off_over_the_policy_limit_is_never_paid_approved_or_not() {
     let mut s = world(3000_00);
     s.model = Some(model(Some(Kind::Writeoff)));
+    s.reader = Some(reads(&[(4300_00, 0.95)]));
     s.file_claim(&ada(), "C1", "P1", WRECK.to_vec(), "roof", 4300_00).unwrap();
     s.set_approved(&bo(), "C1", true).unwrap();
     assert!(!sent_pay(&s, "C1"));
@@ -126,6 +135,7 @@ fn with_no_model_and_no_garage_with_room_the_claim_is_written_off_after_two_days
     s.file_claim(&ada(), "C1", "P1", DENT.to_vec(), "door", 1200_00).unwrap();
     s.fraud_answers("C1", Some(10));
     assert!(sent_book(&s, "C1"));
+    s.reader = Some(reads(&[(1300_00, 0.95)]));
     s.file_claim(&who(Role::Holder, "Cy"), "C2", "P2", DENT.to_vec(), "door", 1300_00).unwrap();
     assert!(!sent_book(&s, "C2"));
     s.tick(2 * DAY);
@@ -140,6 +150,7 @@ fn only_the_policys_holder_files_or_withdraws_and_a_withdrawn_claim_stops() {
     let cy = who(Role::Holder, "Cy");
     assert!(s.file_claim(&cy, "C9", "P1", DENT.to_vec(), "door", 1200_00).is_err());
     s.model = Some(model(Some(Kind::Writeoff)));
+    s.reader = Some(reads(&[(9300_00, 0.95)]));
     s.file_claim(&ada(), "C1", "P1", WRECK.to_vec(), "roof", 9300_00).unwrap();
     assert!(s.withdraw(&cy, "C1").is_err());
     s.withdraw(&ada(), "C1").unwrap();
@@ -182,6 +193,7 @@ fn a_withdrawn_claim_stops_asking_the_bureau() {
 fn a_refused_payment_is_tried_three_times_then_a_repair_is_tried() {
     let mut s = world(20000_00);
     s.model = Some(model(Some(Kind::Writeoff)));
+    s.reader = Some(reads(&[(4300_00, 0.95)]));
     s.file_claim(&ada(), "C1", "P1", WRECK.to_vec(), "roof", 4300_00).unwrap();
     s.fraud_answers("C1", Some(10));
     for _ in 0..3 {
@@ -195,6 +207,7 @@ fn a_refused_payment_is_tried_three_times_then_a_repair_is_tried() {
 fn a_policy_pays_out_at_most_25000_eur_a_year() {
     let mut s = world(20000_00);
     s.model = Some(model(Some(Kind::Writeoff)));
+    s.reader = Some(reads(&[(15300_00, 0.95), (12300_00, 0.95)]));
     s.file_claim(&ada(), "C1", "P1", WRECK.to_vec(), "roof", 15300_00).unwrap();
     s.file_claim(&ada(), "C2", "P1", WRECK.to_vec(), "roof", 12300_00).unwrap();
     s.set_approved(&bo(), "C1", true).unwrap();
@@ -207,6 +220,7 @@ fn a_policy_pays_out_at_most_25000_eur_a_year() {
 fn a_holder_can_be_paid_the_payout_in_cash_under_the_same_checks() {
     let mut s = world(20000_00);
     s.model = Some(model(Some(Kind::Cash)));
+    s.reader = Some(reads(&[(1200_00, 0.95)]));
     s.file_claim(&ada(), "C1", "P1", DENT.to_vec(), "door", 1200_00).unwrap();
     s.fraud_answers("C1", Some(80));
     assert!(!sent_pay(&s, "C1"));
@@ -214,4 +228,29 @@ fn a_holder_can_be_paid_the_payout_in_cash_under_the_same_checks() {
     assert!(sent_pay(&s, "C1"));
     s.bank_answers("C1", true);
     assert!(s.claims["C1"].settled());
+}
+
+#[test]
+fn a_payout_over_the_cost_the_photo_shows_waits_for_an_adjuster() {
+    let mut s = world(20000_00);
+    s.model = Some(model(Some(Kind::Writeoff)));
+    s.reader = Some(reads(&[(2500_00, 0.95)]));
+    s.file_claim(&ada(), "C1", "P1", WRECK.to_vec(), "roof", 4300_00).unwrap();
+    assert_eq!(s.claims["C1"].estimate, Some(2500_00));
+    assert!(!sent_pay(&s, "C1"));
+    s.set_approved(&bo(), "C1", true).unwrap();
+    assert!(sent_pay(&s, "C1"));
+}
+
+#[test]
+fn a_reading_the_model_is_not_sure_of_is_read_again_an_hour_later() {
+    let mut s = world(20000_00);
+    s.model = Some(model(Some(Kind::Writeoff)));
+    s.reader = Some(reads(&[(4300_00, 0.5), (4300_00, 0.9)]));
+    s.file_claim(&ada(), "C1", "P1", WRECK.to_vec(), "roof", 4300_00).unwrap();
+    assert!(!sent_pay(&s, "C1"));
+    s.tick(3600);
+    s.fraud_answers("C1", Some(10));
+    assert_eq!(s.claims["C1"].estimate, Some(4300_00));
+    assert!(sent_pay(&s, "C1"));
 }
