@@ -1,7 +1,8 @@
--- Motor claims: a policyholder files a claim with a photo of the damage. A
--- model looks at the photo and picks a repair at a garage or a write-off,
--- another reads the repair cost off it, and every payout stays within the
--- policy, the reading and the fraud check.
+-- Motor claims: a policyholder files a claim with a photo of the damage and
+-- the garage's invoice. A model looks at the photo and picks a repair at a
+-- garage or a write-off, others read the amount off the invoice and the
+-- repair cost off the photo, and every payout stays within the policy, the
+-- reading and the fraud check.
 module claims version 1, currency EUR
 
 role holder is a Holder
@@ -11,7 +12,7 @@ role ops
 kind Holder   { name: Text }
 kind Policy   { holder: Holder, region: Text, limit: Money, deductible: Money, iban: Text secret }
 kind Garage   { name: Text, region: Text, bays: Count }
-kind Claim    { policy: Policy, photo: Media, damage: Text, amount: Money, score: Count, estimate: Money,
+kind Claim    { policy: Policy, photo: Media, invoice: Media, damage: Text, amount: Money, score: Count, estimate: Money,
                 approved: Bool = no, withdrawn: Bool = no,
                 payout: Money = amount - policy's deductible }
 kind Repair   { claim: Claim }
@@ -41,6 +42,11 @@ source Claim's score via fraud within 10 seconds
   reports    scored | fails with unknown
   good for   1 day
   otherwise  use 100
+source Claim's amount via model "invoices@1" within 10 seconds
+  sends      its invoice
+  asking     "the total the invoice charges"
+  at least 0.8 sure
+  otherwise  ask again after 1 hour
 source Claim's estimate via model "reader@1" within 10 seconds
   sends      its photo
   asking     "the repair cost the photo shows"
