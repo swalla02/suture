@@ -109,6 +109,7 @@ fn a_custom_format_reads_the_pick_at_its_pointer() {
         url: "https://models.example/route".into(),
         key_env: None,
         pick: "/result/pick".into(),
+        value: None,
         confidence: Some("/result/p".into()),
         min_confidence: Some(0.5),
         media: MediaMode::Inline,

@@ -7,12 +7,12 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
 use suture::{HoleId, Injection, Machine, NetBuilder, Value};
-use suture_lang::ir::{third_person, Admit, Admitted, Program, Ty, TIMED_OUT};
+use suture_lang::ir::{third_person, Admit, Admitted, Program, Ty, READ, TIMED_OUT, UNREAD};
 use suture_lang::scenario::Caller;
 
 use crate::interp::{self, duration};
 use crate::kernel::{self, Kinds};
-use crate::choice::{Answer, Choice, Models, Option_};
+use crate::choice::{Answer, Choice, Models, Option_, Reading};
 use crate::state::{answer_value, send_from_value, stamped, Ask, Decide, Fact, Facts, Msg, Unit, Val};
 
 pub struct Host {
@@ -63,6 +63,9 @@ pub struct Host {
     /// Whether a model is asked after the step that needs it, not in it
     /// (appendix S.2.2). The service defers; scenarios ask at once.
     pub defer_models: bool,
+    /// Whether a source a model reads is read as soon as it is fetched, or
+    /// waits as a request until the service asks the model (appendix AF.2.3).
+    pub reads_at_once: bool,
     /// The choices put to a model and not answered yet, in the order asked.
     asking: Vec<Asking>,
 }
@@ -111,6 +114,7 @@ fn resolve(model: &str, names: &[&str], answer: &Answer, within: u64) -> (String
         Answer::Picked(p) if names.contains(&p.as_str()) => return (p.clone(), format!(" by model \"{model}\" (of {})", names.join(", "))),
         Answer::Picked(p) => format!("model \"{model}\" picked {p}, which it was not offered"),
         Answer::Declined => format!("model \"{model}\" declined"),
+        Answer::Read(..) => format!("model \"{model}\" read a value instead of picking"),
         Answer::Unknown => format!("model \"{model}\" is not available"),
         Answer::Late => format!("model \"{model}\" did not answer within {within} ms"),
         Answer::Unsure(x) => format!("model \"{model}\" was unsure, at {x:.2}"),
@@ -157,6 +161,7 @@ impl Host {
             waiters: vec![],
             to_wake: VecDeque::new(),
             defer_models: false,
+            reads_at_once: true,
             asking: vec![],
             woken: BTreeSet::new(),
             gate: vec![],
@@ -863,22 +868,72 @@ impl Host {
             self.trace.push(format!("{:<3} ignored a late answer for {}: it timed out", ask.label, ask.key));
             return Ok(());
         };
-        let hole = self.pending[i].1;
-        let kind = self.pending[i].0.kind.clone();
-        let data = &self.seal(&kind, data.to_vec())?;
+        let (ask, hole) = self.pending[i].clone();
+        // An answer that cannot be delivered leaves its request waiting (spec §5.5).
+        self.deliver(hole, &ask, adapter, outcome, data)?;
+        self.pending.remove(i);
+        self.pump()
+    }
+
+    /// Injects a request's answer at its hole, and traces it.
+    fn deliver(&mut self, hole: HoleId, ask: &Ask, adapter: &str, outcome: &str, data: &[(String, Val)]) -> Result<(), String> {
+        let data = &self.seal(&ask.kind, data.to_vec())?;
         let sig = self.machine.program().sig.clone();
         let mut b = NetBuilder::new(&sig);
         let meet = b.var();
         b.agent(self.kinds.answer, answer_value(outcome, data), meet, &[]);
         let net = b.finish().map_err(|e| e.to_string())?;
         let inj = Injection::new(net).at_hole(meet, hole).key(format!("answer:{:032x}", hole.0));
-        // An answer that cannot be delivered leaves its request waiting (spec §5.5).
         self.machine.inject(inj).map_err(|e| e.to_string())?;
-        let (ask, _) = self.pending.remove(i);
         let shown: Vec<String> = data.iter().map(|(k, v)| format!("{k} {}", interp::shown(&self.prog, k, v))).collect();
         let tail = if shown.is_empty() { String::new() } else { format!(", {}", shown.join(", ")) };
         self.trace.push(format!("      {adapter}: {outcome}{tail}   ({})", ask.key));
-        self.pump()
+        Ok(())
+    }
+
+    /// Asks the model of a source it reads (appendix AF.2.1), and gives the
+    /// request's answer without applying it: `read` with the value, or
+    /// `unread`, with why in the trace.
+    pub fn read_model(&mut self, ask: &Ask) -> (String, Vec<(String, Val)>) {
+        let model = ask.adapter.clone();
+        let Some(src) = self.prog.sources.iter().find(|s| s.model && s.request_kind() == ask.kind).cloned() else {
+            self.trace.push(format!("      model \"{model}\": no source of the program is read by it   ({})", ask.key));
+            return (UNREAD.into(), vec![]);
+        };
+        let mut r = Reading {
+            unit: ask.label.clone(),
+            key: ask.key.clone(),
+            kind: src.kind.clone(),
+            facts: ask.sends.clone(),
+            attr: src.attr.clone(),
+            ty: src.ty,
+            asking: src.asking.clone(),
+            currency: self.prog.currency.clone(),
+            media: BTreeMap::new(),
+        };
+        r.media = r.media_named().into_iter().filter_map(|h| Some((h.to_string(), self.media.get(h)?))).collect();
+        let within = src.within_secs.saturating_mul(1000);
+        let why = match self.models.read(&model, &r, within) {
+            Answer::Read(v, _) if v.ty() != src.ty => format!("it gave {}, which is not a {:?}", v.show(&self.prog.currency), src.ty),
+            Answer::Read(v, c) => match (src.sure.map(|t| f64::from(t) / 1000.0), c) {
+                (Some(t), Some(c)) if c < t => format!("it read {} at {c:.2}, and the source needs at least {t} sure", v.show(&self.prog.currency)),
+                (Some(t), None) => format!("it gave no confidence, and the source needs at least {t} sure"),
+                (_, c) => {
+                    if let Some(c) = c {
+                        self.trace.push(format!("      model \"{model}\" read {}'s {} at {c:.2}", ask.label, src.attr));
+                    }
+                    return (READ.into(), vec![(src.attr.clone(), v)]);
+                }
+            },
+            Answer::Declined => format!("it found no {}", src.attr),
+            Answer::Unknown => "it is not available".into(),
+            Answer::Late => format!("it did not answer within {}", duration(src.within_secs)),
+            Answer::Unsure(x) => format!("it was unsure, at {x:.2}"),
+            Answer::Failed(e) => format!("it failed: {e}"),
+            Answer::Picked(p) => format!("it picked {p} instead of reading a value"),
+        };
+        self.trace.push(format!("      model \"{model}\" did not read {}'s {}: {why}", ask.label, src.attr));
+        (UNREAD.into(), vec![])
     }
 
     /// Moves the clock forward by `secs`, firing in order every timer due by
@@ -1229,6 +1284,13 @@ impl Host {
             }
             self.machine.commit().map_err(|e| e.to_string())?;
             for (ask, hole) in outside {
+                if ask.verb == interp::READ_VERB && self.reads_at_once {
+                    let (outcome, data) = self.read_model(&ask);
+                    if let Err(x) = self.deliver(hole, &ask, &ask.adapter.clone(), &outcome, &data) {
+                        first_error.get_or_insert(x);
+                    }
+                    continue;
+                }
                 if ask.verb == interp::MODEL_VERB {
                     if let Err(x) = self.ask_model(&ask, hole) {
                         first_error.get_or_insert(x);

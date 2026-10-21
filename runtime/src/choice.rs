@@ -62,6 +62,34 @@ pub struct Option_ {
     pub attrs: Vec<(String, Val)>,
 }
 
+/// What a model reading a value is given (appendix AF.2.2): the entity's
+/// kind and the values its source sends, and the attribute to read.
+#[derive(Clone, Debug)]
+pub struct Reading {
+    pub unit: String,
+    /// The request's idempotency key.
+    pub key: String,
+    pub kind: String,
+    pub facts: Vec<(String, Val)>,
+    pub attr: String,
+    pub ty: suture_lang::ir::Ty,
+    /// The source's `asking` text.
+    pub asking: Option<String>,
+    pub currency: String,
+    /// The content of the media among the facts, by hash.
+    pub media: BTreeMap<String, crate::media::Blob>,
+}
+
+impl Reading {
+    /// The hashes of the media among the facts, each once.
+    pub fn media_named(&self) -> Vec<&str> {
+        let mut out: Vec<&str> = self.facts.iter().filter_map(|(_, v)| if let Val::Media { sha256, .. } = v { Some(sha256.as_str()) } else { None }).collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+}
+
 /// A decision model: it picks one option by name, or declines.
 pub type Model = Box<dyn FnMut(&Choice) -> Option<String>>;
 
@@ -69,6 +97,12 @@ pub type Model = Box<dyn FnMut(&Choice) -> Option<String>>;
 /// (appendix K.2.6). `within` is its deadline; an answer after it is not used.
 pub trait Backend {
     fn decide(&mut self, c: &Choice, within: Duration) -> Answer;
+
+    /// Reads a value (appendix AF): [`Answer::Read`], or [`Answer::Declined`]
+    /// when it finds none. A backend that only picks cannot.
+    fn extract(&mut self, _: &Reading, _: Duration) -> Answer {
+        Answer::Failed("this model picks among options; it does not read values".into())
+    }
 }
 
 struct Func(Model);
@@ -85,6 +119,8 @@ pub enum Scripted {
     Pick(String),
     Decline,
     Late,
+    /// A value read, with its confidence if it gives one (appendix AF).
+    Read(Val, Option<u16>),
 }
 
 /// The host's models by `name@version` (appendix J.2.7): backends, and
@@ -99,6 +135,8 @@ pub struct Models {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Answer {
     Picked(String),
+    /// A value read (appendix AF), with the model's confidence if it gives one.
+    Read(Val, Option<f64>),
     Declined,
     Unknown,
     /// It did not answer within its deadline.
@@ -136,12 +174,31 @@ impl Models {
             Some(Scripted::Pick(p)) => return Answer::Picked(p),
             Some(Scripted::Late) => return Answer::Late,
             Some(Scripted::Decline) => return Answer::Declined,
+            Some(Scripted::Read(..)) => return Answer::Failed("it was scripted to read a value, not to pick".into()),
             None => {}
         }
         if let Some(b) = self.backends.get_mut(name) {
             let start = Instant::now();
             let a = b.decide(c, within);
             return if start.elapsed() > within && matches!(a, Answer::Picked(_)) { Answer::Late } else { a };
+        }
+        if self.scripted.contains_key(name) { Answer::Declined } else { Answer::Unknown }
+    }
+
+    /// Asks the model `name` to read a value, within `within_ms`, as [`Models::ask`] does.
+    pub fn read(&mut self, name: &str, r: &Reading, within_ms: u64) -> Answer {
+        let within = Duration::from_millis(within_ms);
+        match self.scripted.get_mut(name).and_then(VecDeque::pop_front) {
+            Some(Scripted::Read(v, c)) => return Answer::Read(v, c.map(|t| f64::from(t) / 1000.0)),
+            Some(Scripted::Late) => return Answer::Late,
+            Some(Scripted::Decline) => return Answer::Declined,
+            Some(Scripted::Pick(p)) => return Answer::Failed(format!("it was scripted to pick {p}, not to read a value")),
+            None => {}
+        }
+        if let Some(b) = self.backends.get_mut(name) {
+            let start = Instant::now();
+            let a = b.extract(r, within);
+            return if start.elapsed() > within && matches!(a, Answer::Read(..)) { Answer::Late } else { a };
         }
         if self.scripted.contains_key(name) { Answer::Declined } else { Answer::Unknown }
     }

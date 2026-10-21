@@ -1422,6 +1422,9 @@ fn model_ask(label: &str, model: &str, point: &str, key: String, within_ms: u64)
 /// The verb of a request to a model.
 pub const MODEL_VERB: &str = "decide";
 
+/// The verb of a fetch a model answers by reading the value (appendix AF).
+pub const READ_VERB: &str = "read";
+
 /// Whether a request key is a choice put to a model: `O1?Delivery#1`, `O1~credit#2?source`.
 pub fn is_choice(key: &str) -> bool {
     key.contains('?')
@@ -1613,7 +1616,8 @@ fn ask_source(prog: &Program, u: &mut Unit, at: &[usize], attr: &str, adapter: &
     f.sends = 1;
     let a = fetch_ask(&u.label, View::of(u), at, src);
     let sends: Vec<String> = a.sends.iter().map(|(k, v)| format!("{k} {}", shown(prog, k, v))).collect();
-    u.notes.push(format!("{attr}: {why}asking {adapter}{again} ({})", sends.join(", ")));
+    let who = if src.model { format!("model \"{adapter}\" to read it") } else { adapter.to_string() };
+    u.notes.push(format!("{attr}: {why}asking {who}{again} ({})", sends.join(", ")));
     out.asks.push(a);
 }
 
@@ -1622,7 +1626,7 @@ fn fetch_ask(label: &str, v: View, at: &[usize], src: &Source) -> Ask {
     let sends = src.sends.iter().filter_map(|(name, path)| value(v, at, path).map(|x| (name.clone(), x))).collect();
     Ask {
         adapter: src.adapter.clone(),
-        verb: "source".into(),
+        verb: if src.model { READ_VERB.into() } else { "source".into() },
         kind: src.request_kind(),
         label: label.to_string(),
         key: fetch_key(label, v.root, at, &src.attr, n),

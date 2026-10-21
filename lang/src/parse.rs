@@ -2,7 +2,7 @@
 //! statement it is; a capitalized first word starts `Kind needs …`.
 
 use crate::ast::*;
-use crate::ir::PERIODS;
+use crate::ir::{PERIODS, READ, UNREAD};
 use crate::lex::{statements, Cursor, Error, Stmt, Tok};
 use crate::sentence::{calc_expr, calc_formula, condition, literal, noun_phrase, predicate, rule_body, starts_noun_phrase, state_word, subject};
 
@@ -434,11 +434,24 @@ fn source(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     }
     let attr = c.word()?;
     c.expect_word("via")?;
-    let adapter = c.word()?;
+    // `via model "reader@1"`: a model reads the value (appendix AF).
+    let model = c.is_word("model") && matches!(c.peek_at(1), Some(Tok::Str(_)));
+    if model {
+        c.next();
+    }
+    let adapter = match c.peek() {
+        Some(Tok::Str(m)) if model => {
+            let m = m.clone();
+            c.next();
+            m
+        }
+        _ => c.word()?,
+    };
     c.expect_word("within")?;
     let within_secs = duration(&mut c)?;
     c.expect_end()?;
     let (mut sends, mut reports, mut good_for, mut otherwise) = (None, None, None, None);
+    let (mut asking, mut sure) = (None, None);
     for line in &st.lines[1..] {
         let mut c = Cursor::new(line, &st.file, st.line);
         if c.eat_word("sends") {
@@ -449,7 +462,32 @@ fn source(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
             c.expect_end()?;
             sends = Some(list);
         } else if c.eat_word("reports") {
+            if model {
+                return Err(c.error("a model reads the value or it does not; a source via a model has no `reports` line"));
+            }
             reports = Some(outcomes(&mut c)?);
+        } else if model && c.eat_word("asking") {
+            let Some(Tok::Str(text)) = c.peek() else {
+                return Err(c.error(format!("expected what the model is asked, in quotes, found {}", c.found())));
+            };
+            asking = Some(text.clone());
+            c.next();
+            c.expect_end()?;
+        } else if model && c.is_word("at") {
+            // `at least 0.8 sure`
+            c.next();
+            c.expect_word("least")?;
+            let bound = match c.peek() {
+                Some(Tok::Num(n)) => n.parse::<f64>().ok().filter(|x| (0.0..=1.0).contains(x)).map(|x| (x * 1000.0).round() as u16),
+                _ => None,
+            };
+            let Some(bound) = bound else {
+                return Err(c.error(format!("expected a confidence from 0 to 1, as in `at least 0.8 sure`, found {}", c.found())));
+            };
+            c.next();
+            c.expect_word("sure")?;
+            c.expect_end()?;
+            sure = Some(bound);
         } else if c.eat_word("good") {
             c.expect_word("for")?;
             good_for = Some(duration(&mut c)?);
@@ -471,12 +509,17 @@ fn source(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
             });
             c.expect_end()?;
         } else {
-            return Err(c.error(format!("expected `sends`, `reports`, `good for` or `otherwise`, found {}", c.found())));
+            let more = if model { ", `asking`, `at least … sure`" } else { "" };
+            return Err(c.error(format!("expected `sends`, `reports`, `good for`{more} or `otherwise`, found {}", c.found())));
         }
     }
-    let sends = sends.ok_or_else(|| st.error("a source needs a `sends` line saying what the adapter receives"))?;
-    let (success, data, failures) = reports.ok_or_else(|| st.error("a source needs a `reports` line"))?;
-    out.sources.push(SourceDecl { kind, attr, adapter, within_secs, sends, success, data, failures, good_for, otherwise, at });
+    let sends = sends.ok_or_else(|| st.error(if model { "a source needs a `sends` line saying what the model reads" } else { "a source needs a `sends` line saying what the adapter receives" }))?;
+    let (success, data, failures) = match reports {
+        Some(r) => r,
+        None if model => (READ.to_string(), vec![], vec![UNREAD.to_string()]),
+        None => return Err(st.error("a source needs a `reports` line")),
+    };
+    out.sources.push(SourceDecl { kind, attr, adapter, model, asking, sure, within_secs, sends, success, data, failures, good_for, otherwise, at });
     Ok(())
 }
 

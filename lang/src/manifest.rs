@@ -58,7 +58,8 @@ pub fn manifest(p: &Program) -> String {
 
 /// What each adapter receives and may answer, and the marked attributes.
 pub fn adapters(p: &Program) -> String {
-    let mut adapters: Vec<&str> = p.effects.iter().map(|e| e.adapter.as_str()).chain(p.sources.iter().map(|s| s.adapter.as_str())).collect();
+    // A source a model reads names a model, not an adapter (appendix AF).
+    let mut adapters: Vec<&str> = p.effects.iter().map(|e| e.adapter.as_str()).chain(p.sources.iter().filter(|s| !s.model).map(|s| s.adapter.as_str())).collect();
     adapters.sort();
     adapters.dedup();
     let mut out = "adapters:\n".to_string();
@@ -72,7 +73,7 @@ pub fn adapters(p: &Program) -> String {
             outcomes.extend(e.failures.iter().cloned());
             answers.push(format!("{} {}: {}", e.verb, e.kind, outcomes.join(" | ")));
         }
-        for s in p.sources.iter().filter(|s| s.adapter == a) {
+        for s in p.sources.iter().filter(|s| s.adapter == a && !s.model) {
             receives.extend(sends(p, &s.kind, &s.sends));
             let mut outcomes = vec![format!("{} ({})", s.success, s.attr)];
             outcomes.extend(s.failures.iter().cloned());

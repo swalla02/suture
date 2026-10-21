@@ -203,6 +203,8 @@ impl Service {
         let mut host = Host::new(prog.clone());
         // A served program asks its models after the step (appendix S.2.2).
         host.defer_models = true;
+        // And reads with a model as it posts to an adapter (appendix AF.2.3).
+        host.reads_at_once = false;
         Service {
             host,
             started: now,
@@ -652,12 +654,30 @@ impl Service {
             self.refresh()?;
             let mine = |l: &String| owner(l, &pods) == Some(&self.pod);
             let next = self.host.model_asks().into_iter().find(|(k, l)| mine(l) && !asked.contains(k));
-            let Some((key, _)) = next else { return Ok(out) };
+            let Some((key, _)) = next else { break };
             asked.insert(key.clone());
             let Some(answer) = self.host.ask_model_now(&key) else { continue };
             out.extend(self.locked(|s| {
                 let from = s.host.trace.len();
                 s.applied(Record::Decided { key: key.clone(), answer: answer.clone() })?;
+                Ok(s.host.trace[from..].to_vec())
+            })?);
+            self.beat(now)?;
+        }
+        // Then the sources a model reads: its answer is logged as the
+        // request's, so replay never asks it again (appendix AF.2.3).
+        loop {
+            self.refresh()?;
+            let mine = |l: &String| owner(l, &pods) == Some(&self.pod);
+            let next = self.host.pending().into_iter().find(|a| a.verb == crate::interp::READ_VERB && mine(&a.label) && !asked.contains(&a.key)).cloned();
+            let Some(ask) = next else { return Ok(out) };
+            asked.insert(ask.key.clone());
+            let from = self.host.trace.len();
+            let (outcome, data) = self.host.read_model(&ask);
+            out.extend(self.host.trace[from..].to_vec());
+            out.extend(self.locked(|s| {
+                let from = s.host.trace.len();
+                s.applied(Record::Answer { adapter: ask.adapter.clone(), outcome: outcome.clone(), key: Some(ask.key.clone()), target: None, data: data.clone() })?;
                 Ok(s.host.trace[from..].to_vec())
             })?);
             self.beat(now)?;

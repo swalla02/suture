@@ -125,6 +125,24 @@ pub fn date_text(t: i64) -> String {
     if secs == 0 { day } else { format!("{day} {}:{:02}", secs / 3_600, secs % 3_600 / 60) }
 }
 
+/// An ISO date or date and time, `2026-03-01` or `2026-03-01T14:30[:00][Z]`,
+/// as runtime seconds; a model reads times in this form (appendix AF.2.5).
+pub fn iso_time(s: &str) -> Option<i64> {
+    let s = s.trim().trim_end_matches('Z');
+    let (date, time) = s.split_once(['T', ' ']).unwrap_or((s, "00:00"));
+    let num = |x: &str| if !x.is_empty() && x.chars().all(|c| c.is_ascii_digit()) { x.parse::<i64>().ok() } else { None };
+    let mut d = date.splitn(3, '-').map(num);
+    let (y, m, day) = (d.next()??, d.next()??, d.next()??);
+    let mut t = time.splitn(3, ':').map(num);
+    let (h, min, sec) = (t.next()??, t.next()??, t.next().unwrap_or(Some(0))?);
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let days_in = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if !(1..=12).contains(&m) || day < 1 || day > days_in[(m - 1) as usize] || h > 23 || min > 59 || sec > 59 {
+        return None;
+    }
+    Some((days_from_civil(y, m, day) - DAY_ZERO) * 86_400 + h * 3_600 + min * 60 + sec)
+}
+
 /// 2026-01-01, the runtime clock's 0, as days since 1970-01-01.
 const DAY_ZERO: i64 = 20_454;
 

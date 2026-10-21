@@ -53,30 +53,43 @@ pub fn run_with(prog: &Program, sc: &Scenario, setup: impl FnOnce(&mut Host)) ->
                 let r = values(prog, &mut host.media, &base, &[(attr.clone(), value.clone())]).and_then(|v| host.input_change(Some(by), target, attr, v[0].1.clone()));
                 refusal(&mut host, target, refused.as_ref(), r, "it was changed")
             }
-            ScenarioStep::Model { model, .. } if !prog.decisions.iter().any(|d| d.model.as_ref() == Some(model)) => {
-                Err(format!("no `decide` names model \"{model}\""))
+            ScenarioStep::Model { model, .. }
+                if !prog.decisions.iter().any(|d| d.model.as_ref() == Some(model)) && !prog.sources.iter().any(|s| s.model && s.adapter == *model) =>
+            {
+                Err(format!("no `decide` or source names model \"{model}\""))
             }
             ScenarioStep::Model { model, answers } => {
-                let shown: Vec<String> = answers
+                let scripted: Result<Vec<Scripted>, String> = answers
                     .iter()
-                    .map(|a| match a {
-                        ModelAnswer::Pick(p) => format!("pick {p}"),
-                        ModelAnswer::Decline => "decline".into(),
-                        ModelAnswer::Late => "be late".into(),
+                    .map(|a| {
+                        Ok(match a {
+                            ModelAnswer::Pick(p) => Scripted::Pick(p.clone()),
+                            ModelAnswer::Decline | ModelAnswer::Nothing => Scripted::Decline,
+                            ModelAnswer::Late => Scripted::Late,
+                            ModelAnswer::Read(l, sure) => Scripted::Read(values(prog, &mut host.media, &base, &[("value".into(), l.clone())])?.remove(0).1, *sure),
+                        })
                     })
                     .collect();
-                // `will pick Fast, then Small`
-                let shown = shown.join(", then ").replace(", then pick ", ", then ");
-                host.trace.push(format!("      model \"{model}\" will {shown}"));
-                host.models.answers(
-                    model,
-                    answers.iter().map(|a| match a {
-                        ModelAnswer::Pick(p) => Scripted::Pick(p.clone()),
-                        ModelAnswer::Decline => Scripted::Decline,
-                        ModelAnswer::Late => Scripted::Late,
-                    }),
-                );
-                Ok(())
+                scripted.map(|scripted| {
+                    let shown: Vec<String> = scripted
+                        .iter()
+                        .zip(answers)
+                        .map(|(s, a)| match (s, a) {
+                            (_, ModelAnswer::Nothing) => "read nothing".into(),
+                            (Scripted::Pick(p), _) => format!("pick {p}"),
+                            (Scripted::Decline, _) => "decline".into(),
+                            (Scripted::Late, _) => "be late".into(),
+                            (Scripted::Read(v, sure), _) => {
+                                let at = sure.map(|t| format!(" at {}", f64::from(t) / 1000.0)).unwrap_or_default();
+                                format!("read {}{at}", v.show(&prog.currency))
+                            }
+                        })
+                        .collect();
+                    // `will pick Fast, then Small`
+                    let shown = shown.join(", then ").replace(", then pick ", ", then ").replace(", then read ", ", then ");
+                    host.trace.push(format!("      model \"{model}\" will {shown}"));
+                    host.models.answers(model, scripted);
+                })
             }
             ScenarioStep::Answer { adapter, outcome, data, target } => {
                 values(prog, &mut host.media, &base, data).and_then(|v| host.answer(adapter, outcome, &v, target.as_deref()))

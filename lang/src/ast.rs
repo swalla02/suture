@@ -231,7 +231,12 @@ pub struct EffectDecl {
 pub struct SourceDecl {
     pub kind: String,
     pub attr: String,
+    /// The adapter, or the model's `name@version` when `model` (appendix AF).
     pub adapter: String,
+    pub model: bool,
+    /// What the model is asked, and the confidence a value it reads needs, in thousandths.
+    pub asking: Option<String>,
+    pub sure: Option<u16>,
     pub within_secs: u64,
     pub sends: Vec<NounPhrase>,
     pub success: String,

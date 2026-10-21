@@ -351,7 +351,16 @@ pub struct Source {
     pub kind: String,
     pub attr: String,
     pub ty: Ty,
+    /// The adapter, or the model's `name@version` when `model` (appendix AF).
     pub adapter: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub model: bool,
+    /// What the model is asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asking: Option<String>,
+    /// The confidence, in thousandths, that a value the model reads needs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sure: Option<u16>,
     pub within_secs: u64,
     /// What the adapter receives, as for an effect.
     pub sends: Vec<(String, Path)>,
@@ -361,6 +370,10 @@ pub struct Source {
     pub good_for: Option<u64>,
     pub otherwise: Otherwise,
 }
+
+/// A model source's outcomes: it read the value, or did not (appendix AF.2.1).
+pub const READ: &str = "read";
+pub const UNREAD: &str = "unread";
 
 impl Source {
     /// How requests name it: `Order~credit@bureau`.

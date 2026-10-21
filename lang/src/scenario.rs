@@ -21,6 +21,10 @@ pub enum ModelAnswer {
     Pick(String),
     Decline,
     Late,
+    /// `reads 1200 EUR [at 0.4]`: a value, with its confidence in thousandths (appendix AF).
+    Read(Literal, Option<u16>),
+    /// `reads nothing`
+    Nothing,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -170,7 +174,14 @@ fn step(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {
         let model = model.clone();
         c.next();
         c.next();
-        let answers = if c.eat_word("declines") {
+        let answers = if c.eat_word("reads") {
+            let mut reads = vec![read(c)?];
+            while c.eat_sym(',') {
+                c.expect_word("then")?;
+                reads.push(read(c)?);
+            }
+            reads
+        } else if c.eat_word("declines") {
             vec![ModelAnswer::Decline]
         } else if c.eat_word("is") {
             c.expect_word("late")?;
@@ -250,6 +261,28 @@ fn step(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {
 }
 
 /// `is refused by rule late`, `is refused at the gate`, or nothing.
+/// `1200 EUR [at 0.4]` or `nothing`: what a model reads (appendix AF).
+fn read(c: &mut Cursor) -> Result<ModelAnswer, Error> {
+    if c.eat_word("nothing") {
+        return Ok(ModelAnswer::Nothing);
+    }
+    let Some(value) = literal(c)? else {
+        return Err(c.error(format!("expected the value the model reads, or `nothing`, found {}", c.found())));
+    };
+    let sure = if c.eat_word("at") {
+        let sure = match c.peek() {
+            Some(Tok::Num(n)) => n.parse::<f64>().ok().filter(|x| (0.0..=1.0).contains(x)).map(|x| (x * 1000.0).round() as u16),
+            _ => None,
+        };
+        let Some(sure) = sure else { return Err(c.error(format!("expected a confidence from 0 to 1, as in `at 0.4`, found {}", c.found()))) };
+        c.next();
+        Some(sure)
+    } else {
+        None
+    };
+    Ok(ModelAnswer::Read(value, sure))
+}
+
 fn refusal(c: &mut Cursor) -> Result<Option<Refused>, Error> {
     if !c.eat_word("is") {
         return Ok(None);

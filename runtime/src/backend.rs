@@ -9,8 +9,9 @@ use std::time::Duration;
 use base64::Engine;
 use serde_json::{json, Map, Value};
 
-use crate::choice::{Answer, Backend, Choice};
+use crate::choice::{Answer, Backend, Choice, Reading};
 use crate::state::Val;
+use suture_lang::ir::Ty;
 
 /// Jev's decision endpoint (docs.typesafe.ai/api).
 pub const JEV_URL: &str = "https://api.typesafe.ai/v1/systemone";
@@ -103,9 +104,13 @@ pub const MAX_MEDIA_SENT: usize = 6 * 1024 * 1024;
 
 /// A fact as a backend gets it: media with its content when inlined.
 fn sent(v: &Val, c: &Choice, mode: MediaMode) -> Value {
-    let mut out = fact(v, &c.currency);
+    sent_with(v, &c.currency, &c.media, mode)
+}
+
+fn sent_with(v: &Val, currency: &str, media: &std::collections::BTreeMap<String, crate::media::Blob>, mode: MediaMode) -> Value {
+    let mut out = fact(v, currency);
     if let (Val::Media { sha256, .. }, MediaMode::Inline) = (v, mode)
-        && let Some(b) = c.media.get(sha256)
+        && let Some(b) = media.get(sha256)
     {
         out["base64"] = json!(base64::engine::general_purpose::STANDARD.encode(b.data.as_slice()));
     }
@@ -134,6 +139,61 @@ fn media_unsent(c: &Choice, mode: MediaMode, max: usize) -> Option<String> {
         total += b.data.len();
     }
     (total > max).then(|| format!("the media is {total} bytes, over the {max} this model takes"))
+}
+
+/// Like [`media_unsent`], for a reading.
+fn reading_unsent(r: &Reading, mode: MediaMode, max: usize) -> Option<String> {
+    if mode == MediaMode::Omit {
+        return None;
+    }
+    let mut total = 0;
+    for h in r.media_named() {
+        let Some(b) = r.media.get(h) else { return Some(format!("the media sha256 {} is not in the media store", &h[..12])) };
+        total += b.data.len();
+    }
+    (total > max).then(|| format!("the media is {total} bytes, over the {max} this model takes"))
+}
+
+/// A value a model read, as the attribute's type (appendix AF.2.5): text,
+/// a whole number, an amount as a number of the module's currency, a time
+/// in ISO form, a duration in seconds.
+pub fn read_value(v: &Value, ty: Ty, currency: &str) -> Result<Val, String> {
+    let bad = |what: &str| format!("{v} is not {what}");
+    match (ty, v) {
+        (Ty::Text, Value::String(s)) => Ok(Val::Text(s.clone())),
+        (Ty::Count, Value::Number(n)) => match (n.as_i64(), n.as_f64()) {
+            (Some(i), _) => Ok(Val::Count(i)),
+            (None, Some(f)) if f.fract() == 0.0 && f.abs() < 9e15 => Ok(Val::Count(f as i64)),
+            _ => Err(bad("a whole number")),
+        },
+        (Ty::Money, Value::Number(n)) => match n.as_f64() {
+            Some(f) if f.is_finite() && f.abs() < 9e13 => Ok(Val::Money((f * 100.0).round() as i64)),
+            _ => Err(bad(&format!("an amount of {currency}"))),
+        },
+        (Ty::Time, Value::String(s)) => suture_lang::sentence::iso_time(s).map(Val::Time).ok_or_else(|| bad("a date, as in \"2026-03-01\"")),
+        (Ty::Duration, Value::Number(n)) => match n.as_f64() {
+            Some(f) if f.is_finite() && (0.0..9e15).contains(&f) => Ok(Val::Duration(f.round() as i64)),
+            _ => Err(bad("a duration in seconds")),
+        },
+        (Ty::Text, _) => Err(bad("text")),
+        (Ty::Count, _) => Err(bad("a whole number")),
+        (Ty::Money, _) => Err(bad(&format!("an amount of {currency}, as a number"))),
+        (Ty::Time, _) => Err(bad("a date, as in \"2026-03-01\"")),
+        (Ty::Duration, _) => Err(bad("a duration in seconds")),
+        (t, _) => Err(format!("a model does not read a {t:?}")),
+    }
+}
+
+/// The value read, or nothing found, with the confidence bound applied.
+fn read_answer(value: Option<&Value>, confidence: Option<f64>, r: &Reading, min: Option<f64>) -> Answer {
+    let Some(v) = value.filter(|v| !v.is_null()) else { return Answer::Declined };
+    match read_value(v, r.ty, &r.currency) {
+        Ok(val) => match (confidence, min) {
+            (Some(c), Some(m)) if c < m => Answer::Unsure(c),
+            _ => Answer::Read(val, confidence),
+        },
+        Err(e) => Answer::Failed(e),
+    }
 }
 
 fn key_from(env: Option<&str>) -> Result<Option<String>, String> {
@@ -241,8 +301,10 @@ impl Backend for Jev {
 pub struct Custom {
     pub url: String,
     pub key_env: Option<String>,
-    /// `/result/pick`.
+    /// `/result/pick`; empty for a model that only reads.
     pub pick: String,
+    /// `/result/value`: where a value read is (appendix AF.2.5).
+    pub value: Option<String>,
     pub confidence: Option<String>,
     pub min_confidence: Option<f64>,
     pub media: MediaMode,
@@ -256,7 +318,17 @@ impl Custom {
         json!({ "point": c.point, "state": state(c, self.media), "options": options })
     }
 
+    /// A reading: the same state, and the field to read.
+    pub fn read_request(&self, r: &Reading) -> Value {
+        let facts: Map<String, Value> = r.facts.iter().map(|(k, v)| (k.clone(), sent_with(v, &r.currency, &r.media, self.media))).collect();
+        let field = json!({ "name": r.attr, "type": type_name(r.ty), "instructions": instructions(r) });
+        json!({ "point": "read", "state": { "unit": r.unit, "kind": r.kind, "facts": facts }, "field": field })
+    }
+
     pub fn read(&self, answer: &Value) -> Answer {
+        if self.pick.is_empty() {
+            return Answer::Failed("this model reads values; it has no `pick` pointer".into());
+        }
         let Some(pick) = answer.pointer(&self.pick).and_then(Value::as_str) else {
             return Answer::Failed(format!("no text at {} in the answer", self.pick));
         };
@@ -277,6 +349,142 @@ impl Backend for Custom {
         let body = self.request(c);
         match self.transport.post(&self.url, key.as_deref(), &body, within) {
             Ok(v) => self.read(&v),
+            Err(e) if e == TIMED_OUT => Answer::Late,
+            Err(e) => Answer::Failed(e),
+        }
+    }
+
+    /// Reads the value at `value`, and the confidence at `confidence`.
+    fn extract(&mut self, r: &Reading, within: Duration) -> Answer {
+        let Some(at) = self.value.clone() else { return Answer::Failed("this model has no `value` pointer, so it does not read values".into()) };
+        if let Some(why) = reading_unsent(r, self.media, self.max_media_bytes) {
+            return Answer::Failed(why);
+        }
+        let key = match key_from(self.key_env.as_deref()) {
+            Ok(k) => k,
+            Err(e) => return Answer::Failed(e),
+        };
+        let body = self.read_request(r);
+        match self.transport.post(&self.url, key.as_deref(), &body, within) {
+            Ok(v) => {
+                let confidence = self.confidence.as_deref().and_then(|p| v.pointer(p)).and_then(Value::as_f64);
+                read_answer(v.pointer(&at), confidence, r, self.min_confidence)
+            }
+            Err(e) if e == TIMED_OUT => Answer::Late,
+            Err(e) => Answer::Failed(e),
+        }
+    }
+}
+
+/// A type as the custom format names it.
+fn type_name(t: Ty) -> &'static str {
+    match t {
+        Ty::Text => "text",
+        Ty::Count => "count",
+        Ty::Money => "money",
+        Ty::Time => "time",
+        Ty::Duration => "duration",
+        _ => "other",
+    }
+}
+
+/// What the model is asked: the source's `asking`, or the attribute's name.
+fn instructions(r: &Reading) -> String {
+    r.asking.clone().unwrap_or_else(|| format!("the {}'s {}", r.kind, r.attr))
+}
+
+/// Cloudflare Workers AI's extraction model, Clairic (appendix AF.2.5): the
+/// facts as the state's text, images beside it, and one typed field.
+pub struct WorkersAi {
+    pub url: String,
+    pub key_env: Option<String>,
+    pub min_confidence: Option<f64>,
+    pub max_media_bytes: usize,
+    pub transport: Box<dyn Transport>,
+}
+
+/// Workers AI's own key variable, by default.
+pub const WORKERS_AI_KEY_ENV: &str = "CLOUDFLARE_API_TOKEN";
+/// The images one request takes.
+pub const MAX_IMAGES: usize = 4;
+
+impl WorkersAi {
+    /// `{state, images, fields}`, or why the reading cannot be sent.
+    pub fn request(&self, r: &Reading) -> Result<Value, String> {
+        let mut state = format!("{} {}", r.kind, r.unit);
+        let mut images = vec![];
+        for (k, v) in &r.facts {
+            if let Val::Media { sha256, mime, .. } = v {
+                if !mime.starts_with("image/") {
+                    return Err(format!("{k} is {mime}; this model reads text and images"));
+                }
+                let b = r.media.get(sha256).ok_or_else(|| format!("the media sha256 {} is not in the media store", &sha256[..12]))?;
+                images.push(json!(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(b.data.as_slice()))));
+                state.push_str(&format!("\n{k}: image {}", images.len()));
+            } else {
+                state.push_str(&format!("\n{k}: {}", shown(v, &r.currency)));
+            }
+        }
+        if images.len() > MAX_IMAGES {
+            return Err(format!("{} images, over the {MAX_IMAGES} this model takes", images.len()));
+        }
+        let mut field = json!({ "instructions": instructions(r) });
+        match r.ty {
+            Ty::Text => field["type"] = json!("text"),
+            Ty::Count => {
+                field["type"] = json!("number");
+                field["integer"] = json!(true);
+            }
+            Ty::Money => {
+                field["type"] = json!("number");
+                field["decimals"] = json!(2);
+                field["unit"] = json!(r.currency);
+            }
+            Ty::Time => field["type"] = json!("datetime"),
+            Ty::Duration => {
+                field["type"] = json!("duration");
+                field["unit"] = json!("seconds");
+            }
+            t => return Err(format!("this model does not read a {t:?}")),
+        }
+        let mut body = json!({ "state": state, "fields": { r.attr.clone(): field } });
+        if !images.is_empty() {
+            body["images"] = Value::Array(images);
+        }
+        Ok(body)
+    }
+
+    /// Reads `answers.⟨attr⟩`, or `result.answers.⟨attr⟩` as the REST API wraps it.
+    pub fn read(&self, answer: &Value, r: &Reading) -> Answer {
+        let a = answer.pointer(&format!("/result/answers/{}", r.attr)).or_else(|| answer.pointer(&format!("/answers/{}", r.attr)));
+        let Some(a) = a else { return Answer::Failed(format!("no answers.{} in the answer", r.attr)) };
+        // `p_null`: how likely the value is absent from the input.
+        if a["p_null"].as_f64().is_some_and(|p| p >= 0.5) {
+            return Answer::Declined;
+        }
+        read_answer(a.get("value"), a["confidence"].as_f64(), r, self.min_confidence)
+    }
+}
+
+impl Backend for WorkersAi {
+    fn decide(&mut self, _: &Choice, _: Duration) -> Answer {
+        Answer::Failed("this model reads values; it does not pick among options".into())
+    }
+
+    fn extract(&mut self, r: &Reading, within: Duration) -> Answer {
+        if let Some(why) = reading_unsent(r, MediaMode::Inline, self.max_media_bytes) {
+            return Answer::Failed(why);
+        }
+        let body = match self.request(r) {
+            Ok(b) => b,
+            Err(e) => return Answer::Failed(e),
+        };
+        let key = match key_from(self.key_env.as_deref()) {
+            Ok(k) => k,
+            Err(e) => return Answer::Failed(e),
+        };
+        match self.transport.post(&self.url, key.as_deref(), &body, within) {
+            Ok(v) => self.read(&v, r),
             Err(e) if e == TIMED_OUT => Answer::Late,
             Err(e) => Answer::Failed(e),
         }
@@ -322,8 +530,9 @@ pub fn load(text: &str, mut transport: impl FnMut() -> Box<dyn Transport>) -> Re
         let backend = text("backend")?.unwrap_or_else(|| "jev".into());
         let allowed: &[&str] = match backend.as_str() {
             "jev" => &["backend", "url", "model", "key_env", "min_confidence", "media", "max_media_bytes"],
-            "custom" => &["backend", "url", "key_env", "pick", "confidence", "min_confidence", "media", "max_media_bytes"],
-            other => return Err(err(format!("unknown backend `{other}`; use \"jev\" or \"custom\""))),
+            "custom" => &["backend", "url", "key_env", "pick", "value", "confidence", "min_confidence", "media", "max_media_bytes"],
+            "workers-ai" => &["backend", "url", "key_env", "min_confidence", "max_media_bytes"],
+            other => return Err(err(format!("unknown backend `{other}`; use \"jev\", \"custom\" or \"workers-ai\""))),
         };
         if let Some(k) = cfg.keys().find(|k| !allowed.contains(&k.as_str())) {
             return Err(err(format!("unknown field `{k}` for backend `{backend}`")));
@@ -337,10 +546,18 @@ pub fn load(text: &str, mut transport: impl FnMut() -> Box<dyn Transport>) -> Re
             j.media = media;
             j.max_media_bytes = max_media_bytes;
             Box::new(j)
+        } else if backend == "workers-ai" {
+            let url = text("url")?.ok_or_else(|| err("a workers-ai backend needs a `url`, its account's …/ai/run/@cf/cloudflare/clairic".into()))?;
+            let key_env = text("key_env")?.or_else(|| Some(WORKERS_AI_KEY_ENV.into()));
+            Box::new(WorkersAi { url, key_env, min_confidence, max_media_bytes, transport: transport() })
         } else {
             let url = text("url")?.ok_or_else(|| err("a custom backend needs a `url`".into()))?;
-            let pick = text("pick")?.ok_or_else(|| err("a custom backend needs `pick`, a JSON pointer such as \"/result/pick\"".into()))?;
-            Box::new(Custom { url, key_env: text("key_env")?, pick, confidence: text("confidence")?, min_confidence, media, max_media_bytes, transport: transport() })
+            let (pick, value) = (text("pick")?, text("value")?);
+            if pick.is_none() && value.is_none() {
+                return Err(err("a custom backend needs `pick`, a JSON pointer such as \"/result/pick\", or `value` for a model that reads".into()));
+            }
+            let pick = pick.unwrap_or_default();
+            Box::new(Custom { url, key_env: text("key_env")?, pick, value, confidence: text("confidence")?, min_confidence, media, max_media_bytes, transport: transport() })
         };
         out.push((name.clone(), b));
     }

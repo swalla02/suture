@@ -367,6 +367,8 @@ struct Checker {
     scenario: bool,
     /// While an adapter's `sends` or a secret's formula is checked: secrets may be read.
     sending: bool,
+    /// While a model source's `sends` is checked: media may be read (appendix AF.2.2).
+    reading: bool,
     /// The marked attributes read while `sending`, as (kind, attribute, mark).
     marked: Vec<(String, String, Mark)>,
     /// The grants an effect or a source used, by index into `allows`.
@@ -638,7 +640,7 @@ fn cond_reads(p: &Program, c: &Cond, see: &mut dyn FnMut(&Path, Option<&str>)) {
 }
 
 /// The sourced attributes a rule reads, directly or through definitions
-/// (appendix I.2.4), as (kind, attribute). Names are matched by attribute,
+/// (appendix I.2.4) and formulas (appendix AF), as (kind, attribute). Names are matched by attribute,
 /// so a rule may be strict about more than it needs, never less.
 fn sourced_reads(p: &Program, r: &Rule) -> Vec<(String, String)> {
     let mut names: Vec<String> = vec![];
@@ -656,6 +658,14 @@ fn sourced_reads(p: &Program, r: &Rule) -> Vec<(String, String)> {
             states.push(n.clone());
             for d in p.defines.iter().filter(|d| d.state == n) {
                 cond_reads(p, &d.cond, &mut |_, last| {
+                    if let Some(a) = last {
+                        names.push(a.to_string());
+                    }
+                });
+            }
+            // `payout: Money = amount - …` reads `amount`.
+            for f in p.kinds.iter().flat_map(|k| k.attrs.iter()).filter(|a| a.name == n).filter_map(|a| a.formula.as_ref()) {
+                num_reads(p, f, &mut |_, last| {
                     if let Some(a) = last {
                         names.push(a.to_string());
                     }
@@ -1775,6 +1785,10 @@ impl Checker {
                 self.errors.push(err(&s.at, format!("{}.{} refers to shared entities; a source gives a value", s.kind, s.attr)));
                 continue;
             }
+            if s.model && attr.ty == Ty::Media {
+                self.errors.push(err(&s.at, format!("{}.{} is media; a model reads values out of media, it does not make it", s.kind, s.attr)));
+                continue;
+            }
             if attr.ty == Ty::Bool {
                 self.errors.push(err(&s.at, format!("{}.{} is a state; v0 sources values, not states: source a Text or Count and compare it", s.kind, s.attr)));
                 continue;
@@ -1810,6 +1824,7 @@ impl Checker {
             }
             let mut sends = vec![];
             self.sending = true;
+            self.reading = s.model;
             self.marked.clear();
             for np in &s.sends {
                 match self.np(p, &s.at, &s.kind, np) {
@@ -1819,7 +1834,16 @@ impl Checker {
                 }
             }
             self.sending = false;
-            self.grants_for(src, &s.at, &s.adapter);
+            self.reading = false;
+            if s.model {
+                // A model is not granted marked fields in v0 (appendix AF.2.2).
+                if let Some((kind, attr, m)) = std::mem::take(&mut self.marked).into_iter().next() {
+                    let what = if m == Mark::Secret { "secret" } else { "personal" };
+                    self.errors.push(err(&s.at, format!("{kind}'s {attr} is {what}, and a model is not sent marked attributes")));
+                }
+            } else {
+                self.grants_for(src, &s.at, &s.adapter);
+            }
             let otherwise = match &s.otherwise {
                 None => Otherwise::Hold,
                 Some(ast::OtherwiseDecl::Again(secs)) => Otherwise::Again(*secs),
@@ -1847,6 +1871,9 @@ impl Checker {
                 attr: s.attr.clone(),
                 ty: attr.ty,
                 adapter: s.adapter.clone(),
+                model: s.model,
+                asking: s.asking.clone(),
+                sure: s.sure,
                 within_secs: s.within_secs,
                 sends,
                 success: s.success.clone(),
@@ -2720,6 +2747,11 @@ impl Checker {
                     (_, Some(next)) => {
                         self.errors.push(err(at, format!("`{}`: {w} is a value, so it has no `{next}`", show(np))));
                         return None;
+                    }
+                    (Ty::Media, None) if self.reading => {
+                        // A model reads media (appendix AF.2.2).
+                        steps.push(Step::Attr(w.clone()));
+                        return Some((Path { steps }, End::Value(Ty::Media)));
                     }
                     (Ty::Media, None) => {
                         self.errors.push(err(at, format!("`{}`: {}'s {w} is media; {MEDIA_READ}", show(np), kind.name)));

@@ -491,14 +491,14 @@ pub fn source_line(p: &Program, s: &crate::ir::Source) -> String {
         true => format!("{read}; asked only when a step they hold back would go ahead"),
         false => format!("{read}; asked only when {}", or_list(&phrases)),
     };
-    format!(
-        "{}'s {} from {} within {} (sends {}); {trusted}; {otherwise}; {read}",
-        s.kind,
-        s.attr,
-        s.adapter,
-        duration_text(s.within_secs as i64),
-        sends.join(", ")
-    )
+    // `read by model "reader@1" … (reads photo; at least 0.8 sure)` (appendix AF).
+    let (from, sends) = if s.model {
+        let sure = s.sure.map(|t| format!("; used only when at least {} sure", f64::from(t) / 1000.0)).unwrap_or_default();
+        (format!("read by model \"{}\"", s.adapter), format!("reads {}{sure}", sends.join(", ")))
+    } else {
+        (format!("from {}", s.adapter), format!("sends {}", sends.join(", ")))
+    };
+    format!("{}'s {} {from} within {} ({sends}); {trusted}; {otherwise}; {read}", s.kind, s.attr, duration_text(s.within_secs as i64))
 }
 
 /// `it`, `its Order`: where an action applies.
