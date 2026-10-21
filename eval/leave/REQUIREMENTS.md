@@ -33,7 +33,7 @@ Each of these is a finding (RESULTS.md):
 
 - **Days are given.** hrms counts the days between the dates, less holidays, and halves a half day. The port takes `days` as given: Suture cannot count the days between two times (no Duration ÷ Duration), and has no fractional counts.
 - **The allocation is given.** hrms finds the allocation whose period holds the dates. The port has the caller name it and checks that it fits, because a unit cannot pick another unit by a range.
-- **Overlap.** hrms refuses a leave that overlaps another open or approved leave of the employee (`validate_leave_overlap`). A relation filter reads only the sibling, never the reader, so `the number of its employee's Applications that end after its from` cannot be written. Not ported.
+- **Overlap.** hrms refuses a leave that overlaps another open or approved leave of the employee (`validate_leave_overlap`). A relation filter reads only the sibling, never the reader, so `the number of its employee's Applications that end after its from` cannot be written. Ported since slice 28 as a total per day over the days each application spans; two half days on one date still overlap.
 - **Consecutive leave across applications.** hrms adds the leaves just before and after when checking the longest leave. Not ported, for the same reason.
 - **Settings.** hrms reads its switches from HR Settings, one for the site. The port puts the two it needs on the Company (`selfish`, `backdating`), and always requires an approver.
 - **Approve is one step.** hrms sets the status, then submits; the port's `approve` does both.

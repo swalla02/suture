@@ -45,6 +45,25 @@ scenario "a second application beyond what is left is refused (test_leaves_allow
   and    hr Admin applies a new Application L2 with employee E, type T, allocation AT, approver A, from 2026-03-05, to 2026-03-09 and days 5
            is refused at the gate
 
+scenario "an application that shares a day with an open or approved one is refused (test_overlap)":
+  given  a Company C with name Test
+  and    a Approver A with user "approver"
+  and    a Employee E with user "emp", company C, joined 2010-01-01 and approver A
+  and    a Employee F with user "other", company C, joined 2010-01-01 and approver A
+  and    a Type T with name Test
+  and    a Allocation AT with employee E, type T, from 2026-01-01, to 2026-12-31 and leaves 30
+  and    a Allocation AF with employee F, type T, from 2026-01-01, to 2026-12-31 and leaves 30
+  when   employee E applies a new Application L1 with employee E, type T, allocation AT, approver A, from 2026-05-04, to 2026-05-06 and days 3
+  and    employee E applies a new Application L2 with employee E, type T, allocation AT, approver A, from 2026-05-04, to 2026-05-06 and days 3
+           is refused by rule apart
+  and    employee E applies a new Application L3 with employee E, type T, allocation AT, approver A, from 2026-05-06, to 2026-05-07 and days 2
+           is refused by rule apart
+  and    employee F applies a new Application L4 with employee F, type T, allocation AF, approver A, from 2026-05-04, to 2026-05-06 and days 3
+  and    approver A rejects L1
+  and    employee E applies a new Application L5 with employee E, type T, allocation AT, approver A, from 2026-05-05, to 2026-05-05 and days 1
+  expect L5 is open
+  expect L4 is open
+
 scenario "a type is applicable only some days after joining (test_applicable_after)":
   given  a Company C with name Test
   and    a Approver A with user "approver"

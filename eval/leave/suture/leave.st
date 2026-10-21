@@ -17,6 +17,7 @@ kind Application { employee: Employee, type: Type, allocation: Allocation, appro
                    from: Time, to: Time, days: Count,
                    status: open | approved | rejected | cancelled }
 
+define: an Application is held when it is open or it is approved
 define: an Application is counted when it is approved and its type is not negative
 define: an Application is placed when its allocation's from is at most its from and its allocation's to is at least its to
 define: an Application is fitting when it is placed or its type is negative
@@ -31,6 +32,7 @@ define: an Application is permitted when its employee's company is selfish
 define: an Allocation is pending when the total days of its Applications that are open is more than 0
 define: an Allocation is used when the total days of its Applications that are approved is more than 0
 
+rule apart: for each Employee and day from their from to their to, the number of their Applications that are held is at most 1
 rule balance: the total days of each Allocation's Applications that are counted is at most its leaves
 
 admit apply a new Application by employee where the Application's employee is the caller and the Application is valid and it is timely and its allocation's employee is its employee and its allocation's type is its type

@@ -270,6 +270,42 @@
   "decisions": [],
   "rules": [
     {
+      "name": "apart",
+      "subject": "Employee",
+      "filter": [],
+      "body": {
+        "Every": {
+          "Cmp": {
+            "left": {
+              "Taken": {
+                "of": {
+                  "steps": []
+                },
+                "name": "number of Applications that are held per day from its from to its to",
+                "ty": "Count",
+                "period": "day"
+              }
+            },
+            "op": "Le",
+            "right": {
+              "Lit": {
+                "Count": 1
+              }
+            }
+          }
+        }
+      },
+      "source": "for each Employee and day from their from to their to, the number of their Applications that are held is at most 1",
+      "formula": "for each Employee e: count(a in Application where a.employee = e and a is held, per day from a.from to a.to) ≤ 1",
+      "paraphrase": "each employee on its own: the number of its Applications that are held on any one day they span is at most 1",
+      "tier": "per-group",
+      "period": "day",
+      "fixed": false,
+      "sources": [],
+      "fresh": [],
+      "applies": null
+    },
+    {
       "name": "balance",
       "subject": "Allocation",
       "filter": [],
@@ -311,6 +347,32 @@
     }
   ],
   "defines": [
+    {
+      "kind": "Application",
+      "state": "held",
+      "cond": {
+        "Or": [
+          {
+            "State": {
+              "node": {
+                "steps": []
+              },
+              "state": "open",
+              "negated": false
+            }
+          },
+          {
+            "State": {
+              "node": {
+                "steps": []
+              },
+              "state": "approved",
+              "negated": false
+            }
+          }
+        ]
+      }
+    },
     {
       "kind": "Application",
       "state": "counted",
@@ -1122,6 +1184,65 @@
             "steps": []
           },
           "state": "approved",
+          "negated": false
+        }
+      }
+    },
+    {
+      "id": "Employee(number of Applications that are held per day from its from to its to)",
+      "subject": "Application",
+      "target": "Employee",
+      "per": null,
+      "key_attr": "",
+      "key_member": false,
+      "key": {
+        "Path": {
+          "steps": [
+            {
+              "Attr": "employee"
+            }
+          ]
+        }
+      },
+      "filter": [],
+      "taking": {
+        "name": "number of Applications that are held per day from its from to its to",
+        "amount": {
+          "Lit": {
+            "Count": 1
+          }
+        },
+        "ty": "Count",
+        "period": "day",
+        "span": [
+          {
+            "Path": {
+              "steps": [
+                {
+                  "Attr": "from"
+                }
+              ]
+            }
+          },
+          {
+            "Path": {
+              "steps": [
+                {
+                  "Attr": "to"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "prefer": [],
+      "source": "each Application adds to its employee's total number of Applications that are held per day from its from to its to",
+      "held": {
+        "State": {
+          "node": {
+            "steps": []
+          },
+          "state": "held",
           "negated": false
         }
       }

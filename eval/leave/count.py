@@ -29,7 +29,7 @@ FUNCTIONS = {
     "validate_for_self_approval", "create_leave_ledger_entry", "get_leave_details",
     "get_leave_balance_on", "get_leave_allocation_records", "get_leaves_pending_approval_for_period",
     "get_remaining_leaves", "_get_remaining_leaves", "get_leaves_for_period", "get_leave_entries",
-    "is_lwp", "get_leave_approver", "get_employee_leave_approver",
+    "is_lwp", "get_leave_approver", "get_employee_leave_approver", "validate_leave_overlap", "throw_overlap_error",
 }
 SKIP_LINE = re.compile(r"holiday|half_day|attendance|salary|carry_forward|is_carry|cf_|expir|block|optional|workflow"
                        r"|notif|publish|msgprint|_\(\"|get_link_to_form|frappe\.bold|precision|title=|raise_exception", re.I)
