@@ -361,7 +361,19 @@ impl Host {
         for (_, v) in given.iter().chain(elements.iter().flat_map(|(_, attrs)| attrs)) {
             self.carry(v, &mut facts);
         }
-        let unit = interp::build_unit(&self.prog, label, kind, &given, &elements, facts, self.clock())?;
+        let unit = match interp::build_unit(&self.prog, label, kind, &given, &elements, facts, self.clock()) {
+            Ok(u) => u,
+            // An input that leaves out a required attribute is refused at the gate (appendix AE.2.2).
+            Err(e) => match (gated, interp::required(&self.prog, kind, &given, &elements)) {
+                (Some(Some(c)), Err(missing)) if missing == e => {
+                    let line = format!("refused at the gate: {} {} {} a new {kind} {label}: {e}", c.role, c.name, c.verb);
+                    self.trace.push(format!("gate: {line}"));
+                    self.gate.push(line);
+                    return Err(format!("refused at the gate: {e}"));
+                }
+                _ => return Err(e),
+            },
+        };
         if let Some(by) = gated {
             let fits = |a: &Admitted| matches!(a, Admitted::New { verb, kind: k } if by.is_some_and(|c| third_person(verb) == c.verb) && k == kind);
             self.gate(by, fits, &format!("a new {kind} {label}"), &unit)?;

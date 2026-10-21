@@ -32,7 +32,7 @@ fn passes(src: &str, body: &str) -> Report {
 fn a_share_of_an_amount_is_rounded_half_away_from_zero() {
     passes(
         SHOP,
-        "  given  a Order O1 with promo -10 EUR and items 30 EUR
+        "  given  a Order O1 with promo -10 EUR, items 30 EUR and opens 2026-02-01
   and    a Unit U1 with order O1 and price 10 EUR
   and    a Unit U2 with order O1 and price 5 EUR
   and    a Unit U3 with order O1 and price 0.05 EUR
@@ -48,14 +48,14 @@ fn a_share_of_an_amount_is_rounded_half_away_from_zero() {
 fn a_share_of_a_zero_whole_is_unknown_unless_it_is_a_share_of_nothing() {
     passes(
         SHOP,
-        "  given  a Order O1 with items 0 EUR
+        "  given  a Order O1 with items 0 EUR and opens 2026-02-01
   and    a Unit U1 with order O1 and price 10 EUR
   expect U1's share is 0 EUR
 ",
     );
     let r = scenario(
         SHOP,
-        "  given  a Order O1 with promo -10 EUR and items 0 EUR
+        "  given  a Order O1 with promo -10 EUR, items 0 EUR and opens 2026-02-01
   and    a Unit U1 with order O1 and price 10 EUR
   expect U1's share is 0 EUR
 ",

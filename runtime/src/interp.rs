@@ -159,6 +159,8 @@ pub fn build_unit(
         element.status = Status::Done;
         root.parts.push(element);
     }
+    // After the given values are checked, so a wrong one is named first.
+    required(prog, kind, given, items)?;
     // Formulas may read each other and the owner in any order: compute
     // until nothing changes. Each attribute is set at most once.
     while (0..root.parts.len()).fold(formulas(prog, &mut root, &facts, &[]), |changed, i| formulas(prog, &mut root, &facts, &[i]) || changed) {}
@@ -213,6 +215,37 @@ pub fn state_value(kind: &str, a: &suture_lang::ir::Attr, v: &Val) -> Result<(),
     match v {
         Val::Text(x) if !a.states.is_empty() && !a.states.contains(x) => Err(format!("{kind}.{} is one of {}, not {x}", a.name, a.states.join(", "))),
         _ => Ok(()),
+    }
+}
+
+/// An attribute with no default, formula or source must be given when its
+/// entity, or an element of its lists, is made (appendix AE.2.1); an
+/// element's reference to its owner is not given.
+pub fn required(prog: &Program, kind: &str, given: &[(String, Val)], items: &[(String, Vec<(String, Val)>)]) -> Result<(), String> {
+    missing(prog, kind, given, None)?;
+    for (list, attrs) in items {
+        if let Some(l) = prog.lists.iter().find(|l| l.owner == kind && l.name == *list) {
+            missing(prog, &l.element, attrs, Some(kind))?;
+        }
+    }
+    Ok(())
+}
+
+fn missing(prog: &Program, kind: &str, given: &[(String, Val)], owner: Option<&str>) -> Result<(), String> {
+    let Some(k) = prog.kind(kind) else { return Ok(()) };
+    let mut missing: Vec<&str> = k
+        .attrs
+        .iter()
+        .filter(|a| a.default.is_none() && a.formula.is_none() && !given.iter().any(|(n, _)| *n == a.name))
+        .filter(|a| prog.source_of(kind, &a.name).is_none())
+        .filter(|a| !(a.ty == Ty::Ref && owner.is_some() && a.of.as_deref() == owner))
+        .map(|a| a.name.as_str())
+        .collect();
+    missing.sort_unstable();
+    match missing.as_slice() {
+        [] => Ok(()),
+        [one] => Err(format!("a new {kind} needs its {one}: it has no default")),
+        [first @ .., last] => Err(format!("a new {kind} needs its {} and {last}: they have no default", first.join(", "))),
     }
 }
 
