@@ -1761,3 +1761,26 @@ The leave comparison (eval/leave) could not port hrms's overlap check: no two op
 - An unfiltered span total still makes the new entity, whose seat waits.
 - Approving a leave into a day another approved leave holds is refused by the rule.
 - The leave port ports hrms's `test_overlap`.
+
+## Appendix AE. Prototype slice 29: required attributes (2026-10-21)
+
+The leave comparison found that an application could be made without its approver, which has no default. The gate refused it only because a condition read the missing approver's user, which was unknown. Until now a left-out attribute was simply unknown.
+
+### AE.1 What slice 29 adds
+
+| Added in slice 29 | Still waits |
+|---|---|
+| an attribute with no default, formula or source must be given when its entity is made | optional attributes without a default (`approver: Approver or none`) |
+| an admitted input that leaves one out is refused at the gate | |
+
+### AE.2 Semantics that slice 29 settles
+
+1. **Required.** An attribute written with no `=` and no source is required. Every new root entity, and every element of its lists, must be given it, by `given`, by `when a new …`, by an admitted input or over HTTP. An element's reference to its owner (`parcel: Parcel` on an Item of a Parcel) is set for it and is not given. State attributes have their first state as a default, and formulas are computed. The error names every missing attribute in alphabetical order: `a new Leave needs its approver and days: they have no default`.
+2. **At the gate.** An input with a caller that leaves a required attribute out is refused at the gate with that error, before its `admit` is read, and the gate's log records it. Without a caller, the creation fails with the same error.
+3. **Deploys.** A new attribute without a default, on a kind with live units, is already an error (chapter 18), so existing entities never lack a required attribute.
+
+### AE.3 Acceptance
+
+- `staff Sam files a new Leave L1` without its approver is refused at the gate: `a new Leave needs its approver: it has no default`, and L1 is not made.
+- Defaults, states, formulas and an element's owner are not required, and an element without its own required attribute is refused.
+- The leave port drops `its approver's user is not ""`, and hrms's `test_leave_approver_mandatory` still passes.
