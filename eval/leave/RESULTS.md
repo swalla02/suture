@@ -26,7 +26,7 @@ hrms's count drops, by pattern, its lines about holidays and half days, attendan
 | 12 carry-forward, expiry and ledger tests (`separate_leave_ledger_entry_for_boundary_applications`, `leave_balance_near_allocaton_expiry`, `ledger_entry_creation_on_intermediate_allocation_expiry`, `leave_application_creation_after_expiry`, `leave_details_with_…cf_expiry` ×4, `get_leave_allocation_records`, `filtered_old_cf_entries_…`, `leave_balance_when_allocation_is_expired_manually`, `backdated_application_after_expiry`) | out of scope |
 | `leave_approver_with_restricted_employee_access`, `leave_access_for_workflow_reviewer_without_employee_permission` | out of scope: read permissions |
 | `overlap_with_half_day_1`…`_3`, `overlap_with_half_day_on_today` | **not expressible**: two half days may share a day |
-| `max_consecutive_leaves_across_leave_applications` | **not expressible**: a run across applications |
+| `max_consecutive_leaves_across_leave_applications` | translated, since slice 32 (below) |
 | `half_day_date_cannot_be_holiday`, `leave_days_across_two_holiday_lists` | **not expressible**: counting days |
 
 ## What we learned
@@ -54,9 +54,24 @@ hrms's count drops, by pattern, its lines about holidays and half days, attendan
 
 Slice 28 lets an entity count toward every day it spans: `rule apart: for each Employee and day from their from to their to, the number of their Applications that are held is at most 1`, with `held` meaning open or approved. That is hrms's overlap check, in two lines against 38. An overlapping application is refused at the gate by rule `apart`, and a rejected or cancelled one gives its days back. The same form is a capacity (at most 2 bookings of a room a day). `test_overlap` is now a scenario. The four half-day overlap tests still wait for half days, and consecutive leave across applications still waits: a run is not a total of any one day.
 
+## After slice 32: days in a row
+
+Slice 32 adds `the days in a row of their Applications that are held`, read in a rule over the days a span covers (spec appendix AH). hrms's consecutive leave is one rule:
+
+```
+rule consecutive: for each Allocation and day from their from to their to, the days in a row of their Applications that are held is at most its type's longest or its type's longest is 0
+```
+
+| | Suture | hrms |
+|---|---|---|
+| Consecutive leave | **+1 −1**: the rule, and the `short` definition it replaces | 49 counted lines: `get_consecutive_leave_details`, with its two recursive lookups |
+| After slice 32 | 41 lines of logic, 16 scenarios in 195 lines | 487 lines in 29 functions; 16 tests translated, 23 out of scope, 6 not expressible |
+
+The rule also covers one application longer than its type allows (`test_max_continuous_leaves`), as hrms's `validate_max_days` does. The port groups the run by allocation, because a rule's group is one unit, and hrms groups it by employee and leave type. A run across two allocations of the same type is therefore not joined. The run counts calendar days, and hrms counts leave days less holidays. In the hrms test that is 11 days, and in the port it is 12. Both are over the limit of 10.
+
 ## Next
 
 Slices from these gaps, most valuable first:
-1. runs across entities (consecutive leave);
+1. ~~runs across entities (consecutive leave)~~ slice 32;
 2. a way to keep a total that only a reader or an `expect` uses;
 3. days between dates.

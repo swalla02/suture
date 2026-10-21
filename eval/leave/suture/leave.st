@@ -22,10 +22,9 @@ define: an Application is counted when it is approved and its type is not negati
 define: an Application is placed when its allocation's from is at most its from and its allocation's to is at least its to
 define: an Application is fitting when it is placed or its type is negative
 define: an Application is affordable when its days is at most its allocation's leaves - the total days of its allocation's Applications that are counted or its type is negative
-define: an Application is short when its type's longest is 0 or its days is at most its type's longest
 define: an Application is entitled when its type's after is 0 days or its from is less than its employee's joined or its from - its employee's joined is at least its type's after
 define: an Application is timely when its from is more than its created - 1 day or its employee's company is backdating
-define: an Application is sound when it is fitting and it is affordable and it is short and it is entitled
+define: an Application is sound when it is fitting and it is affordable and it is entitled
 define: an Application is valid when its to is at least its from and its days is more than 0 and it is sound
 define: an Application is permitted when its employee's company is selfish
 
@@ -34,6 +33,7 @@ define: an Allocation is used when the total days of its Applications that are a
 
 rule apart: for each Employee and day from their from to their to, the number of their Applications that are held is at most 1
 rule balance: the total days of each Allocation's Applications that are counted is at most its leaves
+rule consecutive: for each Allocation and day from their from to their to, the days in a row of their Applications that are held is at most its type's longest or its type's longest is 0
 
 admit apply a new Application by employee where the Application's employee is the caller and the Application is valid and it is timely and its allocation's employee is its employee and its allocation's type is its type
 admit apply a new Application by hr where the Application is valid and its allocation's employee is its employee and its allocation's type is its type

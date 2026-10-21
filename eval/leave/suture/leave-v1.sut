@@ -344,6 +344,76 @@
       "sources": [],
       "fresh": [],
       "applies": null
+    },
+    {
+      "name": "consecutive",
+      "subject": "Allocation",
+      "filter": [],
+      "body": {
+        "Every": {
+          "Or": [
+            {
+              "Cmp": {
+                "left": {
+                  "Taken": {
+                    "of": {
+                      "steps": []
+                    },
+                    "name": "number of Applications that are held per day from its from to its to",
+                    "ty": "Count",
+                    "period": "day",
+                    "run": true
+                  }
+                },
+                "op": "Le",
+                "right": {
+                  "Path": {
+                    "steps": [
+                      {
+                        "Ref": "type"
+                      },
+                      {
+                        "Attr": "longest"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "Cmp": {
+                "left": {
+                  "Path": {
+                    "steps": [
+                      {
+                        "Ref": "type"
+                      },
+                      {
+                        "Attr": "longest"
+                      }
+                    ]
+                  }
+                },
+                "op": "Eq",
+                "right": {
+                  "Lit": {
+                    "Count": 0
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "source": "for each Allocation and day from their from to their to, the days in a row of their Applications that are held is at most its type's longest or its type's longest is 0",
+      "formula": "for each Allocation a: (run(count(a2 in Application where a2.allocation = a and a2 is held, per day from a2.from to a2.to)) ≤ a.type.longest or a.type.longest = 0)",
+      "paraphrase": "each allocation on its own: the days in a row its Applications that are held span, through any one day is at most its type's longest or its type's longest is 0",
+      "tier": "per-group",
+      "period": "day",
+      "fixed": false,
+      "sources": [],
+      "fresh": [],
+      "applies": null
     }
   ],
   "defines": [
@@ -562,62 +632,6 @@
     },
     {
       "kind": "Application",
-      "state": "short",
-      "cond": {
-        "Or": [
-          {
-            "Cmp": {
-              "left": {
-                "Path": {
-                  "steps": [
-                    {
-                      "Ref": "type"
-                    },
-                    {
-                      "Attr": "longest"
-                    }
-                  ]
-                }
-              },
-              "op": "Eq",
-              "right": {
-                "Lit": {
-                  "Count": 0
-                }
-              }
-            }
-          },
-          {
-            "Cmp": {
-              "left": {
-                "Path": {
-                  "steps": [
-                    {
-                      "Attr": "days"
-                    }
-                  ]
-                }
-              },
-              "op": "Le",
-              "right": {
-                "Path": {
-                  "steps": [
-                    {
-                      "Ref": "type"
-                    },
-                    {
-                      "Attr": "longest"
-                    }
-                  ]
-                }
-              }
-            }
-          }
-        ]
-      }
-    },
-    {
-      "kind": "Application",
       "state": "entitled",
       "cond": {
         "Or": [
@@ -792,15 +806,6 @@
                 "steps": []
               },
               "state": "affordable",
-              "negated": false
-            }
-          },
-          {
-            "State": {
-              "node": {
-                "steps": []
-              },
-              "state": "short",
               "negated": false
             }
           },
@@ -1215,6 +1220,65 @@
       },
       "prefer": [],
       "source": "each Application adds to its employee's total number of Applications that are held per day from its from to its to",
+      "held": {
+        "State": {
+          "node": {
+            "steps": []
+          },
+          "state": "held",
+          "negated": false
+        }
+      }
+    },
+    {
+      "id": "Allocation(number of Applications that are held per day from its from to its to)",
+      "subject": "Application",
+      "target": "Allocation",
+      "per": null,
+      "key_attr": "",
+      "key_member": false,
+      "key": {
+        "Path": {
+          "steps": [
+            {
+              "Attr": "allocation"
+            }
+          ]
+        }
+      },
+      "filter": [],
+      "taking": {
+        "name": "number of Applications that are held per day from its from to its to",
+        "amount": {
+          "Lit": {
+            "Count": 1
+          }
+        },
+        "ty": "Count",
+        "period": "day",
+        "span": [
+          {
+            "Path": {
+              "steps": [
+                {
+                  "Attr": "from"
+                }
+              ]
+            }
+          },
+          {
+            "Path": {
+              "steps": [
+                {
+                  "Attr": "to"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "prefer": [],
+      "source": "each Application adds to its allocation's total number of Applications that are held per day from its from to its to",
       "held": {
         "State": {
           "node": {

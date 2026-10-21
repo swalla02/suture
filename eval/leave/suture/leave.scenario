@@ -85,7 +85,7 @@ scenario "a leave longer than its type allows is refused (test_max_continuous_le
   and    a Type T with name Test and longest 3
   and    a Allocation AT with employee E, type T, from 2026-01-01, to 2026-12-31 and leaves 10
   when   hr Admin applies a new Application L1 with employee E, type T, allocation AT, approver A, from 2026-03-01, to 2026-03-05 and days 5
-           is refused at the gate
+           is refused by rule consecutive
 
 scenario "the application being approved does not count against itself (test_current_leave_on_submit)":
   given  a Company C with name Test
@@ -197,3 +197,19 @@ scenario "another employee may not approve or discard an application (after test
            is refused at the gate
   and    approver A approves L1
   expect L1 is approved
+
+scenario "leave in a row across applications is no longer than its type allows (test_max_consecutive_leaves_across_leave_applications)":
+  given  a Company C with name Test
+  and    a Approver A with user "approver"
+  and    a Employee E with user "emp", company C, joined 2010-01-01 and approver A
+  and    a Type T with name Test and longest 10
+  and    a Allocation AT with employee E, type T, from 2026-01-01, to 2026-12-31 and leaves 30
+  when   hr Admin applies a new Application B with employee E, type T, allocation AT, approver A, from 2026-01-30, to 2026-02-03 and days 5
+  and    hr Admin applies a new Application F with employee E, type T, allocation AT, approver A, from 2026-02-06, to 2026-02-10 and days 5
+  and    hr Admin applies a new Application L with employee E, type T, allocation AT, approver A, from 2026-02-04, to 2026-02-05 and days 2
+           is refused by rule consecutive
+  and    hr Admin applies a new Application S with employee E, type T, allocation AT, approver A, from 2026-02-04, to 2026-02-04 and days 1
+  expect S is open
+  when   approver A rejects B
+  and    hr Admin applies a new Application M with employee E, type T, allocation AT, approver A, from 2026-02-05, to 2026-02-05 and days 1
+  expect M is open
