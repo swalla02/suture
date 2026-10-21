@@ -91,8 +91,11 @@ pub struct Fetch {
 pub struct Claim {
     pub policy: String,
     pub photo: Vec<u8>,
+    pub invoice: Vec<u8>,
     pub damage: String,
-    pub amount: i64,
+    /// The amount read off the invoice, and when to read it again.
+    pub amount: Option<i64>,
+    pub amount_again: Option<u64>,
     pub approved: bool,
     pub withdrawn: bool,
     pub created: u64,
@@ -127,12 +130,11 @@ pub enum Request {
 pub struct ModelInput<'a> {
     pub photo: &'a [u8],
     pub damage: &'a str,
-    pub amount: i64,
 }
 
 pub type Model = Box<dyn FnMut(&ModelInput) -> Option<Kind>>;
 
-/// Reads the repair cost off the photo, with how sure it is.
+/// Reads an amount off a photo or an invoice, with how sure it is.
 pub type Reader = Box<dyn FnMut(&[u8]) -> Option<(i64, f64)>>;
 
 #[derive(Default)]
@@ -148,6 +150,7 @@ pub struct System {
     pub journal: Vec<String>,
     pub model: Option<Model>,
     pub reader: Option<Reader>,
+    pub invoices: Option<Reader>,
 }
 
 impl System {
@@ -177,7 +180,7 @@ impl System {
         Ok(())
     }
 
-    pub fn file_claim(&mut self, caller: &Caller, id: &str, policy: &str, photo: Vec<u8>, damage: &str, amount: i64) -> Result<(), String> {
+    pub fn file_claim(&mut self, caller: &Caller, id: &str, policy: &str, photo: Vec<u8>, invoice: Vec<u8>, damage: &str) -> Result<(), String> {
         Self::need(caller, Role::Holder)?;
         let p = self.policies.get(policy).ok_or(format!("no policy {policy}"))?;
         if p.holder != caller.name {
@@ -187,7 +190,7 @@ impl System {
             return Err(format!("{id} exists"));
         }
         let picked = match self.model.as_mut() {
-            Some(m) => m(&ModelInput { photo: &photo, damage, amount }),
+            Some(m) => m(&ModelInput { photo: &photo, damage }),
             None => None,
         };
         let kind = match picked {
@@ -204,8 +207,10 @@ impl System {
         let claim = Claim {
             policy: policy.into(),
             photo,
+            invoice,
             damage: damage.into(),
-            amount,
+            amount: None,
+            amount_again: None,
             approved: false,
             withdrawn: false,
             created: self.now,
@@ -406,7 +411,24 @@ impl System {
                 _ => c.read_again = Some(now + READ_AGAIN),
             }
         }
-        c.estimate.is_some_and(|e| c.amount <= e)
+        c.estimate.is_some_and(|e| c.amount.is_some_and(|a| a <= e))
+    }
+
+    /// Whether the amount is read off the invoice. Reads it when there is
+    /// no reading yet, and an hour after one the reader was not sure of.
+    fn amount_read(&mut self, id: &str) -> bool {
+        let now = self.now;
+        let c = self.claims.get_mut(id).unwrap();
+        if c.amount.is_none() && c.amount_again.is_none_or(|at| now >= at) {
+            match self.invoices.as_mut().and_then(|r| r(&c.invoice)) {
+                Some((amount, sure)) if sure >= READ_SURE => {
+                    c.amount = Some(amount);
+                    self.journal.push(format!("{id}: the invoice charges {amount}, at {sure}"));
+                }
+                _ => c.amount_again = Some(now + READ_AGAIN),
+            }
+        }
+        c.amount.is_some()
     }
 
     /// Counts the claim toward its policy's total for the year it was filed
@@ -422,9 +444,9 @@ impl System {
             .claims
             .values()
             .filter(|o| o.counted && o.policy == c.policy && year_of(o.created) == year)
-            .map(|o| o.amount - self.policies[&o.policy].deductible)
+            .map(|o| o.amount.unwrap() - self.policies[&o.policy].deductible)
             .sum();
-        if total + c.amount - deductible > YEARLY {
+        if total + c.amount.unwrap() - deductible > YEARLY {
             return false;
         }
         self.claims.get_mut(id).unwrap().counted = true;
@@ -434,6 +456,9 @@ impl System {
     fn progress(&mut self, id: &str) {
         let Some(c) = self.claims.get(id) else { return };
         if c.withdrawn {
+            return;
+        }
+        if !self.amount_read(id) {
             return;
         }
         if !self.count_yearly(id) {
@@ -466,7 +491,7 @@ impl System {
                 self.send(id);
             }
             Kind::Writeoff | Kind::Cash => {
-                let payout = c.amount - policy.deductible;
+                let payout = c.amount.unwrap() - policy.deductible;
                 if payout > policy.limit {
                     return;
                 }
@@ -493,7 +518,7 @@ impl System {
         o.effect = Effect::Sent { at: self.now };
         let request = match o.kind {
             Kind::Repair => Request::Book { claim: id.into(), garage: o.garage.clone().unwrap(), damage: c.damage.clone() },
-            Kind::Writeoff | Kind::Cash => Request::Pay { claim: id.into(), amount: c.amount - policy.deductible, iban: policy.iban.clone() },
+            Kind::Writeoff | Kind::Cash => Request::Pay { claim: id.into(), amount: c.amount.unwrap() - policy.deductible, iban: policy.iban.clone() },
         };
         self.outbox.push(request);
     }
