@@ -1784,3 +1784,32 @@ The leave comparison found that an application could be made without its approve
 - `staff Sam files a new Leave L1` without its approver is refused at the gate: `a new Leave needs its approver: it has no default`, and L1 is not made.
 - Defaults, states, formulas and an element's owner are not required, and an element without its own required attribute is refused.
 - The leave port drops `its approver's user is not ""`, and hrms's `test_leave_approver_mandatory` still passes.
+
+## Appendix AF. Prototype slice 30: sources a model reads (2026-10-21)
+
+Extraction models such as Cloudflare's Clairic (`@cf/cloudflare/clairic`) read typed values out of text and images in a single pass, with no generation. Each answer has a value, a probability that the value is absent (`p_null`), and a confidence. That makes such a model a source rather than a decision: it gives an attribute its value. Until now a source was always an adapter, so reading a claim's amount off its photo needed custom code outside the program.
+
+### AF.1 What slice 30 adds
+
+| Added in slice 30 | Still waits |
+|---|---|
+| `source Claim's amount via model "reader@1" within 5 seconds`, with `sends` naming what it reads, media included | one call reading several attributes at once |
+| `asking "…"`: the instructions the model gets for the value | estimates and forecasts (p10–p90) as values |
+| `at least 0.8 sure`: the confidence below which a value is not used | lists as values |
+| scenario steps `model "reader@1" reads 1200 EUR [at 0.4][, then …]`, `… reads nothing`, `… is late` | |
+| a `workers-ai` backend for Clairic in `models.json`, and a `value` pointer for the custom backend | |
+
+### AF.2 Semantics that slice 30 settles
+
+1. **A source like any other.** A model source is fetched when a strict rule needs it, is good for its `good for`, falls back on `otherwise`, and competes with other sources under `decide K's attr`, exactly as an adapter source does. The model answers in one of two ways. It *reads* a value, which becomes the attribute's value. Or it is *unread*, which is a failure: the model found nothing, was late, failed, gave a value that is not of the attribute's type, or was less sure than `at least … sure` allows. A source via a model writes no `reports` line.
+2. **What the model receives.** It receives the `sends` values, which may include media (a model reads a photo; an adapter cannot), and the attribute's name, type and `asking` text. Secret and personal attributes are not sent to a model in this slice.
+3. **When it is asked.** Scenarios and `suture run` ask the model as soon as the fetch is made. A served program asks it after the step, the way it posts to an adapter. It logs the answer as that request's answer (`read` with the value, or `unread`), so replay gives the same value and never asks the model again. The fetch's deadline is the source's `within`.
+4. **Confidence is policy.** `at least 0.8 sure` is in the program, so the readback states it and it is the same in every deployment. A model's `min_confidence` in `models.json` still applies on top of it. A value with no confidence given passes the bound only when the source sets none.
+5. **Backends.** `"backend": "workers-ai"` posts `{state, images, fields: {attr: {type, instructions}}}` to its `url` with the key from `key_env`. It reads `answers.attr` (or `result.answers.attr`) and takes `p_null` of 0.5 or more as nothing found. Types map as follows: Text to `text`; Count to `number` with `integer`; Money to `number` with `decimals: 2` and the module's currency as `unit`; Time to `datetime`; Duration to `duration` in seconds. Images are sent inline as data URLs, at most four. The published post documents the field types but not the image field's name, so `images` is this slice's reading and may change. A custom backend reads with a `value` JSON pointer and an optional `confidence` pointer. Jev picks; it does not read, and a read asked of it is unread.
+
+### AF.3 Acceptance
+
+- In a claim, `source Claim's estimate via model "reader@1"` reads the estimate off the photo, and the payout rule holds the claim until it is read.
+- A read below `at least 0.8 sure`, a `reads nothing` and a late model all fail the fetch, and `otherwise` applies.
+- A served program logs the read as an answer, and replay does not ask the model again.
+- The workers-ai backend sends the typed field and image to a loopback stub and reads `value`, `p_null` and `confidence`.
