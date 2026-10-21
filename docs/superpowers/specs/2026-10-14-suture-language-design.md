@@ -1722,3 +1722,15 @@ The returns port carried each unit's `discount` as given, because Solidus comput
 - A share of a zero item total is unknown, unless the promotion is zero too, and then it is 0; and `a * b`, `a * b / 2` over amounts, `-3`, `2026-02-30` and `24:00` are errors.
 - `when it is 2026-02-01 12:30` moves the clock, an entity created after it has that `created`, and going back fails the step. A date in a program is an error.
 - The returns port computes the promotion share instead of carrying `discount`.
+
+## Appendix AC. Two fixes found by the leave eval (2026-10-21)
+
+Porting frappe/hrms leave applications (eval/leave) found two bugs.
+
+1. **Verbs ending in a consonant and `y`.** The third person of `apply` is `applies` (and `deny` → `denies`, `carry` → `carries`), and of `pay` is `pays`. Before, it was `applys`, so `employee E applies …` and `when a employee applies an Application` matched no `admit`. The error for a reaction with no `admit` names the verb in its base form, `apply`.
+2. **An expectation about a total the program does not keep.** A total across units is kept only when a rule, need, admit, definition or formula reads it. An `expect` that reads one the program does not keep fails its step with `the program keeps no total ⟨name⟩ of each ⟨Kind⟩: no rule, need, admit, definition or formula reads it`. Before, it read 0.
+
+### AC.1 Acceptance
+
+- `admit apply Leave by staff` with `when a staff applies a Leave: …` compiles, and `third_person` gives `applies`, `pays` and `fixes`.
+- `expect the number of U's Items that are lost is 0`, where no rule reads that total, fails with that message.

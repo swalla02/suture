@@ -382,3 +382,15 @@ fn a_text_is_checked_against_the_states_of_its_own_kind() {
     let files = vec![("t.st".to_string(), format!("module t version 1, currency EUR\n{src}"))];
     compile(&files).unwrap_or_else(|e| panic!("a Book's condition is any text: {e:?}"));
 }
+
+#[test]
+fn verbs_ending_in_a_consonant_and_y_take_ies() {
+    use suture_lang::ir::third_person;
+    assert_eq!(third_person("apply"), "applies");
+    assert_eq!(third_person("pay"), "pays");
+    assert_eq!(third_person("fix"), "fixes");
+    let src = "module t version 1, currency EUR\nrole staff\nkind Leave { filed: Bool = no }\nadmit apply Leave by staff\nwhen a staff applies a Leave: the Leave is filed\n";
+    compile(&[("t.st".to_string(), src.to_string())]).unwrap_or_else(|e| panic!("{e:?}"));
+    let e = errors("role staff\nkind Leave { filed: Bool = no }\nwhen a staff applies a Leave: the Leave is filed\n");
+    assert!(e.iter().any(|e| e.contains("no `admit` lets anyone apply a Leave; add `admit apply Leave by staff`")), "{e:?}");
+}

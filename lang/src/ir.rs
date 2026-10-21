@@ -235,8 +235,12 @@ impl Admitted {
     }
 }
 
-/// `cancel` → `cancels`, `place` → `places`, `fix` → `fixes` (appendix G.2.4).
+/// `cancel` → `cancels`, `place` → `places`, `fix` → `fixes`, `apply` →
+/// `applies`, `pay` → `pays` (appendix G.2.4).
 pub fn third_person(verb: &str) -> String {
+    if let Some(stem) = verb.strip_suffix('y').filter(|s| s.ends_with(|c: char| c.is_alphabetic() && !"aeiou".contains(c))) {
+        return format!("{stem}ies");
+    }
     if ["s", "sh", "ch", "x", "z"].iter().any(|e| verb.ends_with(e)) { format!("{verb}es") } else { format!("{verb}s") }
 }
 

@@ -23,7 +23,16 @@ pub fn check(src: &Source) -> Result<Program, Vec<Error>> {
 pub fn condition(p: &Program, kind: &str, c: &ast::Cond) -> Result<Cond, Vec<Error>> {
     let mut cx = Checker { scenario: true, ..Checker::default() };
     let at = Loc { file: String::new(), line: 0 };
-    match cx.cond(p, &at, kind, c) {
+    let c = cx.cond(p, &at, kind, c);
+    // A total across units is kept only when the program reads it; one only
+    // a scenario reads has no running total to show.
+    for b in &cx.contribs {
+        if !p.bindings.iter().any(|x| x.subject == b.subject && x.id == b.id) {
+            let what = b.taking.as_ref().map_or(b.id.clone(), |t| t.name.clone());
+            cx.errors.push(err(&at, format!("the program keeps no total {what} of each {}: no rule, need, admit, definition or formula reads it", b.target)));
+        }
+    }
+    match c {
         Some(c) if cx.errors.is_empty() => Ok(c),
         _ => Err(cx.errors),
     }
@@ -2040,7 +2049,13 @@ impl Checker {
         let admits: Vec<&Admit> =
             p.admits.iter().filter(|a| matches!(&a.what, Admitted::Event { verb, kind } if third_person(verb) == r.outcome && *kind == r.kind)).collect();
         if admits.is_empty() {
-            let verb = r.outcome.strip_suffix("es").filter(|v| third_person(v) == r.outcome).or(r.outcome.strip_suffix('s')).unwrap_or(&r.outcome);
+            let applied = r.outcome.strip_suffix("ies").map(|s| format!("{s}y"));
+            let verb = applied
+                .as_deref()
+                .filter(|v| third_person(v) == r.outcome)
+                .or(r.outcome.strip_suffix("es").filter(|v| third_person(v) == r.outcome))
+                .or(r.outcome.strip_suffix('s'))
+                .unwrap_or(&r.outcome);
             self.errors.push(err(&r.at, format!("no `admit` lets anyone {verb} {}; add `admit {verb} {} by {}`", a(&r.kind), r.kind, r.by.join(", "))));
             return false;
         }

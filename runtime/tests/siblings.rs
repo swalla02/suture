@@ -130,3 +130,20 @@ rule cap: the number of each Customer's Refunds that are paid is at most 1
     assert!(t.contains("C1  refused O2/Refund#1@Customer(number of Refunds that are paid): rule cap"), "{t}");
     assert!(t.contains("Refund waits for room in a Customer's total number of Refunds that are paid"), "{t}");
 }
+
+#[test]
+fn an_expectation_about_a_total_the_program_does_not_keep_fails() {
+    let r = scenario(
+        RETURNS,
+        "  given  a Unit U with number \"1\"
+  when   staff S adds a new Item I1 with unit U
+  expect the number of U's Items that are lost is 0
+",
+    );
+    assert!(!r.passed());
+    assert!(
+        r.failures.iter().any(|f| f.contains("the program keeps no total number of Items that are lost of each Unit")),
+        "{:?}",
+        r.failures
+    );
+}

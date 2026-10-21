@@ -103,6 +103,8 @@ Moving the clock fires every timer that falls due, in order: deadlines (re-sends
 | `expect an alert for ⟨Name⟩`, `expect no alert for ⟨Name⟩` | whether a goal raised an alert |
 | `expect the total ⟨attr⟩ taken from ⟨Name⟩ is ⟨num⟩` | a running total (chapter 9) |
 
+A total across units, such as `the total days of AT's Applications that are approved`, is kept only when a rule, need, admit, definition or formula of the program reads it. An `expect` about one the program does not keep fails the step with `the program keeps no total … of each Allocation`, instead of reading 0.
+
 A failed `expect` does not stop the scenario: every later step still runs, and the report lists every failure.
 
 ## A complete example
