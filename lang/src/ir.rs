@@ -528,6 +528,11 @@ pub enum Num {
         period: Option<String>,
         #[serde(default, skip_serializing_if = "String::is_empty")]
         kind: String,
+        /// `the days in a row of …`: instead of the day's total, how many
+        /// days in a row, through the day, have a total above nothing
+        /// (appendix AH.2.1).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        run: bool,
     },
 }
 

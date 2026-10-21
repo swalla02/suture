@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use suture_lang::ir::{Action, Arith, Body, Cond, Criterion, Decision, Effect, Num, Op, Otherwise, Path, Program, Rule, Slot, Source, Step, Ty, CREATED, TIMED_OUT};
 
 use crate::choice::order;
-use crate::state::{period_key, periods_in, span_key, take_text, Ask, Bind, Decide, Fact, Facts, Fetch, Msg, Node, Status, Unit, Val};
+use crate::state::{period_key, periods_in, span_key, take_text, SPAN_DAYS, Ask, Bind, Decide, Fact, Facts, Fetch, Msg, Node, Status, Unit, Val};
 
 static NO_TOTALS: BTreeMap<String, Val> = BTreeMap::new();
 
@@ -2176,6 +2176,10 @@ fn num(prog: &Program, v: View, at: &[usize], n: &Num) -> Option<Val> {
             Some(total)
         }
         Num::Count { of, kind, filter } => Some(Val::Count(relation(prog, v, at, of, kind, filter.as_deref())?.len() as i64)),
+        Num::Taken { of, name, run: true, .. } => match locate(v, at, &of.steps)? {
+            Place::Here(p) if p.is_empty() => Some(Val::Count(run_through(v.taken, name, v.period?)?)),
+            _ => None,
+        },
         Num::Taken { of, name, ty, period, .. } => match locate(v, at, &of.steps)? {
             Place::Here(p) if p.is_empty() => {
                 let name = match period {
@@ -2189,6 +2193,20 @@ fn num(prog: &Program, v: View, at: &[usize], n: &Num) -> Option<Val> {
             _ => None,
         },
     }
+}
+
+/// How many days in a row, through the day `day` (`2026-01-05`), have a
+/// running total `name` per day above nothing; none when that day's is
+/// nothing (appendix AH.2.1). It looks at most a span's longest either way.
+fn run_through(taken: &BTreeMap<String, Val>, name: &str, day: &str) -> Option<i64> {
+    let start = suture_lang::sentence::iso_time(day)?;
+    let held = |d: i64| taken.get(&format!("{name}@{}", period_key("day", start + d * 86_400))).is_some_and(|v| *v != Val::Count(0));
+    if !held(0) {
+        return Some(0);
+    }
+    let before = (1..SPAN_DAYS).take_while(|d| held(-d)).count() as i64;
+    let after = (1..SPAN_DAYS).take_while(|d| held(*d)).count() as i64;
+    Some(before + 1 + after)
 }
 
 /// `a * b / c` over amounts, in cents, rounded half away from zero

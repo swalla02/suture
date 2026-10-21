@@ -141,7 +141,12 @@ fn num_formula(p: &Program, kind: &str, v: &str, n: &Num) -> String {
             let filter = filter.as_ref().map_or_else(String::new, |f| format!(" where {}", cond_formula(p, k, &e, f)));
             format!("count({e} in {}{filter})", relation_formula(p, kind, v, of, k))
         }
-        Num::Taken { of, name, kind: owner, .. } => match contribution(p, if owner.is_empty() { kind } else { owner }, name) {
+        Num::Taken { of, name, kind: owner, run, .. } => match contribution(p, if owner.is_empty() { kind } else { owner }, name) {
+            Some(b) if *run => {
+                // Days in a row, through the day, on which the count is above nothing (appendix AH.2.1).
+                let day = Num::Taken { of: of.clone(), name: name.clone(), ty: crate::ir::Ty::Count, period: b.taking.as_ref().and_then(|t| t.period.clone()), kind: owner.clone(), run: false };
+                format!("run({})", num_formula(p, kind, v, &day))
+            }
             Some(b) => {
                 let e = element_var(&b.subject, v);
                 // Read from a unit that refers to the total's owner (appendix AA.2.3).
@@ -198,9 +203,14 @@ fn num_words(p: &Program, kind: &str, n: &Num) -> String {
         Num::Count { of, kind: k, filter } => {
             format!("the number of {}{}", relation_words(p, kind, of, k), that_words(p, k, filter.as_deref()))
         }
-        Num::Taken { of, name, kind: owner, .. } => match contribution(p, if owner.is_empty() { kind } else { owner }, name) {
+        Num::Taken { of, name, kind: owner, run, .. } => match contribution(p, if owner.is_empty() { kind } else { owner }, name) {
             Some(b) => {
                 let t = b.taking.as_ref().expect("a contribution takes an amount");
+                if *run {
+                    let base = name.split(" per day").next().unwrap_or(name);
+                    let plural = base.strip_prefix("number of ").unwrap_or(base);
+                    return format!("the days in a row its {plural} span, through any one day");
+                }
                 let base = t.period.as_ref().map_or(name.as_str(), |per| name.split(&format!(" per {per}")).next().unwrap_or(name));
                 let (what, plural) = base.split_once(" of ").unwrap_or(("", base));
                 let whose = if !owner.is_empty() {

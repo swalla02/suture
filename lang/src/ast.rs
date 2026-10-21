@@ -78,6 +78,8 @@ pub enum Num {
     Over { calc: Box<Num>, list: NounPhrase },
     /// `the total quantity taken from each Stock` (appendix F.2.8)
     Taken { attr: String, from: NounPhrase },
+    /// `the days in a row of their Applications [that …]` (appendix AH)
+    Run { of: NounPhrase, filter: Option<Box<Cond>> },
 }
 
 /// What follows `is`: a literal, a noun phrase, or a bare word that the

@@ -279,6 +279,13 @@ fn atom(c: &mut Cursor, bare: bool) -> Result<Num, Error> {
         c.expect_word("over")?;
         return Ok(Num::Over { calc, list: noun_phrase(c)? });
     }
+    if word_at(c, 0, "the") && word_at(c, 1, "days") && word_at(c, 2, "in") && word_at(c, 3, "a") && word_at(c, 4, "row") && word_at(c, 5, "of") {
+        for w in ["the", "days", "in", "a", "row", "of"] {
+            c.expect_word(w)?;
+        }
+        let of = noun_phrase(c)?;
+        return Ok(Num::Run { of, filter: that(c)? });
+    }
     if word_at(c, 0, "the") && word_at(c, 1, "number") && word_at(c, 2, "of") {
         c.expect_word("the")?;
         c.expect_word("number")?;
@@ -511,7 +518,7 @@ fn each_in_cond(c: &Cond) -> Option<String> {
             _ => None,
         };
         match n {
-            Num::Np(x) | Num::Total { of: x, .. } | Num::Number { of: x, .. } | Num::Taken { from: x, .. } => np(x),
+            Num::Np(x) | Num::Total { of: x, .. } | Num::Number { of: x, .. } | Num::Taken { from: x, .. } | Num::Run { of: x, .. } => np(x),
             Num::Bin(a, _, b) => num(a).or_else(|| num(b)),
             Num::Over { list, .. } => np(list),
             Num::Lit(_) => None,

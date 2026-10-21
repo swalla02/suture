@@ -187,7 +187,7 @@ fn the_leave_evaluation_passes() {
     let p = suture_lang::compile_dir(std::path::Path::new(dir)).unwrap_or_else(|e| panic!("{e:?}"));
     let file = format!("{dir}/leave.scenario");
     let list = parse_scenarios(&file, &std::fs::read_to_string(&file).unwrap()).unwrap();
-    assert_eq!(list.len(), 15);
+    assert_eq!(list.len(), 16);
     for sc in list {
         let r = run(&p, &sc);
         assert!(r.passed(), "{}: {:?}", r.title, r.failures);

@@ -67,6 +67,7 @@ fn show_num(n: &ast::Num) -> String {
         ast::Num::Number { of, .. } => format!("the number of {}", show(of)),
         ast::Num::Over { calc, list } => format!("the total of {} over {}", show_num(calc), show(list)),
         ast::Num::Taken { attr, from } => format!("the total {attr} taken from {}", show(from)),
+        ast::Num::Run { of, .. } => format!("the days in a row of {}", show(of)),
     }
 }
 
@@ -2448,6 +2449,16 @@ impl Checker {
                 }
                 Some((Num::Sum { of: path, kind: element, calc: Box::new(calc), filter: None, ty }, ty))
             }
+            ast::Num::Run { of, filter } => {
+                // Days in a row are of a total per day a span covers (appendix AH.2.1).
+                let Some((kind, by)) = across(p, from, of).filter(|_| self.period.as_deref() == Some("day") && self.span.is_some()) else {
+                    self.errors.push(err(at, format!("`{}` counts the days a span covers: write it in `for each {from} and day from their ⟨time⟩ to their ⟨time⟩, …`", show_num(n))));
+                    return None;
+                };
+                let (num, ty) = self.contribution(p, at, from, &kind, by, None, filter.as_deref())?;
+                let Num::Taken { of, name, period, kind, .. } = num else { unreachable!("a contribution is a running total") };
+                Some((Num::Taken { of, name, ty, period, kind, run: true }, ty))
+            }
             ast::Num::Taken { attr, from: of } => {
                 let (path, end) = self.np(p, at, from, of)?;
                 if !path.steps.is_empty() {
@@ -2459,7 +2470,7 @@ impl Checker {
                     self.errors.push(err(at, format!("`{}`: no `uses a {k}` takes {attr}", show_num(n))));
                     return None;
                 };
-                Some((Num::Taken { of: path, name: attr.clone(), ty: t.ty, period: None, kind: String::new() }, t.ty))
+                Some((Num::Taken { of: path, name: attr.clone(), ty: t.ty, period: None, kind: String::new(), run: false }, t.ty))
             }
         }
     }
@@ -2529,7 +2540,7 @@ impl Checker {
             shared: false,
             sources: vec![],
         });
-        Some((Num::Taken { of: Path::default(), name, ty, period: self.period.clone(), kind: String::new() }, ty))
+        Some((Num::Taken { of: Path::default(), name, ty, period: self.period.clone(), kind: String::new(), run: false }, ty))
     }
 
     /// Adds the implicit bindings of the totals across units found so far,
@@ -2591,7 +2602,7 @@ impl Checker {
         if let Some(b) = self.contribs.last_mut() {
             b.shared = true;
         }
-        Some(Some((Num::Taken { of: path, name, ty, period: None, kind: target }, ty)))
+        Some(Some((Num::Taken { of: path, name, ty, period: None, kind: target, run: false }, ty)))
     }
 
     /// The calculation inside `the total of … over its lines`, evaluated at
