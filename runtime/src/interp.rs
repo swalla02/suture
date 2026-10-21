@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use suture_lang::ir::{Action, Arith, Body, Cond, Criterion, Decision, Effect, Num, Op, Otherwise, Path, Program, Rule, Slot, Source, Step, Ty, CREATED, TIMED_OUT};
 
 use crate::choice::order;
-use crate::state::{period_key, Ask, Bind, Decide, Fact, Facts, Fetch, Msg, Node, Status, Unit, Val};
+use crate::state::{period_key, periods_in, span_key, take_text, Ask, Bind, Decide, Fact, Facts, Fetch, Msg, Node, Status, Unit, Val};
 
 static NO_TOTALS: BTreeMap<String, Val> = BTreeMap::new();
 
@@ -442,22 +442,40 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
         }
         Msg::Take { from, key, taken } => {
             let mut totals = u.taken.clone();
+            let refuse = |why: String| {
+                let refused = Msg::Refused { key: key.clone(), by: u.label.clone(), rule: String::new() };
+                Outcome::kept(unit, format!("refused {key}: {why}"), Out { sends: vec![(from.clone(), refused)], ..Out::default() })
+            };
+            // A take per period falls in one period, or in each a span covers (appendix AD.2.2).
+            let periods = match taken.as_ref().and_then(|(name, _)| name.split_once('@')) {
+                Some((_, at)) => match periods_in(at) {
+                    Ok(ps) => ps.into_iter().map(Some).collect(),
+                    Err(e) => return refuse(e),
+                },
+                None => vec![None],
+            };
             if let Some((name, amount)) = taken {
-                let before = totals.get(name).cloned().unwrap_or_else(|| zero(amount.ty()));
-                let Some(after) = arith(before, Arith::Add, amount.clone()) else {
-                    let refused = Msg::Refused { key: key.clone(), by: u.label.clone(), rule: String::new() };
-                    return Outcome::kept(unit, format!("refused {key}: the total {name} would overflow"), Out { sends: vec![(from.clone(), refused)], ..Out::default() });
-                };
-                totals.insert(name.clone(), after);
+                let base = name.split_once('@').map_or(name.as_str(), |(b, _)| b);
+                for p in &periods {
+                    let total = p.as_ref().map_or_else(|| name.clone(), |p| format!("{base}@{p}"));
+                    let before = totals.get(&total).cloned().unwrap_or_else(|| zero(amount.ty()));
+                    let Some(after) = arith(before, Arith::Add, amount.clone()) else { return refuse(format!("the total {total} would overflow")) };
+                    totals.insert(total, after);
+                }
             }
-            let period = taken.as_ref().and_then(|(name, _)| name.split_once('@')).map(|(_, p)| p);
-            if let Some(r) = broken_rule(prog, View { taken: &totals, period, ..View::of(&u) }) {
-                let refused = Msg::Refused { key: key.clone(), by: u.label.clone(), rule: r.name.clone() };
-                return Outcome::kept(unit, format!("refused {key}: rule {}: {}", r.name, r.paraphrase), Out { sends: vec![(from.clone(), refused)], ..Out::default() });
+            for period in &periods {
+                if let Some(r) = broken_rule(prog, View { taken: &totals, period: period.as_deref(), ..View::of(&u) }) {
+                    let on = match (period, taken.as_ref().is_some_and(|(n, _)| n.contains("@span "))) {
+                        (Some(p), true) => format!(" on {p}"),
+                        _ => String::new(),
+                    };
+                    let refused = Msg::Refused { key: key.clone(), by: u.label.clone(), rule: r.name.clone() };
+                    return Outcome::kept(unit, format!("refused {key}: rule {}{on}: {}", r.name, r.paraphrase), Out { sends: vec![(from.clone(), refused)], ..Out::default() });
+                }
             }
             u.taken = totals;
             u.notes.push(match taken {
-                Some((name, amount)) => format!("granted {key}: {} {name} taken", amount.show(&prog.currency)),
+                Some((name, amount)) => format!("granted {key}: {} {} taken", amount.show(&prog.currency), take_text(name)),
                 None => format!("granted {key}"),
             });
             out.sends.push((from.clone(), Msg::Granted { key: key.clone(), by: u.label.clone(), taken: taken.clone(), facts: own_facts(prog, &u) }));
@@ -465,11 +483,17 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
         }
         Msg::Release { from, key, taken } => {
             if let Some((name, amount)) = taken {
-                let before = u.taken.get(name).cloned().unwrap_or_else(|| zero(amount.ty()));
-                if let Some(after) = arith(before, Arith::Sub, amount.clone()) {
-                    u.taken.insert(name.clone(), after);
+                let totals = match name.split_once('@') {
+                    Some((base, at)) => periods_in(at).unwrap_or_default().into_iter().map(|p| format!("{base}@{p}")).collect(),
+                    None => vec![name.clone()],
+                };
+                for total in totals {
+                    let before = u.taken.get(&total).cloned().unwrap_or_else(|| zero(amount.ty()));
+                    if let Some(after) = arith(before, Arith::Sub, amount.clone()) {
+                        u.taken.insert(total, after);
+                    }
                 }
-                u.notes.push(format!("{from} gave back {} {name} ({key})", amount.show(&prog.currency)));
+                u.notes.push(format!("{from} gave back {} {} ({key})", amount.show(&prog.currency), take_text(name)));
             } else {
                 u.notes.push(format!("{from} gave back {key}"));
             }
@@ -735,9 +759,16 @@ fn decide_for(prog: &Program, u: &Unit, at: &[usize], id: &str, skip: Vec<String
         None => None,
         Some(t) => {
             let v = View { elem: elem.as_ref().map(|(_, p)| p.as_slice()), ..View::of(u) };
-            let name = match &t.period {
-                Some(per) => format!("{}@{}", t.name, period_key(per, node_at(&u.root, at).created)),
-                None => t.name.clone(),
+            let name = match (&t.period, &t.span) {
+                (Some(per), Some((start, end))) => {
+                    let time = |n: &Num| match num(prog, v, at, n) {
+                        Some(Val::Time(t)) => Some(t),
+                        _ => None,
+                    };
+                    format!("{}@{}", t.name, span_key(per, time(start)?, time(end)?))
+                }
+                (Some(per), None) => format!("{}@{}", t.name, period_key(per, node_at(&u.root, at).created)),
+                (None, _) => t.name.clone(),
             };
             Some((name, num(prog, v, at, &t.amount)?))
         }

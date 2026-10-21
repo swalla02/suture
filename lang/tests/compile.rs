@@ -394,3 +394,14 @@ fn verbs_ending_in_a_consonant_and_y_take_ies() {
     let e = errors("role staff\nkind Leave { filed: Bool = no }\nwhen a staff applies a Leave: the Leave is filed\n");
     assert!(e.iter().any(|e| e.contains("no `admit` lets anyone apply a Leave; add `admit apply Leave by staff`")), "{e:?}");
 }
+
+#[test]
+fn a_total_per_period_may_span_the_periods_of_two_times() {
+    let src = "module t version 1, currency EUR\nkind Employee { name: Text }\nkind Leave { employee: Employee, from: Time, to: Time, days: Count }\nrule apart: for each Employee and day from their from to their to, the number of their Leaves is at most 1\n";
+    let p = compile(&[("t.st".to_string(), src.to_string())]).unwrap_or_else(|e| panic!("{e:?}"));
+    let r = &p.rules[0];
+    assert_eq!(r.formula, "for each Employee e: count(l in Leave where l.employee = e, per day from l.from to l.to) ≤ 1");
+    assert_eq!(r.paraphrase, "each employee on its own: the number of its Leaves on any one day they span is at most 1");
+    let e = errors("kind Employee { name: Text }\nkind Leave { employee: Employee, from: Time, to: Time, days: Count }\nrule apart: for each Employee and day from their from to their days, the number of their Leaves is at most 1\n");
+    assert!(e.iter().any(|e| e.contains("a Leave spans the periods with two of its times, and `days` is not a Time attribute of it")), "{e:?}");
+}

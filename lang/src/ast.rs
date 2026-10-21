@@ -257,6 +257,9 @@ pub struct RuleDecl {
     pub body: RuleBody,
     /// `for each Customer and month, …`: one total per period (appendix F.2.12).
     pub period: Option<String>,
+    /// `for each Employee and day from their from to their to, …`: each
+    /// entity counts toward every period it spans (appendix AD.2.1).
+    pub span: Option<(String, String)>,
     /// `…, checked globally` (appendix F.2.13).
     pub globally: bool,
     /// `…, with credit at most 1 hour old` (appendix I.2.3).

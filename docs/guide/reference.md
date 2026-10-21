@@ -73,7 +73,7 @@ no ⟨subject⟩ is ⟨state⟩ [unless ⟨cond⟩]
 the total ⟨attr⟩ of each ⟨Kind⟩'s ⟨Kinds⟩ [that ⟨cond⟩] ⟨comparison⟩ ⟨num⟩
 the number of each ⟨Kind⟩'s ⟨Kinds⟩ [that ⟨cond⟩] ⟨comparison⟩ ⟨num⟩
 the total ⟨attr⟩ taken from each ⟨Kind⟩ ⟨comparison⟩ ⟨num⟩
-for each ⟨Kind⟩ and ⟨day|week|month|year⟩, the total ⟨attr⟩ of their ⟨Kinds⟩ ⟨comparison⟩ ⟨num⟩
+for each ⟨Kind⟩ and ⟨day|week|month|year⟩ [from their ⟨attr⟩ to their ⟨attr⟩], the total ⟨attr⟩ of their ⟨Kinds⟩ ⟨comparison⟩ ⟨num⟩
 ⟨num over all ⟨Kinds⟩⟩ ⟨comparison⟩ ⟨num⟩, checked globally
 ```
 

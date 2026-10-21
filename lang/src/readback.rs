@@ -159,7 +159,11 @@ fn num_formula(p: &Program, kind: &str, v: &str, n: &Num) -> String {
                     None => rel,
                 };
                 let t = b.taking.as_ref().expect("a contribution takes an amount");
-                let per = t.period.as_ref().map_or_else(String::new, |per| format!(", per {per} of {e}.created"));
+                let per = match (&t.period, &t.span) {
+                    (Some(per), Some((start, end))) => format!(", per {per} from {} to {}", num_formula(p, &b.subject, &e, start), num_formula(p, &b.subject, &e, end)),
+                    (Some(per), None) => format!(", per {per} of {e}.created"),
+                    (None, _) => String::new(),
+                };
                 match &t.amount {
                     Num::Lit(_) => format!("count({e} in {rel}{per})"),
                     a => format!("sum({e} in {rel}{per}: {})", num_formula(p, &b.subject, &e, a)),
@@ -197,7 +201,7 @@ fn num_words(p: &Program, kind: &str, n: &Num) -> String {
         Num::Taken { of, name, kind: owner, .. } => match contribution(p, if owner.is_empty() { kind } else { owner }, name) {
             Some(b) => {
                 let t = b.taking.as_ref().expect("a contribution takes an amount");
-                let base = t.period.as_ref().map_or(name.as_str(), |per| name.strip_suffix(&format!(" per {per}")).unwrap_or(name));
+                let base = t.period.as_ref().map_or(name.as_str(), |per| name.split(&format!(" per {per}")).next().unwrap_or(name));
                 let (what, plural) = base.split_once(" of ").unwrap_or(("", base));
                 let whose = if !owner.is_empty() {
                     format!("{}'s", path_words(p, kind, of))
@@ -206,7 +210,11 @@ fn num_words(p: &Program, kind: &str, n: &Num) -> String {
                 } else {
                     "its".to_string()
                 };
-                let per = t.period.as_ref().map_or_else(String::new, |per| format!(" in a {per}"));
+                let per = match (&t.period, &t.span) {
+                    (Some(per), Some(_)) => format!(" on any one {per} they span"),
+                    (Some(per), None) => format!(" in a {per}"),
+                    (None, _) => String::new(),
+                };
                 if what == "number" {
                     format!("the number of {whose} {plural}{per}")
                 } else {

@@ -375,6 +375,8 @@ struct Checker {
     scope: Option<Scope>,
     /// The period of the rule being checked, for its totals across units.
     period: Option<String>,
+    /// And the attributes each entity spans the periods with (appendix AD.2.1).
+    span: Option<(String, String)>,
     /// The implicit bindings of relations across units, found while checking rules.
     contribs: Vec<Binding>,
     /// In an `admit` condition: the kind of the caller's unit, or empty when
@@ -1484,7 +1486,7 @@ impl Checker {
                     };
                     let t = self.num(p, &u.at, &u.subject, n);
                     match (name, t) {
-                        (Some(name), Some((amount, ty @ (Ty::Money | Ty::Count)))) => Some(Some(Taking { name, amount, ty, period: None })),
+                        (Some(name), Some((amount, ty @ (Ty::Money | Ty::Count)))) => Some(Some(Taking { name, amount, ty, period: None, span: None })),
                         (None, Some(_)) => {
                             self.errors.push(err(&u.at, format!("`taking {}`: name the attribute taken, as in `taking the line's quantity`, or take a count, as in `taking 1`", show_num(n))));
                             None
@@ -1928,6 +1930,7 @@ impl Checker {
             }
             let Some(filter) = self.filter(p, &r.at, subject) else { continue };
             self.period = r.period.clone();
+            self.span = r.span.clone();
             let body = match &r.body {
                 ast::RuleBody::Every { cond, .. } => match self.cond(p, &r.at, &subject.kind, cond) {
                     Some(c) => Body::Every(c),
@@ -1946,6 +1949,7 @@ impl Checker {
                 }
             };
             self.period = None;
+            self.span = None;
             if r.period.is_some() && !per_period(&body) {
                 self.errors.push(err(
                     &r.at,
@@ -2408,9 +2412,23 @@ impl Checker {
             Some((a, ty)) => (format!("{a} of {plural}{that}"), Num::Path(Path { steps: vec![Step::Attr(a.clone())] }), ty),
             None => (format!("number of {plural}{that}"), Num::Lit(Lit::Count(1)), Ty::Count),
         };
-        let name = match &self.period {
-            Some(per) => format!("{what} per {per}"),
-            None => what,
+        let name = match (&self.period, &self.span) {
+            (Some(per), Some((start, end))) => format!("{what} per {per} from its {start} to its {end}"),
+            (Some(per), None) => format!("{what} per {per}"),
+            (None, _) => what,
+        };
+        let span = match &self.span {
+            Some((start, end)) => {
+                for a in [start, end] {
+                    if p.kind(kind).and_then(|k| k.attr(a)).is_none_or(|x| x.ty != Ty::Time) {
+                        self.errors.push(err(at, format!("a {kind} spans the periods with two of its times, and `{a}` is not a Time attribute of it")));
+                        return None;
+                    }
+                }
+                let attr = |a: &String| Num::Path(Path { steps: vec![Step::Attr(a.clone())] });
+                Some((attr(start), attr(end)))
+            }
+            None => None,
         };
         let key = match &by {
             Some(b) => Num::Path(Path { steps: vec![Step::Attr(b.clone())] }),
@@ -2429,7 +2447,7 @@ impl Checker {
             key_member: false,
             key,
             filter: vec![],
-            taking: Some(Taking { name: name.clone(), amount, ty, period: self.period.clone() }),
+            taking: Some(Taking { name: name.clone(), amount, ty, period: self.period.clone(), span }),
             prefer: vec![],
             source,
             held,

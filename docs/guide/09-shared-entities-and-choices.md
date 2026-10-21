@@ -182,6 +182,21 @@ A parcel counts toward its sender's total `number of Parcels that are not cancel
 
 A filtered total is enforced as above, by refusing the contribution. When an admitted event or change would make the filter hold and the total's owner refuses, the input itself is refused by that rule, before anything changes. A new parcel, or a contribution an answer starts, waits for room instead.
 
+A new entity that is admitted (chapter 10) and whose filter already holds is refused the same way, by the rule, and is not made. A new entity with no filter, or one made without a gate, waits.
+
+### Spans
+
+A total per period counts each entity in the period of its `created`. An entity that lasts, such as a shift, a leave or a booking, can count toward every period it spans instead:
+
+```suture
+kind Shift { driver: Driver, from: Time, to: Time, cancelled: Bool = no }
+rule rota: for each Driver and day from their from to their to, the number of their Shifts that are not cancelled is at most 1
+```
+
+A shift from 2026-01-05 to 2026-01-08 counts once on each of those four days, both ends included, so no two shifts of one driver that are not cancelled share a day: they do not overlap. With `at most 2` it is a capacity, as for a room that seats two bookings a day. `week`, `month` and `year` count each week, month or year the span touches. The two attributes are Times of the entity; a span that ends before it starts counts toward no period, and a span covers at most 3660 days. The times are read when the entity starts to count, and a later change to them does not move it.
+
+When a shift is cancelled it gives back every day it spanned. An admitted shift that would share a day is refused by rule `rota`, and the trace names the dates: `Dee granted …: 1 number of Shifts that are not cancelled per day from its from to its to, 2026-01-05 to 2026-01-08 taken`.
+
 ### Totals of the unit you refer to
 
 A unit can read the totals of a shared entity it refers to. From a Parcel, `its sender's Parcels` are the sender's parcels, and the parcel reads their total as its sender's running total:
@@ -199,7 +214,7 @@ rule calm: no Parcel is crowded
 ```
 
 ```errors
-main.st:37: rule calm: it reads `number of Parcels that are not cancelled`, a total of each Sender that other units change without this rule being checked. State the rule about each Sender, or read the total in a need, an admit or a definition no rule uses
+main.st:39: rule calm: it reads `number of Parcels that are not cancelled`, a total of each Sender that other units change without this rule being checked. State the rule about each Sender, or read the total in a need, an admit or a definition no rule uses
 ```
 
 State the rule about the owner instead, as `rule open` does. Each change to a total that others read costs one refresh per unit that refers to its owner, and `suture build` lists such totals under `choices:` with `and each Parcel reads it`.

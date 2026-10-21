@@ -187,6 +187,10 @@ pub struct Taking {
     /// `month`: one total for each period of the subject's `created`
     /// (appendix F.2.12), named `amount of Refunds per month@2026-01`.
     pub period: Option<String>,
+    /// With `period`, the times the entity spans, read at it: it counts
+    /// toward every period from the first to the last (appendix AD.2.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<(Num, Num)>,
 }
 
 /// The periods of `for each K and ⟨period⟩`, in UTC (appendix F.2.12).

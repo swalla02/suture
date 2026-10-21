@@ -134,6 +134,52 @@ pub fn time_text(t: i64) -> String {
     format!("{y:04}-{m:02}-{d:02} {:02}:{:02}", secs / 3_600, secs % 3_600 / 60)
 }
 
+/// How many days a span may cover (appendix AD.2.2).
+pub const SPAN_DAYS: i64 = 3_660;
+
+/// The take of an entity that spans periods names them all, as
+/// `span day ⟨from⟩ ⟨to⟩` after the `@` (appendix AD.2.2).
+pub fn span_key(period: &str, from: i64, to: i64) -> String {
+    format!("span {period} {from} {to}")
+}
+
+/// A take's total as a trace shows it: a span by its dates,
+/// `… per day from its from to its to, 2026-01-05 to 2026-01-08`.
+pub fn take_text(name: &str) -> String {
+    let Some((base, span)) = name.split_once("@span ") else { return name.to_string() };
+    let mut parts = span.split(' ').skip(1).map(str::parse::<i64>);
+    match (parts.next(), parts.next()) {
+        (Some(Ok(from)), Some(Ok(to))) => {
+            let date = |t: i64| time_text(t).trim_end_matches(" 00:00").to_string();
+            format!("{base}, {} to {}", date(from), date(to))
+        }
+        _ => name.to_string(),
+    }
+}
+
+/// The periods a take falls in: the one it names, or each period a span
+/// covers, first to last, both ends included. A span that ends before it
+/// starts covers none.
+pub fn periods_in(at: &str) -> Result<Vec<String>, String> {
+    let Some(span) = at.strip_prefix("span ") else { return Ok(vec![at.to_string()]) };
+    let mut parts = span.split(' ');
+    let (Some(per), Some(Ok(from)), Some(Ok(to)), None) = (parts.next(), parts.next().map(str::parse::<i64>), parts.next().map(str::parse::<i64>), parts.next()) else {
+        return Err(format!("not a span: {at}"));
+    };
+    let (first, last) = (from.div_euclid(86_400), to.div_euclid(86_400));
+    if last - first >= SPAN_DAYS {
+        return Err(format!("a span covers at most {SPAN_DAYS} days, and this one covers {}", last - first + 1));
+    }
+    let mut out: Vec<String> = vec![];
+    for d in first..=last {
+        let k = period_key(per, d * 86_400);
+        if out.last() != Some(&k) {
+            out.push(k);
+        }
+    }
+    Ok(out)
+}
+
 /// The period a time falls in (appendix F.2.12), in UTC: `2026-01-17` for
 /// a day, the Monday it starts on for a week, `2026-01` for a month, `2026`
 /// for a year.

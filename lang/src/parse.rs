@@ -487,7 +487,7 @@ fn rule(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     c.expect_word("rule")?;
     let name = c.word()?;
     c.expect_sym(':')?;
-    let mut period = None;
+    let (mut period, mut span) = (None, None);
     let body = if c.eat_word("for") {
         // `for each Customer and month, ⟨bound⟩` (appendix F.2.12).
         c.expect_word("each")?;
@@ -498,6 +498,18 @@ fn rule(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
             return Err(c.error(format!("a period is a day, week, month or year, not `{p}`")));
         }
         period = Some(p);
+        // `… and day from their from to their to, …` (appendix AD.2.1).
+        if c.eat_word("from") {
+            if !c.eat_word("their") {
+                c.expect_word("its")?;
+            }
+            let start = c.word()?;
+            c.expect_word("to")?;
+            if !c.eat_word("their") {
+                c.expect_word("its")?;
+            }
+            span = Some((start, c.word()?));
+        }
         c.expect_sym(',')?;
         RuleBody::Every { subject: Subject { kind, filter: vec![] }, cond: condition(&mut c)? }
     } else {
@@ -525,7 +537,7 @@ fn rule(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
         }
     }
     c.expect_end()?;
-    out.rules.push(RuleDecl { name, body, period, globally, fresh, source: text(after_colon(&toks)), at });
+    out.rules.push(RuleDecl { name, body, period, span, globally, fresh, source: text(after_colon(&toks)), at });
     Ok(())
 }
 

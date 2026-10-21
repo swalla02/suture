@@ -368,7 +368,11 @@ impl Host {
         }
         interp::refused_at_creation(&self.prog, &unit, self.clock())?;
         self.fits(&unit)?;
-        self.fits(&interp::step_at(&self.prog, &unit, &Msg::Create, self.clock()).unit)?;
+        let first = interp::step_at(&self.prog, &unit, &Msg::Create, self.clock());
+        self.fits(&first.unit)?;
+        if let Some(by) = gated.flatten() {
+            self.refused_across(&first, &format!("{} {} {} it", by.role, by.name, by.verb))?;
+        }
         let sig = self.machine.program().sig.clone();
         let mut b = NetBuilder::new(&sig);
         let (meet, rest) = (b.var(), b.var());
@@ -1291,7 +1295,8 @@ impl Host {
 
     /// An event or a change whose step would make a filtered total across
     /// units take more than its owner's rules allow is refused by that rule,
-    /// before anything changes (appendix AA.2.2).
+    /// before anything changes (appendix AA.2.2); so is an admitted new
+    /// entity whose filter holds when it is made (appendix AD.2.3).
     fn refused_across(&mut self, after: &interp::Outcome, what: &str) -> Result<(), String> {
         for d in &after.decides {
             let Some(b) = self.prog.bindings.get(d.binding as usize).filter(|b| b.held.is_some()) else { continue };
