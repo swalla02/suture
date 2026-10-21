@@ -108,3 +108,21 @@ The bug is fixed: a withdrawn claim's fetch stops at its next timeout (`score: n
 ## After slice 24
 
 Slice 24 (spec appendix Y) moves a slot on when a rule on fixed facts refuses an alternative's send. `rule limit` reads only fixed facts, so a write-off over the policy limit now moves on to the next alternative instead of waiting. When the last one, Cash, is refused too, it waits for good, and `suture build` warns about it: `rule limit: a Cash it refuses waits for good …`. The scenario for it expects no Writeoff instead of an unsent one. The baseline waits on the write-off, so the two differ there: Suture now tries a repair first. Neither the requirements nor the author chose that, so it is another policy the runtime decides.
+
+## Change 3: the photo, read (slice 30)
+
+Extraction models such as Cloudflare's Clairic read typed values out of text and images with no generation (spec appendix AF). Change 3 (`REQUIREMENTS.md`) has a second model read the repair cost off the photo, which checks the amount the holder claims. It was made to both versions, one commit each:
+
+| | Suture | Baseline |
+|---|---|---|
+| Change 3: lines of logic added / removed | **+7 −1** | +28 −0 |
+| Control-flow statements added | none | +7 |
+| After change 3: lines of logic | 57 | 443 |
+| Scenarios or tests added | 2 scenarios, and one `reads` line in each scenario that pays out | 2 tests, and one `reader` line in each test that pays out |
+
+In Suture the change is a source with `via model`, one rule, and one attribute. Fetching only when a payout would go ahead, the confidence bound, and reading again an hour later are all clauses. The baseline needed a reader type, two fields, a check function with its own fetch-and-retry logic, and a call in `progress`. It is also a synchronous closure. A real one would need an HTTP client, the request and answer formats, `p_null`, and a deadline, which the Suture side gets from its `workers-ai` backend in `models.json`.
+
+What the change found in Suture:
+
+- **A formula cannot read a source.** The change was first written as the holder giving no amount, with `amount` read off the photo. `payout: Money = amount - policy's deductible` was then an error, since a formula is computed when its entity is made. Allowing it for a source with no `good for` was tried. Then the yearly total over `payout` held every step of the claim, a repair included, and gave no reason. That was reverted. The change as made uses the reading as a check, so it is also less than "the model reads the amount".
+- **A payout is fetched for in rule order.** In the unsure-reading scenario, the fraud bureau is asked only after the estimate stops holding the payout back, an hour later. The baseline does the same, because `progress` checks in that order. Neither the requirements nor the author chose this order.

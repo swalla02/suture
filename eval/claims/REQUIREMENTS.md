@@ -18,3 +18,4 @@ Motor insurance claims, with a decision model in the loop. `suture/` and `baseli
 
 1. **A yearly cap.** The claims filed on one policy in a calendar year (UTC, by filing time) pay out at most 25000 EUR together. A claim that would pass it waits. A withdrawn claim still counts.
 2. **Cash.** A third outcome: the payout paid to the holder, under the same limit, approval and fraud checks as a write-off. The model may pick it, and it comes last among the outcomes to try when one fails.
+3. **The photo, read.** A second model reads the repair cost off the photo. A write-off or cash payout whose amount is over that cost is paid only once an adjuster approves the claim. A reading counts only when the model is at least 0.8 sure; otherwise the photo is read again an hour later. A repair does not wait for the reading, and an approved claim is not read.
