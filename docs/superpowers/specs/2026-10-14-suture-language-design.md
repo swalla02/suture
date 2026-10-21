@@ -1809,7 +1809,11 @@ Extraction models such as Cloudflare's Clairic (`@cf/cloudflare/clairic`) read t
 
 ### AF.3 Acceptance
 
-- In a claim, `source Claim's estimate via model "reader@1"` reads the estimate off the photo, and the payout rule holds the claim until it is read.
+- In a claim, `source Claim's estimate via model "reader@1"` reads the estimate off the photo, and the payout rule holds the payout until it is read. The claims eval's change 3 does this, in Suture and in the baseline.
 - A read below `at least 0.8 sure`, a `reads nothing` and a late model all fail the fetch, and `otherwise` applies.
 - A served program logs the read as an answer, and replay does not ask the model again.
-- The workers-ai backend sends the typed field and image to a loopback stub and reads `value`, `p_null` and `confidence`.
+- The workers-ai backend sends the typed field and the image through a fake transport, never the network, and reads `value`, `p_null` and `confidence`.
+
+### AF.4 Found while building it
+
+A formula still cannot read a sourced value. Change 3 first had the amount itself read off the photo, and `payout = amount - deductible` was refused. Allowing a formula over a source with no `good for`, set once the value is fetched, was tried. Then the yearly total over `payout` held every step of the claim with no reason given. That waits for a slice of its own.

@@ -470,7 +470,7 @@ C1  placed: note "door", photo (image/png, 48213 bytes, sha256 9f2c41d07a1b)
       choice: Repair for C1?Outcome#1 by model "assessor@1" (of Repair, Writeoff)
 ```
 
-No sentence, formula, pool key or `sends` can read media: what the program means never depends on it, and a model still only picks among the options. In scenarios, `file "dent.png"` gives media, read from beside the scenario file; the type comes from the extension (`.png`, `.jpg`, `.gif`, `.webp`, `.mp3`, `.wav`, `.ogg`, `.mp4`, `.webm`, `.pdf`, `.txt`). A served program takes media through `POST /media` (chapter 17).
+No sentence, formula, pool key or adapter's `sends` can read media: what the program means never depends on it, and a model still only picks among the options. In scenarios, `file "dent.png"` gives media, read from beside the scenario file; the type comes from the extension (`.png`, `.jpg`, `.gif`, `.webp`, `.mp3`, `.wav`, `.ogg`, `.mp4`, `.webm`, `.pdf`, `.txt`). A served program takes media through `POST /media` (chapter 17).
 
 ```text
 when adjuster Ann files a new Claim C1 with photo file "dent.png" and note "door"
@@ -489,3 +489,79 @@ Two settings in `models.json` change that. `"media": "omit"` sends the reference
 ```
 
 A model from Rust finds the content in `Choice::media`, by hash.
+
+## Models that read
+
+Some models do not pick. An extraction model, such as Cloudflare's Clairic, reads a typed value out of text and images: an amount off a photo of a garage's estimate, or a date out of an email. Each answer comes with a confidence and nothing else, so such a model is a source, like the bureaus of chapter 14, but it can read media:
+
+```suture
+module claims version 1, currency EUR
+
+role staff
+
+kind Claim  { note: Text, amount: Money, estimate: Money, approved: Bool = no }
+kind Payout { claim: Claim }
+
+Claim needs Payout
+
+effect pay Payout via bank within 1 day
+  sends    the claim's amount
+  marks    sent
+  reports  paid
+
+source Claim's estimate via model "reader@1" within 10 seconds
+  sends      its note
+  asking     "the repair cost the garage's estimate shows"
+  at least 0.8 sure
+  otherwise  ask again after 1 hour
+
+rule estimate: no Claim has a Payout that is sent unless its amount is at most its estimate or it is approved
+
+admit file a new Claim by staff
+admit change Claim's approved by staff
+```
+
+A source `via model` has no `reports` line: the model reads the value or it does not. `sends` says what it reads, and unlike an adapter's it may name media: `sends its photo, its note`. `asking` is the instructions it gets for the value, and `at least 0.8 sure` is the confidence below which a value is not used. The bound is program text, so the read-back states it and it holds in every deployment. Everything else is as for any source: the value is fetched only when a step its rules hold back would go ahead, `good for` and `otherwise` apply, and `decide K's a` can choose between a model and an adapter.
+
+A model that finds nothing, is less sure than the bound, is late, fails, or gives a value of the wrong type has not read it, and the fetch fails:
+
+```scenario
+scenario "an unsure reading is read again an hour later":
+  when   model "reader@1" reads 1200 EUR at 0.5, then 1200 EUR at 0.9
+  and    staff Sam files a new Claim C1 with note "door, 1200 EUR" and amount 1200 EUR
+  expect C1's Payout is not sent
+  when   1 hour passes
+  expect C1's estimate is 1200 EUR
+  expect C1's Payout is sent
+```
+
+```text
+C1  estimate: asking model "reader@1" to read it (note "door, 1200 EUR")
+      model "reader@1" did not read C1's estimate: it read 1200 EUR at 0.50, and the source needs at least 0.8 sure
+      reader@1: unread   (C1~estimate#1)
+C1  estimate: model "reader@1" did not read it: asking again in 1 hour
+```
+
+In a scenario, `model "reader@1" reads 1200 EUR [at 0.9][, then …]`, `… reads nothing` and `… is late` script the model. A value without `at` gives no confidence, so a source with a bound does not use it. Scenarios ask the model as soon as the fetch is made. A served program asks it after the step, as it posts to an adapter, and logs the answer as that request's answer, `read` with the value or `unread`. Replay takes the value from the log and does not ask the model again.
+
+Secret and personal attributes are not sent to a model. A formula cannot read what a model reads, as for any source (chapter 14).
+
+### Backends that read
+
+`"backend": "workers-ai"` reads with Clairic on Cloudflare Workers AI. `url` is your account's `https://api.cloudflare.com/client/v4/accounts/⟨account⟩/ai/run/@cf/cloudflare/clairic`, and the key comes from `key_env`, which defaults to `CLOUDFLARE_API_TOKEN`:
+
+```text
+{ "reader@1": { "backend": "workers-ai", "url": "https://api.cloudflare.com/client/v4/accounts/…/ai/run/@cf/cloudflare/clairic" } }
+```
+
+The facts are sent as the state's text, with up to four images inline as data URLs, and the attribute as one typed field:
+
+```text
+{ "state": "Claim C1\nphoto: image 1\nnote: door",
+  "images": ["data:image/png;base64,iVBORw0KGgo…"],
+  "fields": { "estimate": { "type": "number", "decimals": 2, "unit": "EUR", "instructions": "the repair cost the garage's estimate shows" } } }
+```
+
+Text is a `text` field, Count a `number` with `integer`, Money a `number` with two decimals in the module's currency, Time a `datetime`, and Duration a `duration` in seconds. The value is read at `answers.estimate.value`, or at `result.answers.estimate.value` as the REST API wraps it, with its `confidence`. A `p_null` of 0.5 or more means the value is not in the input, so nothing is read. Cloudflare's post documents the field types, but not the name of the images field, so `images` may change.
+
+A custom backend reads too when it has a `value` pointer. It posts `{ "point": "read", "state": { "unit", "kind", "facts" }, "field": { "name", "type", "instructions" } }` and reads the value at `value` and the confidence at `confidence`. Jev picks, and does not read.

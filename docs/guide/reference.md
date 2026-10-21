@@ -26,6 +26,13 @@ source ⟨Kind⟩'s ⟨attr⟩ via ⟨adapter⟩ within ⟨duration⟩
   [good for  ⟨duration⟩]
   [otherwise use ⟨literal⟩ | ask again after ⟨duration⟩ | ⟨action⟩[ and ⟨action⟩…]]
 
+source ⟨Kind⟩'s ⟨attr⟩ via model "⟨name⟩@⟨version⟩" within ⟨duration⟩
+  sends      ⟨np⟩[, ⟨np⟩…]                       (media allowed)
+  [asking    "⟨instructions⟩"]
+  [at least ⟨0…1⟩ sure]
+  [good for  ⟨duration⟩]
+  [otherwise …]
+
 decide [⟨Kind⟩ | ⟨Slot⟩ | ⟨Kind⟩'s ⟨attr⟩] [for ⟨Kinds⟩ [whose ⟨cond⟩]]
        with model "⟨name⟩@⟨version⟩" [within ⟨n⟩ milliseconds | within ⟨duration⟩] | with prefer
 
@@ -102,6 +109,7 @@ scenario "⟨title⟩":
            is refused at the gate | is refused by rule ⟨name⟩
   when   ⟨adapter⟩ answers ⟨outcome⟩ [with ⟨attr⟩ ⟨value⟩, …] [for ⟨Name⟩]
   when   model "⟨name⟩@⟨version⟩" picks ⟨Name⟩[, then ⟨Name⟩…] | declines | is late
+  when   model "⟨name⟩@⟨version⟩" reads ⟨value⟩ [at ⟨0…1⟩] | nothing[, then …]
   when   ⟨n⟩ ⟨seconds|minutes|hours|days|weeks⟩ pass
   when   it is ⟨YYYY-MM-DD⟩ [⟨H:MM⟩]
   and    …
