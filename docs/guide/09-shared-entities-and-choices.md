@@ -197,6 +197,14 @@ A shift from 2026-01-05 to 2026-01-08 counts once on each of those four days, bo
 
 When a shift is cancelled it gives back every day it spanned. An admitted shift that would share a day is refused by rule `rota`, and the trace names the dates: `Dee granted …: 1 number of Shifts that are not cancelled per day from its from to its to, 2026-01-05 to 2026-01-08 taken`.
 
+A run of days can cross entities. `the days in a row of their Shifts that are not cancelled` counts the days in a row, through each day, on which the driver has a shift. Shifts that meet, one ending the day before the next starts, make one run:
+
+```suture
+rule rest: for each Driver and day from their from to their to, the days in a row of their Shifts that are not cancelled is at most 6
+```
+
+A shift that would make a run of seven days is refused by rule `rest`, and a day with no shift ends a run. A cancelled shift gives its days back, so the run it joined may split in two. Days in a row are read only in a rule over the days a span covers, `for each ⟨Kind⟩ and day from their ⟨time⟩ to their ⟨time⟩`. They are calendar days.
+
 ### Totals of the unit you refer to
 
 A unit can read the totals of a shared entity it refers to. From a Parcel, `its sender's Parcels` are the sender's parcels, and the parcel reads their total as its sender's running total:
@@ -214,7 +222,7 @@ rule calm: no Parcel is crowded
 ```
 
 ```errors
-main.st:39: rule calm: it reads `number of Parcels that are not cancelled`, a total of each Sender that other units change without this rule being checked. State the rule about each Sender, or read the total in a need, an admit or a definition no rule uses
+main.st:40: rule calm: it reads `number of Parcels that are not cancelled`, a total of each Sender that other units change without this rule being checked. State the rule about each Sender, or read the total in a need, an admit or a definition no rule uses
 ```
 
 State the rule about the owner instead, as `rule open` does. Each change to a total that others read costs one refresh per unit that refers to its owner, and `suture build` lists such totals under `choices:` with `and each Parcel reads it`.

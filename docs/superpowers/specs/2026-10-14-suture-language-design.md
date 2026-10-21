@@ -1850,3 +1850,32 @@ Slice 30 found that a formula could not read a sourced value (AF.4). The claim's
 
 - A filtered contribution did not keep its entity waiting while it could not be asked. A claim's payment went out with its payout missing from the request (`pay via bank ()`). `bound` now counts such a contribution as waiting. An effect still sends without a value that is unknown and that no rule or contribution reads. That waits for a later slice.
 - In the claims eval, Suture books a repair's garage bay while the amount is still unread, since the bay is the Repair's binding and only the Claim waits. The baseline reads the amount before anything else, so it books nothing. Neither the requirements nor the author chose this.
+
+## Appendix AH. Prototype slice 32: days in a row across entities (2026-10-21)
+
+The leave eval (appendix AC) could not port hrms's consecutive leave. A leave type may last at most so many days in a row, and the leaves just before and after an application count with it, across applications (`get_consecutive_leave_details`). A run is not a total of any one day, so the spans of slice 28 could not say it.
+
+### AH.1 What slice 32 adds
+
+| Added in slice 32 | Still waits |
+|---|---|
+| `the days in a row of their ⟨Kinds⟩ [that …]`, in `for each ⟨Kind⟩ and day from their ⟨time⟩ to their ⟨time⟩, …` | runs counted in working days, without holidays |
+| the read-back `run(count(…, per day from … to …))` | runs over weeks or months |
+| | reading a run outside a rule, as a sibling total |
+
+### AH.2 Semantics that slice 32 settles
+
+1. **Days in a row.** In a rule over the days a span covers, `the days in a row of their Leaves that are held` compiles to the same per-day total as `the number of their Leaves that are held` (AD.2.2). The rule reads it differently. For each day the take covers, it reads the number of days in a row, through that day, on which the count is above nothing. The run looks back and ahead from the day until a day with nothing, at most the 3660 days a span may cover. Leaves that meet, one ending the day before the next starts, make one run. A day with nothing ends a run. The run's length is a Count, in calendar days. Anywhere else, the phrase is an error: `` `the days in a row of its Leaves` counts the days a span covers: write it in `for each Employee and day from their ⟨time⟩ to their ⟨time⟩, …` ``.
+2. **Refusing and giving back.** A run rule is checked as any rule over a span is: once per day the take covers, by the owner, and an admitted new entity is refused at the gate (AD.2.3). A give-back can only shorten a run, so it is never refused, and a run it splits is two runs.
+3. **Cost.** The owner keeps the per-day total it keeps for the span. A check reads the days of the run around each covered day, so it costs the length of the run, as one lookup per day.
+
+### AH.3 Acceptance
+
+- In the leave eval, `rule consecutive: for each Allocation and day from their from to their to, the days in a row of their Applications that are held is at most its type's longest or its type's longest is 0` ports `test_max_consecutive_leaves_across_leave_applications`. Two applications meet around a third, which is refused because the three would make twelve days in a row against ten. A one-day application that leaves a gap is admitted. After one is rejected, an application that joins what is left is admitted.
+- The same rule covers `test_max_continuous_leaves`, one application longer than its type allows, so the port's `short` definition is gone.
+
+### AH.4 Found while building it
+
+- hrms counts a run per employee and leave type. The port counts it per allocation, which is per employee and type for a period, so a run across two allocations is not joined. hrms counts the run's leave days less holidays. The port counts calendar days.
+- A refusal names the total behind the run, `E would break rule run with its total number of Leaves that are held per day from its from to its to: …`. The paraphrase after it says "days in a row".
+
