@@ -1,0 +1,180 @@
+-- One scenario per test of hrms/hr/doctype/leave_application/test_leave_application.py
+-- that the port covers (REQUIREMENTS.md lists the others), in the file's order.
+-- `days` is the application's total leave days, which hrms computes from the
+-- holiday list; the port is given it.
+
+scenario "an application outside its allocation's period, or across two, is refused (test_validate_application_across_allocations)":
+  given  a Company C with name Test
+  and    a Approver A with user "approver"
+  and    a Employee E with user "emp", company C, joined 2010-01-01 and approver A
+  and    a Type T with name Validation
+  and    a Allocation Last with employee E, type T, from 2025-01-01, to 2025-12-31 and leaves 30
+  and    a Allocation This with employee E, type T, from 2026-01-01, to 2026-12-31 and leaves 30
+  when   hr Admin applies a new Application L1 with employee E, type T, allocation This, approver A, from 2027-01-05, to 2027-01-08 and days 4
+           is refused at the gate
+  and    hr Admin applies a new Application L2 with employee E, type T, allocation This, approver A, from 2025-12-26, to 2026-01-05 and days 6
+           is refused at the gate
+  and    hr Admin applies a new Application L3 with employee E, type T, allocation Last, approver A, from 2025-12-26, to 2026-01-05 and days 6
+           is refused at the gate
+  and    hr Admin applies a new Application L4 with employee E, type T, allocation This, approver A, from 2026-01-05, to 2026-01-08 and days 4
+  expect L4 is open
+
+scenario "an application beyond the balance is refused, unless the type allows a negative balance (test_insufficient_leave_balance_validation)":
+  given  a Company C with name Test
+  and    a Approver A with user "approver"
+  and    a Employee E with user "emp", company C, joined 2010-01-01 and approver A
+  and    a Type T with name Validation
+  and    a Type N with name Negative and negative yes
+  and    a Allocation AT with employee E, type T, from 2026-01-01, to 2026-12-31 and leaves 2
+  and    a Allocation AN with employee E, type N, from 2026-01-01, to 2026-12-31 and leaves 2
+  when   hr Admin applies a new Application L1 with employee E, type T, allocation AT, approver A, from 2026-01-05, to 2026-01-07 and days 3
+           is refused at the gate
+  and    hr Admin applies a new Application L2 with employee E, type N, allocation AN, approver A, from 2026-01-05, to 2026-01-07 and days 3
+  and    hr Admin approves L2
+  expect L2 is approved
+
+scenario "a second application beyond what is left is refused (test_leaves_allowed)":
+  given  a Company C with name Test
+  and    a Approver A with user "approver"
+  and    a Employee E with user "emp", company C, joined 2010-01-01 and approver A
+  and    a Type T with name Test
+  and    a Allocation AT with employee E, type T, from 2026-01-01, to 2026-12-31 and leaves 5
+  when   it is 2026-03-08
+  and    hr Admin applies a new Application L1 with employee E, type T, allocation AT, approver A, from 2026-03-01, to 2026-03-03 and days 3
+  and    hr Admin approves L1
+  and    hr Admin applies a new Application L2 with employee E, type T, allocation AT, approver A, from 2026-03-05, to 2026-03-09 and days 5
+           is refused at the gate
+
+scenario "a type is applicable only some days after joining (test_applicable_after)":
+  given  a Company C with name Test
+  and    a Approver A with user "approver"
+  when   it is 2026-03-08
+  given  a Employee E with user "emp", company C, joined 2026-03-01 and approver A
+  and    a Type Late with name Test and after 15 days
+  and    a Type Any with name Test1
+  and    a Allocation AL with employee E, type Late, from 2026-01-01, to 2026-12-31 and leaves 10
+  and    a Allocation AA with employee E, type Any, from 2026-01-01, to 2026-12-31 and leaves 10
+  when   hr Admin applies a new Application L1 with employee E, type Late, allocation AL, approver A, from 2026-03-01, to 2026-03-05 and days 5
+           is refused at the gate
+  and    hr Admin applies a new Application L2 with employee E, type Any, allocation AA, approver A, from 2026-03-01, to 2026-03-05 and days 5
+  expect L2 is open
+
+scenario "a leave longer than its type allows is refused (test_max_continuous_leaves)":
+  given  a Company C with name Test
+  and    a Approver A with user "approver"
+  and    a Employee E with user "emp", company C, joined 2010-01-01 and approver A
+  and    a Type T with name Test and longest 3
+  and    a Allocation AT with employee E, type T, from 2026-01-01, to 2026-12-31 and leaves 10
+  when   hr Admin applies a new Application L1 with employee E, type T, allocation AT, approver A, from 2026-03-01, to 2026-03-05 and days 5
+           is refused at the gate
+
+scenario "the application being approved does not count against itself (test_current_leave_on_submit)":
+  given  a Company C with name Test
+  and    a Approver A with user "approver"
+  and    a Employee E with user "emp", company C, joined 2010-01-01 and approver A
+  and    a Type Sick with name Sick
+  and    a Allocation AS with employee E, type Sick, from 2026-10-01, to 2026-10-10 and leaves 1
+  when   hr Admin applies a new Application L1 with employee E, type Sick, allocation AS, approver A, from 2026-10-02, to 2026-10-02 and days 1
+  and    hr Admin approves L1
+  expect L1 is approved
+  expect the total days of AS's Applications that are counted is 1
+
+scenario "an approved leave takes its days, and cancelling gives them back (test_creation_of_leave_ledger_entry_on_submit)":
+  given  a Company C with name Test
+  and    a Approver A with user "approver"
+  and    a Employee E with user "emp", company C, joined 2010-01-01 and approver A
+  and    a Type T with name Test1
+  and    a Allocation AT with employee E, type T, from 2026-01-01, to 2026-12-31 and leaves 15
+  when   hr Admin applies a new Application L1 with employee E, type T, allocation AT, approver A, from 2026-01-02, to 2026-01-05 and days 4
+  and    hr Admin approves L1
+  expect the total days of AT's Applications that are counted is 4
+  when   hr Admin cancels L1
+  expect L1 is cancelled
+  expect the total days of AT's Applications that are counted is 0
+
+scenario "the application's approver approves it (test_leave_approver_perms)":
+  given  a Company C with name Test
+  and    a Approver A with user "approver_perm"
+  and    a Approver Other with user "test"
+  and    a Employee E with user "emp", company C, joined 2010-01-01 and approver A
+  and    a Type T with name Test
+  and    a Allocation AT with employee E, type T, from 2026-01-01, to 2026-12-31 and leaves 30
+  when   employee E applies a new Application L1 with employee E, type T, allocation AT, approver A, from 2026-01-01, to 2026-01-03 and days 3
+  and    approver Other approves L1
+           is refused at the gate
+  and    approver A approves L1
+  expect L1 is approved
+
+scenario "an application without an approver is refused (test_leave_approver_mandatory)":
+  given  a Company C with name Test
+  and    a Approver A with user "approver"
+  and    a Employee E with user "emp", company C, joined 2010-01-01 and approver A
+  and    a Type T with name Test
+  and    a Allocation AT with employee E, type T, from 2026-01-01, to 2026-12-31 and leaves 30
+  when   hr Admin applies a new Application L1 with employee E, type T, allocation AT, from 2026-06-01, to 2026-06-02 and days 2
+           is refused at the gate
+  and    hr Admin applies a new Application L2 with employee E, type T, allocation AT, approver A, from 2026-06-01, to 2026-06-02 and days 2
+  expect L2's approver's user is "approver"
+
+scenario "an approver may approve their own leave where the company allows it (test_self_leave_approval_allowed)":
+  given  a Company C with name Test and selfish yes
+  and    a Approver Self with user "self"
+  and    a Approver A with user "approver"
+  and    a Employee E with user "self", company C, joined 2010-01-01 and approver A
+  and    a Type T with name Test
+  and    a Allocation AT with employee E, type T, from 2026-01-01, to 2026-12-31 and leaves 30
+  when   hr Admin applies a new Application L1 with employee E, type T, allocation AT, approver Self, from 2026-06-01, to 2026-06-02 and days 2
+  and    approver Self approves L1
+  expect L1 is approved
+
+scenario "an approver may not approve their own leave by default (test_self_leave_approval_not_allowed)":
+  given  a Company C with name Test
+  and    a Approver Self with user "self"
+  and    a Approver A with user "approver"
+  and    a Employee E with user "self", company C, joined 2010-01-01 and approver A
+  and    a Type T with name Test
+  and    a Allocation AT with employee E, type T, from 2026-01-01, to 2026-12-31 and leaves 30
+  when   hr Admin applies a new Application L1 with employee E, type T, allocation AT, approver Self, from 2026-06-03, to 2026-06-04 and days 2
+  and    approver Self approves L1
+           is refused at the gate
+  when   hr Admin applies a new Application L2 with employee E, type T, allocation AT, approver A, from 2026-06-08, to 2026-06-09 and days 2
+  and    approver A approves L2
+  expect L2 is approved
+
+scenario "leaves taken, pending approval and remaining (test_get_leave_details_for_dashboard)":
+  given  a Company C with name Test
+  and    a Approver A with user "approver"
+  and    a Employee E with user "emp", company C, joined 2010-01-01 and approver A
+  and    a Type T with name Test
+  and    a Allocation AT with employee E, type T, from 2026-01-01, to 2026-12-31 and leaves 30
+  when   hr Admin applies a new Application L1 with employee E, type T, allocation AT, approver A, from 2026-01-05, to 2026-01-08 and days 4
+  and    hr Admin approves L1
+  and    hr Admin applies a new Application L2 with employee E, type T, allocation AT, approver A, from 2026-01-09, to 2026-01-09 and days 1
+  expect AT's leaves is 30
+  expect the total days of AT's Applications that are approved is 4
+  expect the total days of AT's Applications that are open is 1
+
+scenario "a discarded application is cancelled (test_status_on_discard)":
+  given  a Company C with name Test
+  and    a Approver A with user "approver"
+  and    a Employee E with user "emp", company C, joined 2010-01-01 and approver A
+  and    a Type T with name Test
+  and    a Allocation AT with employee E, type T, from 2026-01-01, to 2026-12-31 and leaves 30
+  when   employee E applies a new Application L1 with employee E, type T, allocation AT, approver A, from 2026-01-01, to 2026-01-05 and days 5
+  and    employee E discards L1
+  expect L1 is cancelled
+
+scenario "only the application's approver approves it, not another employee (test_leave_access_control_flow)":
+  given  a Company C with name Test
+  and    a Approver A with user "test_approver_access"
+  and    a Employee E with user "test_leave_access", company C, joined 2010-01-01 and approver A
+  and    a Employee R with user "unauth_user", company C, joined 2010-01-01 and approver A
+  and    a Type T with name Test
+  and    a Allocation AT with employee E, type T, from 2026-04-01, to 2027-03-31 and leaves 30
+  when   employee E applies a new Application L1 with employee E, type T, allocation AT, approver A, from 2026-04-11, to 2026-04-11 and days 1
+  and    employee R approves L1
+           is refused at the gate
+  and    employee R discards L1
+           is refused at the gate
+  and    approver A approves L1
+  expect L1 is approved

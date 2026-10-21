@@ -1,0 +1,1697 @@
+{
+  "module": "leave",
+  "version": 1,
+  "currency": "EUR",
+  "kinds": [
+    {
+      "name": "Company",
+      "plural": "Companies",
+      "attrs": [
+        {
+          "name": "name",
+          "ty": "Text",
+          "of": null,
+          "default": null,
+          "formula": null,
+          "mark": null
+        },
+        {
+          "name": "selfish",
+          "ty": "Bool",
+          "of": null,
+          "default": {
+            "Bool": false
+          },
+          "formula": null,
+          "mark": null
+        },
+        {
+          "name": "backdating",
+          "ty": "Bool",
+          "of": null,
+          "default": {
+            "Bool": true
+          },
+          "formula": null,
+          "mark": null
+        }
+      ],
+      "owner": null
+    },
+    {
+      "name": "Approver",
+      "plural": "Approvers",
+      "attrs": [
+        {
+          "name": "user",
+          "ty": "Text",
+          "of": null,
+          "default": null,
+          "formula": null,
+          "mark": null
+        }
+      ],
+      "owner": null
+    },
+    {
+      "name": "Employee",
+      "plural": "Employees",
+      "attrs": [
+        {
+          "name": "user",
+          "ty": "Text",
+          "of": null,
+          "default": null,
+          "formula": null,
+          "mark": null
+        },
+        {
+          "name": "joined",
+          "ty": "Time",
+          "of": null,
+          "default": null,
+          "formula": null,
+          "mark": null
+        },
+        {
+          "name": "company",
+          "ty": "Ref",
+          "of": "Company",
+          "default": null,
+          "formula": null,
+          "mark": null
+        },
+        {
+          "name": "approver",
+          "ty": "Ref",
+          "of": "Approver",
+          "default": null,
+          "formula": null,
+          "mark": null
+        }
+      ],
+      "owner": null
+    },
+    {
+      "name": "Type",
+      "plural": "Types",
+      "attrs": [
+        {
+          "name": "name",
+          "ty": "Text",
+          "of": null,
+          "default": null,
+          "formula": null,
+          "mark": null
+        },
+        {
+          "name": "negative",
+          "ty": "Bool",
+          "of": null,
+          "default": {
+            "Bool": false
+          },
+          "formula": null,
+          "mark": null
+        },
+        {
+          "name": "longest",
+          "ty": "Count",
+          "of": null,
+          "default": {
+            "Count": 0
+          },
+          "formula": null,
+          "mark": null
+        },
+        {
+          "name": "after",
+          "ty": "Duration",
+          "of": null,
+          "default": {
+            "Duration": 0
+          },
+          "formula": null,
+          "mark": null
+        }
+      ],
+      "owner": null
+    },
+    {
+      "name": "Allocation",
+      "plural": "Allocations",
+      "attrs": [
+        {
+          "name": "from",
+          "ty": "Time",
+          "of": null,
+          "default": null,
+          "formula": null,
+          "mark": null
+        },
+        {
+          "name": "to",
+          "ty": "Time",
+          "of": null,
+          "default": null,
+          "formula": null,
+          "mark": null
+        },
+        {
+          "name": "leaves",
+          "ty": "Count",
+          "of": null,
+          "default": null,
+          "formula": null,
+          "mark": null
+        },
+        {
+          "name": "employee",
+          "ty": "Ref",
+          "of": "Employee",
+          "default": null,
+          "formula": null,
+          "mark": null
+        },
+        {
+          "name": "type",
+          "ty": "Ref",
+          "of": "Type",
+          "default": null,
+          "formula": null,
+          "mark": null
+        }
+      ],
+      "owner": null
+    },
+    {
+      "name": "Application",
+      "plural": "Applications",
+      "attrs": [
+        {
+          "name": "from",
+          "ty": "Time",
+          "of": null,
+          "default": null,
+          "formula": null,
+          "mark": null
+        },
+        {
+          "name": "to",
+          "ty": "Time",
+          "of": null,
+          "default": null,
+          "formula": null,
+          "mark": null
+        },
+        {
+          "name": "days",
+          "ty": "Count",
+          "of": null,
+          "default": null,
+          "formula": null,
+          "mark": null
+        },
+        {
+          "name": "status",
+          "ty": "Text",
+          "of": null,
+          "default": {
+            "Text": "open"
+          },
+          "formula": null,
+          "mark": null,
+          "states": [
+            "open",
+            "approved",
+            "rejected",
+            "cancelled"
+          ]
+        },
+        {
+          "name": "employee",
+          "ty": "Ref",
+          "of": "Employee",
+          "default": null,
+          "formula": null,
+          "mark": null
+        },
+        {
+          "name": "type",
+          "ty": "Ref",
+          "of": "Type",
+          "default": null,
+          "formula": null,
+          "mark": null
+        },
+        {
+          "name": "allocation",
+          "ty": "Ref",
+          "of": "Allocation",
+          "default": null,
+          "formula": null,
+          "mark": null
+        },
+        {
+          "name": "approver",
+          "ty": "Ref",
+          "of": "Approver",
+          "default": null,
+          "formula": null,
+          "mark": null
+        }
+      ],
+      "owner": null
+    }
+  ],
+  "needs": [],
+  "effects": [],
+  "sources": [],
+  "decisions": [],
+  "rules": [
+    {
+      "name": "balance",
+      "subject": "Allocation",
+      "filter": [],
+      "body": {
+        "Every": {
+          "Cmp": {
+            "left": {
+              "Taken": {
+                "of": {
+                  "steps": []
+                },
+                "name": "days of Applications that are counted",
+                "ty": "Count",
+                "period": null
+              }
+            },
+            "op": "Le",
+            "right": {
+              "Path": {
+                "steps": [
+                  {
+                    "Attr": "leaves"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "source": "the total days of each Allocation's Applications that are counted is at most its leaves",
+      "formula": "for each Allocation a: sum(a2 in Application where a2.allocation = a and a2 is counted: a2.days) ≤ a.leaves",
+      "paraphrase": "each allocation on its own: the total days of its Applications that are counted is at most its leaves",
+      "tier": "per-group",
+      "period": null,
+      "fixed": false,
+      "sources": [],
+      "fresh": [],
+      "applies": null
+    }
+  ],
+  "defines": [
+    {
+      "kind": "Application",
+      "state": "counted",
+      "cond": {
+        "And": [
+          {
+            "State": {
+              "node": {
+                "steps": []
+              },
+              "state": "approved",
+              "negated": false
+            }
+          },
+          {
+            "State": {
+              "node": {
+                "steps": [
+                  {
+                    "Ref": "type"
+                  }
+                ]
+              },
+              "state": "negative",
+              "negated": true
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "Application",
+      "state": "placed",
+      "cond": {
+        "And": [
+          {
+            "Cmp": {
+              "left": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Ref": "allocation"
+                    },
+                    {
+                      "Attr": "from"
+                    }
+                  ]
+                }
+              },
+              "op": "Le",
+              "right": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Attr": "from"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "Cmp": {
+              "left": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Ref": "allocation"
+                    },
+                    {
+                      "Attr": "to"
+                    }
+                  ]
+                }
+              },
+              "op": "Ge",
+              "right": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Attr": "to"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "Application",
+      "state": "fitting",
+      "cond": {
+        "Or": [
+          {
+            "State": {
+              "node": {
+                "steps": []
+              },
+              "state": "placed",
+              "negated": false
+            }
+          },
+          {
+            "State": {
+              "node": {
+                "steps": [
+                  {
+                    "Ref": "type"
+                  }
+                ]
+              },
+              "state": "negative",
+              "negated": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "Application",
+      "state": "affordable",
+      "cond": {
+        "Or": [
+          {
+            "Cmp": {
+              "left": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Attr": "days"
+                    }
+                  ]
+                }
+              },
+              "op": "Le",
+              "right": {
+                "Bin": [
+                  {
+                    "Path": {
+                      "steps": [
+                        {
+                          "Ref": "allocation"
+                        },
+                        {
+                          "Attr": "leaves"
+                        }
+                      ]
+                    }
+                  },
+                  "Sub",
+                  {
+                    "Taken": {
+                      "of": {
+                        "steps": [
+                          {
+                            "Ref": "allocation"
+                          }
+                        ]
+                      },
+                      "name": "days of Applications that are counted",
+                      "ty": "Count",
+                      "period": null,
+                      "kind": "Allocation"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "State": {
+              "node": {
+                "steps": [
+                  {
+                    "Ref": "type"
+                  }
+                ]
+              },
+              "state": "negative",
+              "negated": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "Application",
+      "state": "short",
+      "cond": {
+        "Or": [
+          {
+            "Cmp": {
+              "left": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Ref": "type"
+                    },
+                    {
+                      "Attr": "longest"
+                    }
+                  ]
+                }
+              },
+              "op": "Eq",
+              "right": {
+                "Lit": {
+                  "Count": 0
+                }
+              }
+            }
+          },
+          {
+            "Cmp": {
+              "left": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Attr": "days"
+                    }
+                  ]
+                }
+              },
+              "op": "Le",
+              "right": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Ref": "type"
+                    },
+                    {
+                      "Attr": "longest"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "Application",
+      "state": "entitled",
+      "cond": {
+        "Or": [
+          {
+            "Cmp": {
+              "left": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Ref": "type"
+                    },
+                    {
+                      "Attr": "after"
+                    }
+                  ]
+                }
+              },
+              "op": "Eq",
+              "right": {
+                "Lit": {
+                  "Duration": 0
+                }
+              }
+            }
+          },
+          {
+            "Cmp": {
+              "left": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Attr": "from"
+                    }
+                  ]
+                }
+              },
+              "op": "Lt",
+              "right": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Ref": "employee"
+                    },
+                    {
+                      "Attr": "joined"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "Cmp": {
+              "left": {
+                "Bin": [
+                  {
+                    "Path": {
+                      "steps": [
+                        {
+                          "Attr": "from"
+                        }
+                      ]
+                    }
+                  },
+                  "Sub",
+                  {
+                    "Path": {
+                      "steps": [
+                        {
+                          "Ref": "employee"
+                        },
+                        {
+                          "Attr": "joined"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "op": "Ge",
+              "right": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Ref": "type"
+                    },
+                    {
+                      "Attr": "after"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "Application",
+      "state": "timely",
+      "cond": {
+        "Or": [
+          {
+            "Cmp": {
+              "left": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Attr": "from"
+                    }
+                  ]
+                }
+              },
+              "op": "Gt",
+              "right": {
+                "Bin": [
+                  {
+                    "Path": {
+                      "steps": [
+                        {
+                          "Attr": "created"
+                        }
+                      ]
+                    }
+                  },
+                  "Sub",
+                  {
+                    "Lit": {
+                      "Duration": 86400
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "State": {
+              "node": {
+                "steps": [
+                  {
+                    "Ref": "employee"
+                  },
+                  {
+                    "Ref": "company"
+                  }
+                ]
+              },
+              "state": "backdating",
+              "negated": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "Application",
+      "state": "sound",
+      "cond": {
+        "And": [
+          {
+            "State": {
+              "node": {
+                "steps": []
+              },
+              "state": "fitting",
+              "negated": false
+            }
+          },
+          {
+            "State": {
+              "node": {
+                "steps": []
+              },
+              "state": "affordable",
+              "negated": false
+            }
+          },
+          {
+            "State": {
+              "node": {
+                "steps": []
+              },
+              "state": "short",
+              "negated": false
+            }
+          },
+          {
+            "State": {
+              "node": {
+                "steps": []
+              },
+              "state": "entitled",
+              "negated": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "Application",
+      "state": "valid",
+      "cond": {
+        "And": [
+          {
+            "Cmp": {
+              "left": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Attr": "to"
+                    }
+                  ]
+                }
+              },
+              "op": "Ge",
+              "right": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Attr": "from"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "Cmp": {
+              "left": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Attr": "days"
+                    }
+                  ]
+                }
+              },
+              "op": "Gt",
+              "right": {
+                "Lit": {
+                  "Count": 0
+                }
+              }
+            }
+          },
+          {
+            "State": {
+              "node": {
+                "steps": []
+              },
+              "state": "sound",
+              "negated": false
+            }
+          },
+          {
+            "Cmp": {
+              "left": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Ref": "approver"
+                    },
+                    {
+                      "Attr": "user"
+                    }
+                  ]
+                }
+              },
+              "op": "Ne",
+              "right": {
+                "Lit": {
+                  "Text": ""
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "Application",
+      "state": "permitted",
+      "cond": {
+        "State": {
+          "node": {
+            "steps": [
+              {
+                "Ref": "employee"
+              },
+              {
+                "Ref": "company"
+              }
+            ]
+          },
+          "state": "selfish",
+          "negated": false
+        }
+      }
+    },
+    {
+      "kind": "Allocation",
+      "state": "pending",
+      "cond": {
+        "Cmp": {
+          "left": {
+            "Taken": {
+              "of": {
+                "steps": []
+              },
+              "name": "days of Applications that are open",
+              "ty": "Count",
+              "period": null
+            }
+          },
+          "op": "Gt",
+          "right": {
+            "Lit": {
+              "Count": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "kind": "Allocation",
+      "state": "used",
+      "cond": {
+        "Cmp": {
+          "left": {
+            "Taken": {
+              "of": {
+                "steps": []
+              },
+              "name": "days of Applications that are approved",
+              "ty": "Count",
+              "period": null
+            }
+          },
+          "op": "Gt",
+          "right": {
+            "Lit": {
+              "Count": 0
+            }
+          }
+        }
+      }
+    }
+  ],
+  "goals": [],
+  "reactions": [
+    {
+      "kind": "Application",
+      "outcome": "approves",
+      "by": [
+        "approver",
+        "hr"
+      ],
+      "actions": [
+        {
+          "target": {
+            "steps": []
+          },
+          "attr": "status",
+          "value": true,
+          "becomes": {
+            "Lit": {
+              "Text": "approved"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "Application",
+      "outcome": "rejects",
+      "by": [
+        "approver",
+        "hr"
+      ],
+      "actions": [
+        {
+          "target": {
+            "steps": []
+          },
+          "attr": "status",
+          "value": true,
+          "becomes": {
+            "Lit": {
+              "Text": "rejected"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "Application",
+      "outcome": "discards",
+      "by": [
+        "employee"
+      ],
+      "actions": [
+        {
+          "target": {
+            "steps": []
+          },
+          "attr": "status",
+          "value": true,
+          "becomes": {
+            "Lit": {
+              "Text": "cancelled"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "Application",
+      "outcome": "cancels",
+      "by": [
+        "hr"
+      ],
+      "actions": [
+        {
+          "target": {
+            "steps": []
+          },
+          "attr": "status",
+          "value": true,
+          "becomes": {
+            "Lit": {
+              "Text": "cancelled"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "slots": [],
+  "lists": [],
+  "bindings": [
+    {
+      "id": "Allocation(days of Applications that are counted)",
+      "subject": "Application",
+      "target": "Allocation",
+      "per": null,
+      "key_attr": "",
+      "key_member": false,
+      "key": {
+        "Path": {
+          "steps": [
+            {
+              "Attr": "allocation"
+            }
+          ]
+        }
+      },
+      "filter": [],
+      "taking": {
+        "name": "days of Applications that are counted",
+        "amount": {
+          "Path": {
+            "steps": [
+              {
+                "Attr": "days"
+              }
+            ]
+          }
+        },
+        "ty": "Count",
+        "period": null
+      },
+      "prefer": [],
+      "source": "each Application adds to its allocation's total days of Applications that are counted",
+      "held": {
+        "State": {
+          "node": {
+            "steps": []
+          },
+          "state": "counted",
+          "negated": false
+        }
+      },
+      "shared": true
+    },
+    {
+      "id": "Allocation(days of Applications that are open)",
+      "subject": "Application",
+      "target": "Allocation",
+      "per": null,
+      "key_attr": "",
+      "key_member": false,
+      "key": {
+        "Path": {
+          "steps": [
+            {
+              "Attr": "allocation"
+            }
+          ]
+        }
+      },
+      "filter": [],
+      "taking": {
+        "name": "days of Applications that are open",
+        "amount": {
+          "Path": {
+            "steps": [
+              {
+                "Attr": "days"
+              }
+            ]
+          }
+        },
+        "ty": "Count",
+        "period": null
+      },
+      "prefer": [],
+      "source": "each Application adds to its allocation's total days of Applications that are open",
+      "held": {
+        "State": {
+          "node": {
+            "steps": []
+          },
+          "state": "open",
+          "negated": false
+        }
+      }
+    },
+    {
+      "id": "Allocation(days of Applications that are approved)",
+      "subject": "Application",
+      "target": "Allocation",
+      "per": null,
+      "key_attr": "",
+      "key_member": false,
+      "key": {
+        "Path": {
+          "steps": [
+            {
+              "Attr": "allocation"
+            }
+          ]
+        }
+      },
+      "filter": [],
+      "taking": {
+        "name": "days of Applications that are approved",
+        "amount": {
+          "Path": {
+            "steps": [
+              {
+                "Attr": "days"
+              }
+            ]
+          }
+        },
+        "ty": "Count",
+        "period": null
+      },
+      "prefer": [],
+      "source": "each Application adds to its allocation's total days of Applications that are approved",
+      "held": {
+        "State": {
+          "node": {
+            "steps": []
+          },
+          "state": "approved",
+          "negated": false
+        }
+      }
+    }
+  ],
+  "globals": [],
+  "roles": [
+    {
+      "name": "employee",
+      "kind": "Employee"
+    },
+    {
+      "name": "approver",
+      "kind": "Approver"
+    },
+    {
+      "name": "hr",
+      "kind": null
+    }
+  ],
+  "admits": [
+    {
+      "what": {
+        "New": {
+          "verb": "apply",
+          "kind": "Application"
+        }
+      },
+      "roles": [
+        "employee"
+      ],
+      "data": [],
+      "cond": {
+        "And": [
+          {
+            "Cmp": {
+              "left": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Attr": "employee"
+                    }
+                  ]
+                }
+              },
+              "op": "Eq",
+              "right": {
+                "Path": {
+                  "steps": [
+                    "Caller"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "State": {
+              "node": {
+                "steps": []
+              },
+              "state": "valid",
+              "negated": false
+            }
+          },
+          {
+            "State": {
+              "node": {
+                "steps": []
+              },
+              "state": "timely",
+              "negated": false
+            }
+          },
+          {
+            "Cmp": {
+              "left": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Ref": "allocation"
+                    },
+                    {
+                      "Attr": "employee"
+                    }
+                  ]
+                }
+              },
+              "op": "Eq",
+              "right": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Attr": "employee"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "Cmp": {
+              "left": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Ref": "allocation"
+                    },
+                    {
+                      "Attr": "type"
+                    }
+                  ]
+                }
+              },
+              "op": "Eq",
+              "right": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Attr": "type"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      },
+      "source": "apply a new Application by employee where the Application's employee is the caller and the Application is valid and it is timely and its allocation's employee is its employee and its allocation's type is its type"
+    },
+    {
+      "what": {
+        "New": {
+          "verb": "apply",
+          "kind": "Application"
+        }
+      },
+      "roles": [
+        "hr"
+      ],
+      "data": [],
+      "cond": {
+        "And": [
+          {
+            "State": {
+              "node": {
+                "steps": []
+              },
+              "state": "valid",
+              "negated": false
+            }
+          },
+          {
+            "Cmp": {
+              "left": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Ref": "allocation"
+                    },
+                    {
+                      "Attr": "employee"
+                    }
+                  ]
+                }
+              },
+              "op": "Eq",
+              "right": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Attr": "employee"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "Cmp": {
+              "left": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Ref": "allocation"
+                    },
+                    {
+                      "Attr": "type"
+                    }
+                  ]
+                }
+              },
+              "op": "Eq",
+              "right": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Attr": "type"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      },
+      "source": "apply a new Application by hr where the Application is valid and its allocation's employee is its employee and its allocation's type is its type"
+    },
+    {
+      "what": {
+        "Event": {
+          "verb": "approve",
+          "kind": "Application"
+        }
+      },
+      "roles": [
+        "approver"
+      ],
+      "data": [],
+      "cond": {
+        "And": [
+          {
+            "State": {
+              "node": {
+                "steps": []
+              },
+              "state": "open",
+              "negated": false
+            }
+          },
+          {
+            "Cmp": {
+              "left": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Attr": "approver"
+                    }
+                  ]
+                }
+              },
+              "op": "Eq",
+              "right": {
+                "Path": {
+                  "steps": [
+                    "Caller"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "Cmp": {
+              "left": {
+                "Path": {
+                  "steps": [
+                    "Caller",
+                    {
+                      "Attr": "user"
+                    }
+                  ]
+                }
+              },
+              "op": "Ne",
+              "right": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Ref": "employee"
+                    },
+                    {
+                      "Attr": "user"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      },
+      "source": "approve Application by approver where the Application is open and its approver is the caller and the caller's user is not its employee's user"
+    },
+    {
+      "what": {
+        "Event": {
+          "verb": "approve",
+          "kind": "Application"
+        }
+      },
+      "roles": [
+        "approver"
+      ],
+      "data": [],
+      "cond": {
+        "And": [
+          {
+            "State": {
+              "node": {
+                "steps": []
+              },
+              "state": "open",
+              "negated": false
+            }
+          },
+          {
+            "Cmp": {
+              "left": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Attr": "approver"
+                    }
+                  ]
+                }
+              },
+              "op": "Eq",
+              "right": {
+                "Path": {
+                  "steps": [
+                    "Caller"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "State": {
+              "node": {
+                "steps": []
+              },
+              "state": "permitted",
+              "negated": false
+            }
+          }
+        ]
+      },
+      "source": "approve Application by approver where the Application is open and its approver is the caller and it is permitted"
+    },
+    {
+      "what": {
+        "Event": {
+          "verb": "reject",
+          "kind": "Application"
+        }
+      },
+      "roles": [
+        "approver"
+      ],
+      "data": [],
+      "cond": {
+        "And": [
+          {
+            "State": {
+              "node": {
+                "steps": []
+              },
+              "state": "open",
+              "negated": false
+            }
+          },
+          {
+            "Cmp": {
+              "left": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Attr": "approver"
+                    }
+                  ]
+                }
+              },
+              "op": "Eq",
+              "right": {
+                "Path": {
+                  "steps": [
+                    "Caller"
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      },
+      "source": "reject Application by approver where the Application is open and its approver is the caller"
+    },
+    {
+      "what": {
+        "Event": {
+          "verb": "approve",
+          "kind": "Application"
+        }
+      },
+      "roles": [
+        "hr"
+      ],
+      "data": [],
+      "cond": {
+        "State": {
+          "node": {
+            "steps": []
+          },
+          "state": "open",
+          "negated": false
+        }
+      },
+      "source": "approve Application by hr where the Application is open"
+    },
+    {
+      "what": {
+        "Event": {
+          "verb": "reject",
+          "kind": "Application"
+        }
+      },
+      "roles": [
+        "hr"
+      ],
+      "data": [],
+      "cond": {
+        "State": {
+          "node": {
+            "steps": []
+          },
+          "state": "open",
+          "negated": false
+        }
+      },
+      "source": "reject Application by hr where the Application is open"
+    },
+    {
+      "what": {
+        "Event": {
+          "verb": "discard",
+          "kind": "Application"
+        }
+      },
+      "roles": [
+        "employee"
+      ],
+      "data": [],
+      "cond": {
+        "And": [
+          {
+            "State": {
+              "node": {
+                "steps": []
+              },
+              "state": "open",
+              "negated": false
+            }
+          },
+          {
+            "Cmp": {
+              "left": {
+                "Path": {
+                  "steps": [
+                    {
+                      "Attr": "employee"
+                    }
+                  ]
+                }
+              },
+              "op": "Eq",
+              "right": {
+                "Path": {
+                  "steps": [
+                    "Caller"
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      },
+      "source": "discard Application by employee where the Application is open and its employee is the caller"
+    },
+    {
+      "what": {
+        "Event": {
+          "verb": "cancel",
+          "kind": "Application"
+        }
+      },
+      "roles": [
+        "hr"
+      ],
+      "data": [],
+      "cond": {
+        "State": {
+          "node": {
+            "steps": []
+          },
+          "state": "approved",
+          "negated": false
+        }
+      },
+      "source": "cancel Application by hr where the Application is approved"
+    },
+    {
+      "what": {
+        "New": {
+          "verb": "add",
+          "kind": "Company"
+        }
+      },
+      "roles": [
+        "hr"
+      ],
+      "data": [],
+      "cond": null,
+      "source": "add a new Company, Approver, Employee, Type or Allocation by hr"
+    },
+    {
+      "what": {
+        "New": {
+          "verb": "add",
+          "kind": "Approver"
+        }
+      },
+      "roles": [
+        "hr"
+      ],
+      "data": [],
+      "cond": null,
+      "source": "add a new Company, Approver, Employee, Type or Allocation by hr"
+    },
+    {
+      "what": {
+        "New": {
+          "verb": "add",
+          "kind": "Employee"
+        }
+      },
+      "roles": [
+        "hr"
+      ],
+      "data": [],
+      "cond": null,
+      "source": "add a new Company, Approver, Employee, Type or Allocation by hr"
+    },
+    {
+      "what": {
+        "New": {
+          "verb": "add",
+          "kind": "Type"
+        }
+      },
+      "roles": [
+        "hr"
+      ],
+      "data": [],
+      "cond": null,
+      "source": "add a new Company, Approver, Employee, Type or Allocation by hr"
+    },
+    {
+      "what": {
+        "New": {
+          "verb": "add",
+          "kind": "Allocation"
+        }
+      },
+      "roles": [
+        "hr"
+      ],
+      "data": [],
+      "cond": null,
+      "source": "add a new Company, Approver, Employee, Type or Allocation by hr"
+    }
+  ],
+  "attempts": 3,
+  "candidates": 8,
+  "warnings": [],
+  "grants": []
+}

@@ -1,0 +1,15 @@
+manifest of leave v1
+
+adapters:
+
+roles     employee (a Employee), approver (a Approver), hr
+admitted  apply a new Application by employee where the Application's employee is the caller and the Application is valid and it is timely and its allocation's employee is its employee and its allocation's type is its type
+          apply a new Application by hr where the Application is valid and its allocation's employee is its employee and its allocation's type is its type
+          approve Application by approver where the Application is open and its approver is the caller and the caller's user is not its employee's user
+          approve Application by approver where the Application is open and its approver is the caller and it is permitted
+          reject Application by approver where the Application is open and its approver is the caller
+          approve Application by hr where the Application is open
+          reject Application by hr where the Application is open
+          discard Application by employee where the Application is open and its employee is the caller
+          cancel Application by hr where the Application is approved
+          add a new Company, Approver, Employee, Type or Allocation by hr
