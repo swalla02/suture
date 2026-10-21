@@ -10,6 +10,7 @@ module ⟨name⟩ version ⟨n⟩, currency ⟨code⟩[, attempts ⟨n⟩][, can
 role ⟨role⟩ [is a ⟨Kind⟩]
 
 kind ⟨Kind⟩ [(plural ⟨Plural⟩)] { ⟨attr⟩: ⟨Type⟩ [= ⟨literal or formula⟩], … }
+                                   (a formula may read a value a source reads once, with no `good for`)
 
 ⟨Kind⟩ needs ⟨Kind or Slot⟩[, …] [while ⟨cond⟩]
 ⟨Slot⟩ is ⟨Kind⟩ or ⟨Kind⟩[ or …]

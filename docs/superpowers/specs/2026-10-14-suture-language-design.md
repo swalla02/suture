@@ -1816,4 +1816,37 @@ Extraction models such as Cloudflare's Clairic (`@cf/cloudflare/clairic`) read t
 
 ### AF.4 Found while building it
 
-A formula still cannot read a sourced value. Change 3 first had the amount itself read off the photo, and `payout = amount - deductible` was refused. Allowing a formula over a source with no `good for`, set once the value is fetched, was tried. Then the yearly total over `payout` held every step of the claim with no reason given. That waits for a slice of its own.
+A formula still cannot read a sourced value. Change 3 first had the amount itself read off the photo, and `payout = amount - deductible` was refused. Allowing a formula over a source with no `good for`, set once the value is fetched, was tried. Then the yearly total over `payout` held every step of the claim with no reason given. That waits for a slice of its own. Slice 31 settles it (appendix AG).
+
+## Appendix AG. Prototype slice 31: formulas over values a source reads once (2026-10-21)
+
+Slice 30 found that a formula could not read a sourced value (AF.4). The claim's amount could not be read off a document, because `payout = amount - deductible` and the yearly total over `payout` follow from it. Allowing the formula alone made the yearly total hold the claim with no reason given. Nothing asked for the amount, and nothing named the wait.
+
+### AG.1 What slice 31 adds
+
+| Added in slice 31 | Still waits |
+|---|---|
+| a formula that reads an attribute whose sources have no `good for` | a formula over a source with `good for`, kept fresh |
+| a total's contribution that fetches the values its amount reads, and waits for them | a `becomes` over a sourced value |
+| a value read once as a fixed fact, so a rule over it refuses for good once it is known | an effect that waits for a value it sends but no rule reads |
+| `explain` and goal alerts naming the wait: `Claim waits for its amount, to count toward a Policy's total payout` | |
+| a fix: a fetch's earlier timers are dropped from the unit | |
+
+### AG.2 Semantics that slice 31 settles
+
+1. **Formulas over a value read once.** A formula may read an attribute whose sources all have no `good for`. It is computed as formulas are (B.3): once every value it reads is known. When a fetch's answer or an `otherwise use` gives the value, the unit's formulas are computed again, and each one that can now be known is set once. A formula over a source with `good for` is an error, because the value would be read again and the formula would fall behind: `Claim.payout reads amount, which its source reads again every 1 day; a formula is computed once, so it reads only a source with no `good for``. So is a rule's `with amount at most … old` when a formula reads `amount`.
+2. **Contributions wait for their amount.** A binding whose `taking` amount reads a sourced value through formulas (`Binding.sources`) cannot be asked while the value is unknown. It fetches that value, as a strict rule would (I.2.5): `amount: for a Policy's total payout of Claims per year, asking model "invoices@1" to read it (…)`. Its entity waits. An unfiltered contribution keeps it waiting until granted (F.2.5). A filtered one keeps it waiting while its filter holds and the amount is unknown; while the filter is unknown, it does not keep it waiting (AA.2.1). The fetch is kept going while the contribution waits, as for a rule (W.2.1). `suture explain` and a goal's alert name it: `Claim waits for its amount, to count toward a Policy's total payout of Claims per year`.
+3. **Fixed once known.** A sourced attribute that no source keeps for a `good for` and no rule wants fresh is read once, so it is not a changeable attribute (F.2.15), and a formula over it is not one either. A rule over it can be fixed. A fixed rule moves a slot on, or withdraws a part (Y.2.1), only when it is broken on what is known. Nothing unknown counts against it then. While the value is unknown, the strict rule holds the step back, and once the value refuses, the slot moves on. In the claims eval, a write-off over the policy limit still gives way to a repair once the amount is read.
+4. **Timers of earlier fetches.** Each fetch wanted its own `:stale` or `:again` timer in the unit, and none was dropped. A value asked again every hour for weeks made the unit outgrow its 4096 bytes and fault, for any source, before this slice too. A fetch's new timer now replaces those of the attribute's earlier fetches. The host has started them already, and a timer for a fetch that is over is ignored (I.2.6), so nothing changes but the size.
+
+### AG.3 Acceptance
+
+- `payout: Money = amount - 100 EUR` over `source Claim's amount via model "reader@1"` is computed once the amount is read. The claim counts toward its yearly total with it, and a second claim with no room waits for room.
+- An amount the model does not read keeps the claim waiting for 15 days of hourly asks. The alert and `explain` name the wait, and the unit keeps one timer for the amount.
+- A rule over the payout holds a write-off while the amount is unknown, and moves the slot on to a repair once the amount read refuses it.
+- The claims eval's change 4 reads the amount off the invoice, in Suture and in the baseline.
+
+### AG.4 Found while building it
+
+- A filtered contribution did not keep its entity waiting while it could not be asked. A claim's payment went out with its payout missing from the request (`pay via bank ()`). `bound` now counts such a contribution as waiting. An effect still sends without a value that is unknown and that no rule or contribution reads. That waits for a later slice.
+- In the claims eval, Suture books a repair's garage bay while the amount is still unread, since the bay is the Repair's binding and only the Claim waits. The baseline reads the amount before anything else, so it books nothing. Neither the requirements nor the author chose this.

@@ -126,3 +126,24 @@ What the change found in Suture:
 
 - **A formula cannot read a source.** The change was first written as the holder giving no amount, with `amount` read off the photo. `payout: Money = amount - policy's deductible` was then an error, since a formula is computed when its entity is made. Allowing it for a source with no `good for` was tried. Then the yearly total over `payout` held every step of the claim, a repair included, and gave no reason. That was reverted. The change as made uses the reading as a check, so it is also less than "the model reads the amount".
 - **A payout is fetched for in rule order.** In the unsure-reading scenario, the fraud bureau is asked only after the estimate stops holding the payout back, an hour later. The baseline does the same, because `progress` checks in that order. Neither the requirements nor the author chose this order.
+
+## Change 4: the amount, read (slice 31)
+
+Slice 31 lets a formula read a value that a source reads once (spec appendix AG), so change 4 is what change 3 first wanted. The holder attaches the garage's invoice instead of giving the amount, and a model reads the amount off it (`REQUIREMENTS.md`). It was made to both versions, one commit each:
+
+| | Suture | Baseline |
+|---|---|---|
+| Change 4: lines of logic added / removed | **+6 −1** | +31 −10 |
+| Control-flow statements added | none | +5 |
+| After change 4: lines of logic | 62 | 464 |
+| Scenarios or tests added | 1 scenario, and one `reads` line before each filing | 1 test, and one `invoices` line before each filing |
+
+In Suture the change is one source, five lines, and an `invoice` attribute. `payout`, the yearly total, the limit and the write-off amount read `amount` as before. The baseline made `amount` optional. It needed a second reader, a read-and-retry function, a call at the top of `progress`, and an `unwrap` at each of the five places that read the amount.
+
+What the change found in Suture:
+
+- **The wait was silent, and nothing asked.** This was the gap AF.4 recorded. A claim's contribution to the yearly total could not be asked while its payout was unknown, and no rule needed the amount, so nothing fetched it. Now the contribution fetches it and the claim's alert says `Claim waits for its amount, to count toward a Policy's total payout of Claims per year`.
+- **A filtered total let a payment go out without its payout.** With `their Claims that are open`, the payment was sent before the amount was read, and its request carried no payout. That is fixed. An effect that sends a value nothing else reads can still go out without it (AG.4).
+- **Fixed facts.** With `payout` over a source, the limit rule was no longer on fixed facts, and a write-off over the limit waited instead of giving way to a repair (slice 24). A value read once now counts as fixed, and a fixed rule gives way only once the value is known.
+- **Timers.** An invoice the model never read, asked again every hour, made the claim outgrow its size after about two weeks. Any source asked again that often did, before this slice too. Fixed (AG.2.4).
+- **A bay while unread.** Suture takes the repair's garage bay before the amount is read. The repair is not booked until the claim counts. The baseline takes nothing until the amount is read. The requirements say nothing booked or paid, so both meet them, but they differ.

@@ -295,7 +295,7 @@ main.st:26: Order is shared (Invoice refers to it), so its credit cannot be sour
 
 The last one is a v0 limit: a fact that other units carry would need its freshness carried too, so the kind of a sourced attribute must not be referred to by another kind or picked by a `uses`. Its own parts may refer to it, as `Payment` and `Shipment` do here.
 
-A copy would not stay fresh either, so a formula or a `becomes` that reads a sourced attribute is an error: read it in a rule instead.
+A copy would not stay fresh either, so a formula that reads a sourced attribute with `good for`, and a `becomes` that reads any sourced attribute, are errors: read it in a rule instead. A formula may read a value read once, with no `good for` (chapter 15).
 
 The other errors say what they mean: an attribute that does not exist, one with a default or a formula, a `Bool` (v0 sources values, not states), a second source via the same adapter, a second `otherwise` for the same attribute, an `otherwise use` of the wrong type, an `otherwise` that sets a sourced attribute, an answer that carries something else, and a `with x at most … old` on a rule that reads no sourced `x`.
 

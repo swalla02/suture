@@ -43,7 +43,7 @@ Suture v0 is a prototype. Everything earlier in this guide runs and is tested. T
 | sourcing an attribute of a kind other units refer to or pick with `uses` | source it on the unit that reads it, or carry it with a formula |
 | a source whose answer carries more than one value | one attribute per source |
 | sourcing a `Bool` state | source a Text or Count and compare it in the rule |
-| a formula, a `becomes`, or a total's filter that stays fresh over a sourced fact | read the sourced fact in the rule itself |
+| a formula, a `becomes`, or a total's filter that stays fresh over a sourced fact | read the sourced fact in the rule itself; a formula may read a value read once, with no `good for` |
 | prefetching | facts are fetched when a step waits on them |
 | keys from anywhere but an environment variable | `models.json` names the variable with `key_env` |
 | a model that sees the whole unit | it sees the entity that chooses, with its own facts, and the options with theirs; put the media a model needs on the entity that chooses |

@@ -544,7 +544,63 @@ C1  estimate: model "reader@1" did not read it: asking again in 1 hour
 
 In a scenario, `model "reader@1" reads 1200 EUR [at 0.9][, then …]`, `… reads nothing` and `… is late` script the model. A value without `at` gives no confidence, so a source with a bound does not use it. Scenarios ask the model as soon as the fetch is made. A served program asks it after the step, as it posts to an adapter, and logs the answer as that request's answer, `read` with the value or `unread`. Replay takes the value from the log and does not ask the model again.
 
-Secret and personal attributes are not sent to a model. A formula cannot read what a model reads, as for any source (chapter 14).
+Secret and personal attributes are not sent to a model.
+
+### Formulas over a read value
+
+A formula may read a value that a source reads once, with no `good for`. The formula is worked out when the value comes in. Here the holder gives no amount: a model reads it off the invoice, and the payout and the yearly total follow from it:
+
+```suture
+module claims version 1, currency EUR
+
+role staff
+
+kind Policy { name: Text }
+kind Claim  { policy: Policy, note: Text, amount: Money, payout: Money = amount - 100 EUR }
+kind Payout { claim: Claim }
+
+Claim needs Payout
+
+effect pay Payout via bank within 1 day
+  sends    the claim's payout
+  marks    sent
+  reports  paid
+
+source Claim's amount via model "invoices@1" within 10 seconds
+  sends      its note
+  asking     "the total the invoice charges"
+  otherwise  ask again after 1 hour
+
+rule yearly: for each Policy and year, the total payout of their Claims is at most 2000 EUR
+
+admit file a new Claim by staff
+```
+
+A claim counts toward its policy's yearly total with its payout, so it cannot count until the amount is read. Its contribution asks for the amount, as a rule would, and the claim waits:
+
+```scenario
+scenario "the payout counts once the amount is read":
+  given  a Policy P1 with name Ann
+  when   model "invoices@1" reads nothing, then 1200 EUR
+  and    staff Sam files a new Claim C1 with policy P1 and note "invoice 7"
+  expect C1's Payout is not sent
+  when   1 hour passes
+  expect C1's payout is 1100 EUR
+  expect C1's Payout is sent
+```
+
+```text
+C1  amount: for a Policy's total payout of Claims per year, asking model "invoices@1" to read it (note "invoice 7")
+C1  amount: model "invoices@1" did not read it: asking again in 1 hour
+  … 1 hour pass
+C1  amount: for a Policy's total payout of Claims per year, asking model "invoices@1" to read it (note "invoice 7")
+C1  amount: 1200 EUR read by model "invoices@1"
+C1  Payout → pay via bank (payout 1100 EUR)
+```
+
+`suture explain` and a goal's alert say why: `Claim waits for its amount, to count toward a Policy's total payout of Claims per year`.
+
+A value read once never changes after it is read, so a rule over it is on fixed facts, as a rule over given values is (chapter 7). Such a rule refuses for good only once the value is known. Until then it holds the step back. A source with `good for` is read again, and the formula would fall behind, so a formula that reads one is still an error. So is a rule's `with amount at most … old` when a formula reads `amount`.
 
 ### Backends that read
 
