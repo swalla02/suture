@@ -1734,3 +1734,30 @@ Porting frappe/hrms leave applications (eval/leave) found two bugs.
 
 - `admit apply Leave by staff` with `when a staff applies a Leave: …` compiles, and `third_person` gives `applies`, `pays` and `fixes`.
 - `expect the number of U's Items that are lost is 0`, where no rule reads that total, fails with that message.
+
+## Appendix AD. Prototype slice 28: spans (2026-10-21)
+
+The leave comparison (eval/leave) could not port hrms's overlap check: no two open or approved leaves of an employee share a day. Six of its tests need it. A relation filter reads only the sibling, never the reader, so `the number of its employee's Leaves that end after its from` cannot be written, and a pairwise comparison would read every sibling. Instead, each leave counts toward each day it spans, and a per-group total per day bounds them, which also gives capacities (a room that seats two bookings a day).
+
+### AD.1 What slice 28 adds
+
+| Added in slice 28 | Still waits |
+|---|---|
+| `for each ⟨Kind⟩ and ⟨period⟩ from their ⟨attr⟩ to their ⟨attr⟩, …`: an entity counts toward every period it spans | hours, or spans shorter than a day |
+| an admitted new entity whose filter holds is refused by a filtered total's rule | consecutive runs across entities (hrms's longest continuous leave) |
+| traces name a span by its dates | moving a span when its times change |
+
+### AD.2 Semantics that slice 28 settles
+
+1. **Spans.** After a rule's period, `from their ⟨a⟩ to their ⟨b⟩` (or `its`) names two Time attributes of the relation's kind. The contribution's total is named `⟨total⟩ per ⟨period⟩ from its ⟨a⟩ to its ⟨b⟩`, so it differs from the one counted by `created`. Its read-backs are `count(l in Leave where l.employee = e and l is held, per day from l.from to l.to)` and `the number of its Leaves that are held on any one day they span`. Two attributes that are not Times of that kind are an error: `a Leave spans the periods with two of its times, and `days` is not a Time attribute of it`.
+2. **Taking a span.** The entity reads the two times when it asks to take, and names them in its take: `@span day ⟨from⟩ ⟨to⟩`, in seconds. The owner adds the amount to its total of each period the span covers, first to last, both ends included, in UTC (F.2.12), and checks its rules once per period. A rule broken in any period refuses the whole take. Giving it back subtracts it from each. A span that ends before it starts covers no period. A span of more than 3660 days is refused with no rule, so the contribution waits. The times are read once: a later change to them does not move a granted take. The cost is one total per period covered, kept by the owner, as for any total per period.
+3. **Admitted new entities.** A new entity made through an `admit` whose contribution to a filtered total holds when it is made is checked with its owner before it is made, as an event is (AA.2.2), and the input is refused by the rule that would break. An unfiltered total, and a new entity made without a gate (`given`, `when a new …`, or by the program), wait for room as before (F.2.9), so a claim over its policy's yearly limit is still made and waits.
+
+### AD.3 Acceptance
+
+- `rule apart: for each Employee and day from their from to their to, the number of their Leaves that are held is at most 1` refuses a second leave that shares a day, by rule `apart`, and allows one that starts the day after, and one for another employee.
+- Cancelling a leave gives back every day, and a leave inside those days is then allowed.
+- `per week` counts a booking from a Friday to a Tuesday in both weeks.
+- An unfiltered span total still makes the new entity, whose seat waits.
+- Approving a leave into a day another approved leave holds is refused by the rule.
+- The leave port ports hrms's `test_overlap`.
