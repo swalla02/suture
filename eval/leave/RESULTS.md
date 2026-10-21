@@ -11,7 +11,7 @@ The third measured comparison, and the first outside commerce. The leave applica
 | Lines of logic | 39 | 400, in the 26 functions that do what the port does |
 | Control-flow statements (`if`, `for`, `return`, `try`, …) | none: the language has none | 77 |
 | Condition clauses and connectives (`where`, `when`, `and`, `or`) | 48 | (inside the 77) |
-| Tests | 14 scenarios, in 148 lines | 45 tests in 1699 lines; 14 translated, 23 out of scope, 8 not expressible |
+| Tests | 14 scenarios, in 162 lines | 45 tests in 1699 lines; 14 translated, 23 out of scope, 8 not expressible |
 
 hrms's count drops, by pattern, its lines about holidays and half days, attendance and salary, carry-forward and expiry, block dates, optional leave, workflows, notifications and messages. A few lines either way may be off. Frappe gives hrms a database, forms, permissions and an API. Suture gives the port a durable log and replay, and the read-back of every rule.
 
@@ -19,7 +19,7 @@ hrms's count drops, by pattern, its lines about holidays and half days, attendan
 
 | Test | In the port |
 |---|---|
-| `validate_application_across_allocations`, `insufficient_leave_balance_validation`, `leaves_allowed`, `applicable_after`, `max_continuous_leaves`, `current_leave_on_submit`, `creation_of_leave_ledger_entry_on_submit`, `leave_approver_perms`, `leave_approver_mandatory`, `self_leave_approval_allowed`, `self_leave_approval_not_allowed`, `get_leave_details_for_dashboard`, `status_on_discard`, `leave_access_control_flow` | a scenario each. The last keeps its approval steps; its read-permission checks are out of scope |
+| `validate_application_across_allocations`, `insufficient_leave_balance_validation`, `leaves_allowed`, `applicable_after`, `max_continuous_leaves`, `current_leave_on_submit`, `creation_of_leave_ledger_entry_on_submit`, `leave_approver_perms`, `leave_approver_mandatory`, `self_leave_approval_allowed`, `self_leave_approval_not_allowed`, `get_leave_details_for_dashboard`, `status_on_discard`, `leave_access_control_flow` | a scenario each. Two test something next to their hrms test, and say `after`: `leave_approver_perms` checks sharing with the approver, and the port checks that only the named approver approves; `leave_access_control_flow` checks read permissions (out of scope), and the port checks that another employee may not approve or discard |
 | 7 attendance tests (`overwrite_attendance`, `…_half_day_attendance`, `attendance_for_include_holidays`, `attendance_update_for_exclude_holidays`, `modifying_attendance_…` ×2, `half_day_status_for_two_half_leaves`) | out of scope |
 | `block_list`, `optional_leave` | out of scope |
 | 12 carry-forward, expiry and ledger tests (`separate_leave_ledger_entry_for_boundary_applications`, `leave_balance_near_allocaton_expiry`, `ledger_entry_creation_on_intermediate_allocation_expiry`, `leave_application_creation_after_expiry`, `leave_details_with_…cf_expiry` ×4, `get_leave_allocation_records`, `filtered_old_cf_entries_…`, `leave_balance_when_allocation_is_expired_manually`, `backdated_application_after_expiry`) | out of scope |

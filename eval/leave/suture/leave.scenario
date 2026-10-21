@@ -92,7 +92,7 @@ scenario "an approved leave takes its days, and cancelling gives them back (test
   expect L1 is cancelled
   expect the total days of AT's Applications that are counted is 0
 
-scenario "the application's approver approves it (test_leave_approver_perms)":
+scenario "only the approver the application names approves it (after test_leave_approver_perms)":
   given  a Company C with name Test
   and    a Approver A with user "approver_perm"
   and    a Approver Other with user "test"
@@ -141,7 +141,7 @@ scenario "an approver may not approve their own leave by default (test_self_leav
   and    approver A approves L2
   expect L2 is approved
 
-scenario "leaves taken, pending approval and remaining (test_get_leave_details_for_dashboard)":
+scenario "leaves allocated, taken and pending approval (test_get_leave_details_for_dashboard)":
   given  a Company C with name Test
   and    a Approver A with user "approver"
   and    a Employee E with user "emp", company C, joined 2010-01-01 and approver A
@@ -164,7 +164,7 @@ scenario "a discarded application is cancelled (test_status_on_discard)":
   and    employee E discards L1
   expect L1 is cancelled
 
-scenario "only the application's approver approves it, not another employee (test_leave_access_control_flow)":
+scenario "another employee may not approve or discard an application (after test_leave_access_control_flow)":
   given  a Company C with name Test
   and    a Approver A with user "test_approver_access"
   and    a Employee E with user "test_leave_access", company C, joined 2010-01-01 and approver A
