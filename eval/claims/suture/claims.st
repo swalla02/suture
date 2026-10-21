@@ -1,6 +1,7 @@
 -- Motor claims: a policyholder files a claim with a photo of the damage. A
 -- model looks at the photo and picks a repair at a garage or a write-off,
--- and every payout stays within the policy and past the fraud check.
+-- another reads the repair cost off it, and every payout stays within the
+-- policy, the reading and the fraud check.
 module claims version 1, currency EUR
 
 role holder is a Holder
@@ -10,7 +11,7 @@ role ops
 kind Holder   { name: Text }
 kind Policy   { holder: Holder, region: Text, limit: Money, deductible: Money, iban: Text secret }
 kind Garage   { name: Text, region: Text, bays: Count }
-kind Claim    { policy: Policy, photo: Media, damage: Text, amount: Money, score: Count,
+kind Claim    { policy: Policy, photo: Media, damage: Text, amount: Money, score: Count, estimate: Money,
                 approved: Bool = no, withdrawn: Bool = no,
                 payout: Money = amount - policy's deductible }
 kind Repair   { claim: Claim }
@@ -40,10 +41,16 @@ source Claim's score via fraud within 10 seconds
   reports    scored | fails with unknown
   good for   1 day
   otherwise  use 100
+source Claim's estimate via model "reader@1" within 10 seconds
+  sends      its photo
+  asking     "the repair cost the photo shows"
+  at least 0.8 sure
+  otherwise  ask again after 1 hour
 
 rule bays:    the total repairs taken from each Garage is at most its bays
 rule limit:   no Claim has a Writeoff or a Cash that is sent unless its payout is at most its policy's limit
 rule big:     no Claim has a Writeoff or a Cash that is sent unless its payout is at most 5000 EUR or it is approved
+rule photo:   no Claim has a Writeoff or a Cash that is sent unless its amount is at most its estimate or it is approved
 rule fraud:   no Claim has an Outcome that is sent unless its score is less than 70 or it is approved,
               with score at most 1 day old
 rule yearly:  for each Policy and year, the total payout of their Claims is at most 25000 EUR

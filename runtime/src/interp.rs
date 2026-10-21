@@ -1725,12 +1725,13 @@ fn fetch_answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[
     n.attrs.insert(attr.clone(), value);
     let f = n.fetched.entry(attr.clone()).or_default();
     *f = Fetch { sends: 0, at: Some(now), until: src.good_for.map(|g| now + g as i64), failed: false, fallback: false, tried: vec![], ..f.clone() };
+    let from = if src.model { format!("read by model \"{}\"", src.adapter) } else { format!("from {}", src.adapter) };
     match src.good_for {
         Some(g) => {
-            u.notes.push(format!("{attr}: {shown} from {}, trusted for {}", src.adapter, duration(g)));
+            u.notes.push(format!("{attr}: {shown} {from}, trusted for {}", duration(g)));
             u.timers.push((format!("{key}:stale"), g));
         }
-        None => u.notes.push(format!("{attr}: {shown} from {}", src.adapter)),
+        None => u.notes.push(format!("{attr}: {shown} {from}")),
     }
     Ok(())
 }
@@ -1778,7 +1779,7 @@ fn fail(prog: &Program, u: &mut Unit, at: &[usize], src: &Source, key: &str, why
         return;
     }
     f.failed = true;
-    let failed = format!("{attr}: {} failed ({why})", src.adapter);
+    let failed = if src.model { format!("{attr}: model \"{}\" did not read it", src.adapter) } else { format!("{attr}: {} failed ({why})", src.adapter) };
     // The `otherwise`, and the `good for` of the source that gives it.
     let otherwise = prog.otherwise_of(&src.kind, attr);
     let src = prog.sources_of(&src.kind, attr).into_iter().find(|s| s.otherwise == *otherwise).unwrap_or(src);

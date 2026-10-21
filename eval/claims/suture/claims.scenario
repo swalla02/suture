@@ -17,6 +17,7 @@ scenario "a total loss is written off for the claim less the deductible":
   given  a Holder Ada with name Ada
   and    a Policy P1 with holder Ada, region north, limit 20000 EUR, deductible 300 EUR and iban "NL01"
   when   model "assessor@1" picks Writeoff
+  and    model "reader@1" reads 4300 EUR at 0.95
   and    holder Ada files a new Claim C1 with policy P1, photo file "wreck.png", damage roof and amount 4300 EUR
   and    fraud answers scored with score 10
   expect C1's Writeoff is sent
@@ -28,6 +29,7 @@ scenario "a big write-off waits for an adjuster":
   given  a Holder Ada with name Ada
   and    a Policy P1 with holder Ada, region north, limit 20000 EUR, deductible 300 EUR and iban "NL01"
   when   model "assessor@1" picks Writeoff
+  and    model "reader@1" reads 9300 EUR at 0.95
   and    holder Ada files a new Claim C1 with policy P1, photo file "wreck.png", damage roof and amount 9300 EUR
   expect C1's Writeoff is not sent
   when   adjuster Bo changes C1's approved to yes
@@ -37,6 +39,7 @@ scenario "a write-off over the policy limit is never paid, approved or not":
   given  a Holder Ada with name Ada
   and    a Policy P1 with holder Ada, region north, limit 3000 EUR, deductible 300 EUR and iban "NL01"
   when   model "assessor@1" picks Writeoff
+  and    model "reader@1" reads 4300 EUR at 0.95
   and    holder Ada files a new Claim C1 with policy P1, photo file "wreck.png", damage roof and amount 4300 EUR
   and    adjuster Bo changes C1's approved to yes
   expect C1 has no Writeoff
@@ -79,6 +82,7 @@ scenario "with no model, and no garage with room, the claim is written off after
   and    fraud answers scored with score 10 for C1
   expect C1's Repair is sent
   when   model "assessor@1" declines
+  and    model "reader@1" reads 1300 EUR at 0.95
   and    holder Cy files a new Claim C2 with policy P2, photo file "dent.png", damage door and amount 1300 EUR
   expect C2's Repair is not sent
   when   2 days pass
@@ -92,6 +96,7 @@ scenario "only the policy's holder files or withdraws, and a withdrawn claim sto
   when   holder Cy files a new Claim C9 with policy P1, photo file "dent.png", damage door and amount 1200 EUR
            is refused at the gate
   when   model "assessor@1" picks Writeoff
+  and    model "reader@1" reads 9300 EUR at 0.95
   and    holder Ada files a new Claim C1 with policy P1, photo file "wreck.png", damage roof and amount 9300 EUR
   and    holder Cy withdraws C1
            is refused at the gate
@@ -129,6 +134,7 @@ scenario "a refused payment is tried three times, then a repair is tried":
   given  a Holder Ada with name Ada
   and    a Policy P1 with holder Ada, region north, limit 20000 EUR, deductible 300 EUR and iban "NL01"
   when   model "assessor@1" picks Writeoff
+  and    model "reader@1" reads 4300 EUR at 0.95
   and    holder Ada files a new Claim C1 with policy P1, photo file "wreck.png", damage roof and amount 4300 EUR
   and    fraud answers scored with score 10
   and    bank answers refused
@@ -140,8 +146,10 @@ scenario "a policy pays out at most 25000 EUR a year":
   given  a Holder Ada with name Ada
   and    a Policy P1 with holder Ada, region north, limit 20000 EUR, deductible 300 EUR and iban "NL01"
   when   model "assessor@1" picks Writeoff
+  and    model "reader@1" reads 15300 EUR at 0.95
   and    holder Ada files a new Claim C1 with policy P1, photo file "wreck.png", damage roof and amount 15300 EUR
   and    model "assessor@1" picks Writeoff
+  and    model "reader@1" reads 12300 EUR at 0.95
   and    holder Ada files a new Claim C2 with policy P1, photo file "wreck.png", damage roof and amount 12300 EUR
   and    adjuster Bo changes C1's approved to yes
   and    adjuster Bo changes C2's approved to yes
@@ -152,6 +160,7 @@ scenario "a holder can be paid the payout in cash, under the same checks":
   given  a Holder Ada with name Ada
   and    a Policy P1 with holder Ada, region north, limit 20000 EUR, deductible 300 EUR and iban "NL01"
   when   model "assessor@1" picks Cash
+  and    model "reader@1" reads 1200 EUR at 0.95
   and    holder Ada files a new Claim C1 with policy P1, photo file "dent.png", damage door and amount 1200 EUR
   and    fraud answers scored with score 80
   expect C1's Cash is not sent
@@ -159,3 +168,26 @@ scenario "a holder can be paid the payout in cash, under the same checks":
   expect C1's Cash is sent
   when   bank answers paid
   expect C1 is settled
+
+scenario "a payout over the cost the photo shows waits for an adjuster":
+  given  a Holder Ada with name Ada
+  and    a Policy P1 with holder Ada, region north, limit 20000 EUR, deductible 300 EUR and iban "NL01"
+  when   model "assessor@1" picks Writeoff
+  and    model "reader@1" reads 2500 EUR at 0.95
+  and    holder Ada files a new Claim C1 with policy P1, photo file "wreck.png", damage roof and amount 4300 EUR
+  expect C1's estimate is 2500 EUR
+  expect C1's Writeoff is not sent
+  when   adjuster Eve changes C1's approved to yes
+  expect C1's Writeoff is sent
+
+scenario "a reading the model is not sure of is read again an hour later":
+  given  a Holder Ada with name Ada
+  and    a Policy P1 with holder Ada, region north, limit 20000 EUR, deductible 300 EUR and iban "NL01"
+  when   model "assessor@1" picks Writeoff
+  and    model "reader@1" reads 4300 EUR at 0.5, then 4300 EUR at 0.9
+  and    holder Ada files a new Claim C1 with policy P1, photo file "wreck.png", damage roof and amount 4300 EUR
+  expect C1's Writeoff is not sent
+  when   1 hour passes
+  and    fraud answers scored with score 10
+  expect C1's estimate is 4300 EUR
+  expect C1's Writeoff is sent

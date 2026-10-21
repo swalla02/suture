@@ -439,10 +439,11 @@ pub fn rule_sources(p: &Program, r: &Rule) -> Option<String> {
                 Some(secs) => format!("at most {} old", duration_text(secs as i64)),
                 None => "fetched once".to_string(),
             };
+            let name = |x: &crate::ir::Source| if x.model { format!("model \"{}\"", x.adapter) } else { x.adapter.clone() };
             match all.as_slice() {
-                [only] => format!("{} from {}, {}", s.attr, only.adapter, one(only)),
+                [only] => format!("{} from {}, {}", s.attr, name(only), one(only)),
                 _ => {
-                    let each: Vec<String> = all.iter().map(|x| format!("{} ({})", x.adapter, one(x))).collect();
+                    let each: Vec<String> = all.iter().map(|x| format!("{} ({})", name(x), one(x))).collect();
                     format!("{} from {}", s.attr, each.join(" or "))
                 }
             }
