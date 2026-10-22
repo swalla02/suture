@@ -241,6 +241,7 @@ const STATEMENTS: &[(&str, &str)] = &[
     ("prefer", "prefer ${1:Kind}: lowest ${2:attr}"),
     ("decide", "decide ${1:Kind} with model \"${2:name}@${3:1}\""),
     ("apply", "apply rule ${1:name} to ${2:Kinds} created from version ${3:2}"),
+    ("keep", "keep the number of each ${1:Kind}'s ${2:Kinds}"),
 ];
 
 /// Whether the tokens can begin a statement: they parse, or the parser

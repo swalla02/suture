@@ -401,4 +401,14 @@ pub struct Source {
     pub admits: Vec<AdmitDecl>,
     pub applies: Vec<ApplyDecl>,
     pub allows: Vec<AllowDecl>,
+    pub keeps: Vec<KeepDecl>,
+}
+
+/// `keep the total days of each Allocation's Applications that are approved`
+/// (appendix AI): a running total that only readers and scenarios read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeepDecl {
+    pub kind: String,
+    pub total: Num,
+    pub at: Loc,
 }

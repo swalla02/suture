@@ -509,6 +509,19 @@ pub fn rule_body(c: &mut Cursor) -> Result<RuleBody, Error> {
     Ok(RuleBody::No { subject, pred, unless })
 }
 
+/// `the total days of each Allocation's Applications [that …]`, `the number
+/// of each …`: a total and the kind named by its `each` (appendix AI).
+pub fn kept_total(c: &mut Cursor) -> Result<(String, Num), Error> {
+    let total = atom(c, false)?;
+    match &total {
+        Num::Total { of, .. } | Num::Number { of, .. } if matches!(&of.head, Head::Each(_)) && !of.steps.is_empty() => {
+            let Head::Each(k) = &of.head else { unreachable!("matched above") };
+            Ok((k.clone(), total.clone()))
+        }
+        _ => Err(c.error("`keep` names a total of each entity, as in `keep the total days of each Allocation's Applications` or `keep the number of each Allocation's Applications that are open`")),
+    }
+}
+
 /// The kind named by `each` in a bound, if any.
 fn each_in_cond(c: &Cond) -> Option<String> {
     fn num(n: &Num) -> Option<String> {

@@ -47,11 +47,12 @@ pub(crate) fn statement(st: &Stmt, out: &mut Source) -> Result<(), Error> {
         "admit" => admit(st, at, out),
         "apply" => apply(st, at, out),
         "allow" => allow(st, at, out),
+        "keep" => keep(st, at, out),
         w if w.starts_with(char::is_uppercase) && matches!(st.lines[0].get(1), Some(Tok::Word(x)) if x == "is") => slot(st, at, out),
         w if w.starts_with(char::is_uppercase) && matches!(st.lines[0].get(1), Some(Tok::Word(x)) if x == "uses") => uses(st, at, out),
         w if w.starts_with(char::is_uppercase) => needs(st, at, out),
         _ => Err(st.error(format!(
-            "unknown statement `{first}`: expected module, kind, effect, source, decide, rule, define, desired, when, prefer, role, admit, apply, allow, `Kind needs …` or `Slot is …`"
+            "unknown statement `{first}`: expected module, kind, effect, source, decide, rule, define, desired, when, prefer, role, admit, apply, allow, keep, `Kind needs …` or `Slot is …`"
         ))),
     }
 }
@@ -581,6 +582,17 @@ fn rule(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     }
     c.expect_end()?;
     out.rules.push(RuleDecl { name, body, period, span, globally, fresh, source: text(after_colon(&toks)), at });
+    Ok(())
+}
+
+/// `keep the total days of each Allocation's Applications that are approved` (appendix AI)
+fn keep(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
+    let toks = st.tokens();
+    let mut c = Cursor::new(&toks, &st.file, st.line);
+    c.expect_word("keep")?;
+    let (kind, total) = crate::sentence::kept_total(&mut c)?;
+    c.expect_end()?;
+    out.keeps.push(KeepDecl { kind, total, at });
     Ok(())
 }
 

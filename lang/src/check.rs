@@ -29,7 +29,7 @@ pub fn condition(p: &Program, kind: &str, c: &ast::Cond) -> Result<Cond, Vec<Err
     for b in &cx.contribs {
         if !p.bindings.iter().any(|x| x.subject == b.subject && x.id == b.id) {
             let what = b.taking.as_ref().map_or(b.id.clone(), |t| t.name.clone());
-            cx.errors.push(err(&at, format!("the program keeps no total {what} of each {}: no rule, need, admit, definition or formula reads it", b.target)));
+            cx.errors.push(err(&at, format!("the program keeps no total {what} of each {}: no rule, need, admit, definition or formula reads it, and no `keep` keeps it", b.target)));
         }
     }
     match c {
@@ -968,6 +968,7 @@ impl Checker {
         self.roles(src, &mut p);
         self.admits(src, &mut p);
         self.reactions(src, &mut p);
+        self.keeps(src, &p);
         // Totals across units read outside rules: in formulas, definitions,
         // needs and admits (appendix AA.2.3).
         self.add_contribs(&mut p);
@@ -1969,6 +1970,23 @@ impl Checker {
             }
             let Some(cond) = self.cond(p, &d.at, &d.kind, &d.cond) else { continue };
             p.defines.push(Define { kind: d.kind.clone(), state: d.state.clone(), cond });
+        }
+    }
+
+    /// Totals kept for readers and scenarios: each is the running total a
+    /// rule over it would read, kept with no rule (appendix AI).
+    fn keeps(&mut self, src: &Source, p: &Program) {
+        for k in &src.keeps {
+            if p.kind(&k.kind).is_none() {
+                self.errors.push(err(&k.at, format!("unknown kind {}", k.kind)));
+                continue;
+            }
+            let before = self.contribs.len();
+            let Some((num, _)) = self.num(p, &k.at, &k.kind, &k.total) else { continue };
+            if !matches!(&num, Num::Taken { kind, .. } if kind.is_empty()) || self.contribs.len() == before {
+                self.contribs.truncate(before);
+                self.errors.push(err(&k.at, format!("`keep {}`: it is not a total across units, which {} keeps as it changes", show_num(&k.total), k.kind)));
+            }
         }
     }
 

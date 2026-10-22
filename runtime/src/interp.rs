@@ -2226,7 +2226,7 @@ fn share(a: i64, b: i64, c: i64) -> Option<i64> {
 }
 
 /// Nothing, as an amount of type `ty`.
-fn zero(ty: Ty) -> Val {
+pub(crate) fn zero(ty: Ty) -> Val {
     match ty {
         Ty::Money => Val::Money(0),
         Ty::Duration => Val::Duration(0),

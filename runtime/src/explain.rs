@@ -39,6 +39,7 @@ pub fn explain_at(prog: &Program, unit: &Unit, now: Option<i64>, due: impl Fn(&s
             format!("  goal not met yet: {} (not yet {})", g.source, missing.join(", "))
         });
     }
+    totals(prog, unit, &mut out);
     sourced(prog, &unit.root, now, 1, &mut out);
     out.extend(crate::interp::unasked_lines(prog, unit, &[]).into_iter().map(|l| format!("  {} {l}", unit.root.kind)));
     slots(prog, &unit.root, 1, &mut out);
@@ -46,6 +47,21 @@ pub fn explain_at(prog: &Program, unit: &Unit, now: Option<i64>, due: impl Fn(&s
         part(prog, unit, &[i], now, &due, &mut out);
     }
     out
+}
+
+/// One line per running total other units keep at this unit, outside
+/// periods (appendix AI.2.2): `its total days of Applications that are approved: 4`.
+fn totals(prog: &Program, unit: &Unit, out: &mut Vec<String>) {
+    let mut seen: Vec<&str> = vec![];
+    for t in prog.bindings.iter().filter(|b| b.target == unit.root.kind && b.key_attr.is_empty()).filter_map(|b| b.taking.as_ref()) {
+        if t.period.is_some() || seen.contains(&t.name.as_str()) {
+            continue;
+        }
+        seen.push(&t.name);
+        let v = unit.taken.get(&t.name).cloned().unwrap_or_else(|| crate::interp::zero(t.ty));
+        let what = if t.name.starts_with("number of ") { t.name.clone() } else { format!("total {}", t.name) };
+        out.push(format!("  its {what}: {}", v.show(&prog.currency)));
+    }
 }
 
 /// One line per sourced attribute of the node (appendix I.2): where its
