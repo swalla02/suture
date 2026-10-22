@@ -553,7 +553,10 @@ pub fn condition(c: &mut Cursor) -> Result<Cond, Error> {
             simple(c)?
         } else {
             let Some(Cond::Is { left, .. }) = parts.last() else {
-                return Err(c.error(format!("expected a condition after `{joiner}`, found {}", c.found())));
+                return Err(c.error(format!(
+                    "expected a condition after `{joiner}`, found {}: write it whole, as in `{joiner} it is open` or `{joiner} its amount is at least 3`; a bare state shares only an `is` condition's subject, as in `it is cancelled {joiner} paid`",
+                    c.found()
+                )));
             };
             let left = left.clone();
             let negated = c.eat_word("not");
