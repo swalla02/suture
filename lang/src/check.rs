@@ -158,26 +158,23 @@ fn sourced_in(p: &Program, kind: &str, n: &Num) -> Option<String> {
 
 /// The kind a walk of parts, slots and owner steps ends at, from `kind`.
 fn end_kind(p: &Program, kind: &str, steps: &[Step]) -> Option<String> {
-    let mut cur = kind.to_string();
-    for s in steps {
-        cur = match s {
-            Step::Part(k) => k.clone(),
-            Step::Owner => p.kind(&cur)?.owner.as_ref()?.kind.clone(),
-            Step::Slot(_) | Step::Attr(_) | Step::Ref(_) | Step::Bound(_) | Step::Cand | Step::Elem | Step::Caller | Step::Data(_) => return None,
-        };
-    }
-    Some(cur)
+    walk_kinds(p, kind, steps, false)
 }
 
 /// The kind of the node or shared entity a path to a value's owner ends at,
 /// through parts, owners and references.
 fn value_kind(p: &Program, kind: &str, steps: &[Step]) -> Option<String> {
+    walk_kinds(p, kind, steps, true)
+}
+
+/// The kind a path ends at through parts, owners and, if `refs`, references.
+fn walk_kinds(p: &Program, kind: &str, steps: &[Step], refs: bool) -> Option<String> {
     let mut cur = kind.to_string();
     for s in steps {
         cur = match s {
             Step::Part(k) => k.clone(),
             Step::Owner => p.kind(&cur)?.owner.as_ref()?.kind.clone(),
-            Step::Ref(a) => p.kind(&cur)?.attr(a)?.of.clone()?,
+            Step::Ref(a) if refs => p.kind(&cur)?.attr(a)?.of.clone()?,
             _ => return None,
         };
     }
@@ -602,19 +599,19 @@ fn others_totals(p: &Program, r: &Rule) -> Vec<(String, String)> {
         }
     }
     let (mut seen, mut out) = (vec![], vec![]);
-    for c in &r.filter {
+    for c in rule_conds(r) {
         cond(p, c, &mut seen, &mut out);
     }
-    match &r.body {
-        Body::Every(c) => cond(p, c, &mut seen, &mut out),
-        Body::No { pred, unless } => {
-            cond(p, pred, &mut seen, &mut out);
-            if let Some(u) = unless {
-                cond(p, u, &mut seen, &mut out);
-            }
-        }
-    }
     out
+}
+
+/// Every condition of a rule: its filter, then its body's.
+fn rule_conds(r: &Rule) -> impl Iterator<Item = &Cond> {
+    let body: Vec<&Cond> = match &r.body {
+        Body::Every(c) => vec![c],
+        Body::No { pred, unless } => std::iter::once(pred).chain(unless).collect(),
+    };
+    r.filter.iter().chain(body)
 }
 
 /// The attributes in `changes` that `r` reads from another unit, through a
@@ -641,17 +638,8 @@ fn carried_reads(p: &Program, r: &Rule, changes: &[(String, String)]) -> Vec<Str
 /// Calls `see` for every path a rule reads, with its last attribute, or for
 /// a state, the state's name.
 fn rule_reads(p: &Program, r: &Rule, see: &mut dyn FnMut(&Path, Option<&str>)) {
-    for c in &r.filter {
+    for c in rule_conds(r) {
         cond_reads(p, c, see);
-    }
-    match &r.body {
-        Body::Every(c) => cond_reads(p, c, see),
-        Body::No { pred, unless } => {
-            cond_reads(p, pred, see);
-            if let Some(u) = unless {
-                cond_reads(p, u, see);
-            }
-        }
     }
 }
 
@@ -1759,6 +1747,8 @@ impl Checker {
     fn decides(&mut self, src: &Source, p: &mut Program) {
         // A step waits for its model, so the wait is bounded (appendix K.2.5).
         const MAX_WITHIN_MS: u64 = 10 * 60_000;
+        let too_long = |ms: u64| !(1..=MAX_WITHIN_MS).contains(&ms);
+        let bad_within = format!("a model's `within` is from 1 millisecond to {} minutes", MAX_WITHIN_MS / 60_000);
         let points = p.choice_points();
         let mut kept: Vec<(usize, &ast::DecideDecl)> = vec![];
         for d in &src.decides {
@@ -1814,8 +1804,8 @@ impl Checker {
                 format!("{w}{}", whose.unwrap_or_default())
             });
             let within_ms = d.within_ms.unwrap_or(1000);
-            if !(1..=MAX_WITHIN_MS).contains(&within_ms) {
-                self.errors.push(err(&d.at, format!("a model's `within` is from 1 millisecond to {} minutes", MAX_WITHIN_MS / 60_000)));
+            if too_long(within_ms) {
+                self.errors.push(err(&d.at, bad_within.clone()));
                 continue;
             }
             // A fallback is one of the choice's options, named in the program (appendix AL.2.1).
@@ -1845,8 +1835,8 @@ impl Checker {
                         continue;
                     }
                     let within = within.unwrap_or(1000);
-                    if !(1..=MAX_WITHIN_MS).contains(&within) {
-                        self.errors.push(err(&d.at, format!("a model's `within` is from 1 millisecond to {} minutes", MAX_WITHIN_MS / 60_000)));
+                    if too_long(within) {
+                        self.errors.push(err(&d.at, bad_within.clone()));
                         continue;
                     }
                     Some(ir::Route { router: router.clone(), within_ms: within, among, sure: *sure, otherwise: otherwise.clone() })

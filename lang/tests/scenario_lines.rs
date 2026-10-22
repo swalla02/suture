@@ -31,3 +31,10 @@ fn a_range_creates_one_entity_per_name() {
     let bad = parse_scenarios("t.scenario", "scenario \"x\":\n  given 3 Talks T1 to T4\n").unwrap_err();
     assert!(bad.msg.contains("numbers 3 apart"), "{}", bad.msg);
 }
+
+#[test]
+fn an_effect_line_error_names_its_own_line() {
+    let src = "module m version 1, currency EUR\nkind Order { total: Money }\nkind Payment { order: Order }\nOrder needs Payment\neffect charge Payment via pay within 1 hour\n  sends    the order's total,\n  reports  paid\n";
+    let e = suture_lang::compile(&[("m.st".to_string(), src.to_string())]).unwrap_err();
+    assert_eq!(e[0].line, 6, "{}", e[0].msg);
+}

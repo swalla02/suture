@@ -399,15 +399,10 @@ fn effect(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     let within_secs = duration(&mut c)?;
     c.expect_end()?;
     let (mut sends, mut marks, mut reports) = (None, None, None);
-    for line in &st.lines[1..] {
-        let mut c = Cursor::new(line, &st.file, st.line);
+    for (line, &n) in st.lines[1..].iter().zip(&st.at[1..]) {
+        let mut c = Cursor::new(line, &st.file, n);
         if c.eat_word("sends") {
-            let mut list = vec![field(&mut c)?];
-            while c.eat_sym(',') {
-                list.push(field(&mut c)?);
-            }
-            c.expect_end()?;
-            sends = Some(list);
+            sends = Some(sends_line(&mut c)?);
         } else if c.eat_word("marks") {
             marks = Some(c.word()?);
             c.expect_end()?;
@@ -421,6 +416,16 @@ fn effect(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     let (success, data, failures) = reports.ok_or_else(|| st.error("an effect needs a `reports` line"))?;
     out.effects.push(EffectDecl { verb, kind, adapter, within_secs, sends, marks, success, data, failures, at });
     Ok(())
+}
+
+/// The rest of a `sends a, b` line.
+fn sends_line(c: &mut Cursor) -> Result<Vec<NounPhrase>, Error> {
+    let mut list = vec![field(c)?];
+    while c.eat_sym(',') {
+        list.push(field(c)?);
+    }
+    c.expect_end()?;
+    Ok(list)
 }
 
 /// `source <Kind>'s <attr> via <adapter> within <duration>`, then indented
@@ -453,15 +458,10 @@ fn source(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     c.expect_end()?;
     let (mut sends, mut reports, mut good_for, mut otherwise) = (None, None, None, None);
     let (mut asking, mut sure, mut scale) = (None, None, None);
-    for line in &st.lines[1..] {
-        let mut c = Cursor::new(line, &st.file, st.line);
+    for (line, &n) in st.lines[1..].iter().zip(&st.at[1..]) {
+        let mut c = Cursor::new(line, &st.file, n);
         if c.eat_word("sends") {
-            let mut list = vec![field(&mut c)?];
-            while c.eat_sym(',') {
-                list.push(field(&mut c)?);
-            }
-            c.expect_end()?;
-            sends = Some(list);
+            sends = Some(sends_line(&mut c)?);
         } else if c.eat_word("reports") {
             if model {
                 return Err(c.error("a model reads the value or it does not; a source via a model has no `reports` line"));

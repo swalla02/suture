@@ -135,7 +135,7 @@ pub fn parse_scenarios(file: &str, src: &str) -> Result<Vec<Scenario>, Error> {
                 steps.extend(many);
                 continue;
             }
-            steps.push(step(&mut c, &mut given)?);
+            steps.push(if c.eat_word("expect") { expect_rest(&mut c)? } else { step_input(&mut c, &mut given)? });
             c.expect_end()?;
         }
         out.push(Scenario { file: file.to_string(), title, steps, line: st.line });
@@ -143,36 +143,27 @@ pub fn parse_scenarios(file: &str, src: &str) -> Result<Vec<Scenario>, Error> {
     Ok(out)
 }
 
-fn step(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {
-    if c.eat_word("expect") {
-        return expect_rest(c);
-    }
-    step_input(c, given)
-}
-
 /// What follows `expect`.
 fn expect_rest(c: &mut Cursor) -> Result<ScenarioStep, Error> {
-    {
-        let alert = if c.eat_word("no") {
-            Some(true)
-        } else if c.eat_word("an") || c.eat_word("a") {
-            Some(false)
-        } else {
-            None
-        };
-        if let Some(negated) = alert {
-            c.expect_word("alert")?;
-            c.expect_word("for")?;
-            return Ok(ScenarioStep::Alert { name: c.word()?, negated });
-        }
-        let saved = c.clone();
-        if let Ok(short) = short_expect(c)
-            && c.at_end() {
-            return Ok(short);
-        }
-        *c = saved;
-        expect_cond(c)
+    let alert = if c.eat_word("no") {
+        Some(true)
+    } else if c.eat_word("an") || c.eat_word("a") {
+        Some(false)
+    } else {
+        None
+    };
+    if let Some(negated) = alert {
+        c.expect_word("alert")?;
+        c.expect_word("for")?;
+        return Ok(ScenarioStep::Alert { name: c.word()?, negated });
     }
+    let saved = c.clone();
+    if let Ok(short) = short_expect(c)
+        && c.at_end() {
+        return Ok(short);
+    }
+    *c = saved;
+    expect_cond(c)
 }
 
 fn step_input(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {

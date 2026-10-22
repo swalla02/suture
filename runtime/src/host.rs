@@ -168,6 +168,11 @@ enum Timer {
     Model(String, u64),
 }
 
+/// The rule a step refused itself by, from the unit's notes.
+fn refusal_of(u: &Unit) -> Option<String> {
+    u.notes.iter().find_map(|n| n.strip_prefix("refused ")?.split_once(": refused by rule ").map(|(_, r)| r.to_string()))
+}
+
 impl Host {
     pub fn new(prog: Program) -> Host {
         let prog = Arc::new(prog);
@@ -279,8 +284,7 @@ impl Host {
         self.fits(&pre.unit)?;
         self.refused_across(&pre, &format!("{} {} {} it", by.role, by.name, by.verb))?;
         self.tell(target, &msg)?;
-        let refused = self.unit(target).and_then(|u| u.notes.iter().find_map(|n| n.strip_prefix("refused ")?.split_once(": refused by rule ").map(|(_, r)| r.to_string())));
-        match refused {
+        match self.unit(target).and_then(|u| refusal_of(&u)) {
             Some(r) => Err(format!("refused by rule {r}")),
             None => Ok(()),
         }
@@ -295,24 +299,21 @@ impl Host {
         if let Some(why) = suture_lang::check::unchangeable(&self.prog, &kind, attr) {
             return Err(why);
         }
-        let ty = self.prog.kind(&kind).and_then(|k| k.attr(attr)).map(|a| a.ty).ok_or_else(|| format!("{} has no attribute {attr}", suture_lang::check::a(&kind)))?;
-        let value = match (ty, value) {
+        let a = self.prog.kind(&kind).and_then(|k| k.attr(attr)).ok_or_else(|| format!("{} has no attribute {attr}", suture_lang::check::a(&kind)))?;
+        let value = match (a.ty, value) {
             (Ty::Ref | Ty::Set, _) => return Err(format!("{kind}.{attr} refers to shared entities, which cannot be changed yet")),
             (t, v) if v.ty() == t => v,
             (t, v) => return Err(format!("{kind}.{attr} is {t:?}, not {}", v.show(&self.prog.currency))),
         };
-        if let Some(a) = self.prog.kind(&kind).and_then(|k| k.attr(attr)) {
-            interp::state_value(&kind, a, &value)?;
-        }
+        interp::state_value(&kind, a, &value)?;
         let fits = |a: &Admitted| matches!(a, Admitted::Change { kind: k, attr: x } if by.is_some_and(|c| c.verb == "changes") && *k == kind && x == attr);
         let value = self.seal(&kind, vec![(attr.to_string(), value)])?.remove(0).1;
         self.gate(by, fits, &format!("{target}'s {attr} to {}", interp::shown(&self.prog, attr, &value)), &unit)?;
         let who = by.map_or(String::new(), |c| format!("{} {}", c.role, c.name));
         let msg = Msg::Change { attr: attr.to_string(), value, by: who.clone() };
-        let refusal = |u: &Unit| u.notes.iter().find_map(|n| n.strip_prefix("refused ")?.split_once(": refused by rule ").map(|(_, r)| r.to_string()));
         let pre = interp::step_at(&self.prog, &unit, &msg, self.clock());
         let after = pre.unit.clone();
-        if let Some(r) = refusal(&after) {
+        if let Some(r) = refusal_of(&after) {
             self.trace.push(format!("{target:<3} {}", after.notes.join("; ")));
             return Err(format!("refused by rule {r}"));
         }
