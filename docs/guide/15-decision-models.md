@@ -628,7 +628,19 @@ Secret and personal attributes are not sent to a model.
 A model can also answer yes or no, or give a score, about what it is sent. A yes or no sets a state (a `Bool`), and a score is a Count on a scale that `scored from … to …` names:
 
 ```suture
+module inspections version 1, currency EUR
+
+role staff
+
 kind Claim  { photo: Media, note: Text, damaged: Bool, severity: Count }
+kind Payout { claim: Claim }
+
+Claim needs Payout
+
+effect pay Payout via bank within 1 day
+  sends    the claim's note
+  marks    sent
+  reports  paid
 
 source Claim's damaged via model "inspector@1" within 5 seconds
   sends      its photo
@@ -639,6 +651,8 @@ source Claim's severity via model "grader@1" within 5 seconds
   scored     from 1 to 5
 
 rule covered: no Claim has a Payout that is sent unless it is damaged and its severity is at most 4
+
+admit file a new Claim by staff
 ```
 
 The model is still a decision model: it picks yes or no, or one point of the scale, and writes nothing. A score off the scale is not used, and the fetch fails as for an unsure reading: `it scored 7, outside the scale from 1 to 5`. In a scenario, `model "inspector@1" reads yes [at 0.9]` and `model "grader@1" reads 3` script them. Only a model sources a state: an adapter's answer is a value, so source a Text or a Count from it and compare that.
