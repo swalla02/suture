@@ -110,9 +110,10 @@ struct Waiter {
 }
 
 /// The pick a model's answer comes to, among `names`, best first, and how it
-/// was made. Whatever goes wrong leaves the pick to `prefer`, and says why
+/// was made. Whatever goes wrong leaves the pick to the program's `otherwise`
+/// while it is an option (appendix AL.2.2), else to `prefer`, and says why
 /// (appendix K.2.5).
-fn resolve(model: &str, names: &[&str], answer: &Answer, within: u64) -> (String, String) {
+fn resolve(model: &str, names: &[&str], answer: &Answer, within: u64, otherwise: Option<&str>) -> (String, String) {
     let how = match answer {
         Answer::Picked(p) if names.contains(&p.as_str()) => return (p.clone(), format!(" by model \"{model}\" (of {})", names.join(", "))),
         Answer::Picked(p) => format!("model \"{model}\" picked {p}, which it was not offered"),
@@ -123,7 +124,10 @@ fn resolve(model: &str, names: &[&str], answer: &Answer, within: u64) -> (String
         Answer::Unsure(x) => format!("model \"{model}\" was unsure, at {x:.2}"),
         Answer::Failed(e) => format!("model \"{model}\" failed: {e}"),
     };
-    (names[0].to_string(), format!(" by prefer ({how})"))
+    match otherwise.filter(|o| names.contains(o)) {
+        Some(o) => (o.to_string(), format!(" by otherwise ({how})")),
+        None => (names[0].to_string(), format!(" by prefer ({how})")),
+    }
 }
 
 /// The choice a router gets: the same facts and media, with the candidates
@@ -134,6 +138,7 @@ fn routing_choice(c: &Choice, r: &Route) -> Choice {
         key: format!("{}?model", c.key),
         options: r.among.iter().map(|m| Option_ { label: candidate(m), attrs: vec![] }).collect(),
         sure: r.sure.map(thousandths),
+        otherwise: r.otherwise.clone(),
         ..c.clone()
     }
 }
@@ -504,8 +509,8 @@ impl Host {
         let options = self.options(u, d, key);
         let first = options.first()?.label.clone();
         // With one option there is no choice, and no model is asked (appendix K.2.2).
-        let model = interp::handler(&prog, u, d).and_then(|h| Some((h.asked()?.to_string(), h.within_ms, h.route.clone(), h.sure))).filter(|_| options.len() > 1);
-        let Some((model, within, route, sure)) = model else { return Some(Gathered::Pick(first, String::new())) };
+        let model = interp::handler(&prog, u, d).and_then(|h| Some((h.asked()?.to_string(), h.within_ms, h.route.clone(), h.sure, h.otherwise.clone()))).filter(|_| options.len() > 1);
+        let Some((model, within, route, sure, otherwise)) = model else { return Some(Gathered::Pick(first, String::new())) };
         let (chooser, facts) = interp::chooser(&prog, u, d).unwrap_or_default();
         let choice = Choice {
             point: b.target.clone(),
@@ -517,6 +522,7 @@ impl Host {
             currency: prog.currency.clone(),
             media: BTreeMap::new(),
             sure: sure.map(thousandths),
+            otherwise,
         };
         if self.defer_models {
             self.defer_routed(model, route, choice, within, Chooses::Bind { hole, decide: d.clone(), pool: key.to_string() });
@@ -589,7 +595,7 @@ impl Host {
         if let Some((r, choice, within)) = a.routing {
             // The router has picked the model; now that model is asked (appendix AJ.2.3).
             let names: Vec<String> = r.among.iter().map(candidate).collect();
-            let (m, how) = resolve(&r.router, &names.iter().map(String::as_str).collect::<Vec<_>>(), answer, r.within_ms);
+            let (m, how) = resolve(&r.router, &names.iter().map(String::as_str).collect::<Vec<_>>(), answer, r.within_ms, r.otherwise.as_deref());
             self.trace.push(format!("      model for {}: {m}{how}", choice.key));
             if m != "prefer" {
                 self.defer(m, choice, within, a.to);
@@ -599,8 +605,8 @@ impl Host {
             let how = format!(" by prefer (as model \"{}\" picked)", r.router);
             return self.settle(a.to, &|names: &[&str]| (names[0].to_string(), how.clone()));
         }
-        let (model, within) = (a.model.clone(), a.within);
-        self.settle(a.to, &|names: &[&str]| resolve(&model, names, answer, within))
+        let (model, within, otherwise) = (a.model.clone(), a.within, a.choice.otherwise.clone());
+        self.settle(a.to, &|names: &[&str]| resolve(&model, names, answer, within, otherwise.as_deref()))
     }
 
     /// Applies a deferred choice, picked among its options as gathered now by
@@ -649,7 +655,7 @@ impl Host {
             }
         };
         self.model_answers.push((c.key.clone(), answer.clone()));
-        resolve(model, &names, &answer, within)
+        resolve(model, &names, &answer, within, c.otherwise.as_deref())
     }
 
     /// [`Host::consult`], asking a routed choice's router first which
@@ -676,7 +682,7 @@ impl Host {
         let sent = |name: &str| ask.sends.iter().find(|(n, _)| n == name).and_then(|(_, v)| if let Val::Count(x) = v { usize::try_from(*x).ok() } else { None });
         let within = sent("within").unwrap_or(0) as u64;
         let decision = sent("decision").and_then(|i| self.prog.decisions.get(i));
-        let (route, sure) = (decision.and_then(|d| d.route.clone()), decision.and_then(|d| d.sure));
+        let (route, sure, otherwise) = (decision.and_then(|d| d.route.clone()), decision.and_then(|d| d.sure), decision.and_then(|d| d.otherwise.clone()));
         let c = Choice {
             point: ask.kind.clone(),
             unit: ask.label.clone(),
@@ -687,6 +693,7 @@ impl Host {
             currency: self.prog.currency.clone(),
             media: BTreeMap::new(),
             sure: sure.map(thousandths),
+            otherwise,
         };
         if self.defer_models {
             self.defer_routed(ask.adapter.clone(), route, c, within, Chooses::Ask { hole, ask: ask.clone() });

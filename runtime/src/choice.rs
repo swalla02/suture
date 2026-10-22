@@ -44,6 +44,9 @@ pub struct Choice {
     /// The program's `at least … sure`: below it, and with no confidence, a
     /// pick is not used, whatever the backend's own minimum (appendix AK).
     pub sure: Option<f64>,
+    /// The program's `otherwise …`: the option taken, while it is one, when
+    /// the model is no help, instead of `prefer`'s first (appendix AL).
+    pub otherwise: Option<String>,
 }
 
 impl Choice {

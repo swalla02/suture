@@ -1749,7 +1749,7 @@ impl Checker {
                     continue;
                 }
             }
-            let named = d.model.iter().chain(d.or.iter().flatten()).chain(d.router.iter().map(|(r, _, _)| r));
+            let named = d.model.iter().chain(d.or.iter().flatten()).chain(d.router.iter().map(|(r, _, _, _)| r));
             if let Some(m) = named.clone().find(|m| !m.split_once('@').is_some_and(|(n, v)| !n.is_empty() && !v.is_empty() && !v.contains('@'))) {
                 self.errors.push(err(&d.at, format!("a model is named `name@version`, as in \"{m}@1\"")));
                 continue;
@@ -1777,20 +1777,44 @@ impl Checker {
                 self.errors.push(err(&d.at, format!("a model's `within` is from 1 millisecond to {} minutes", MAX_WITHIN_MS / 60_000)));
                 continue;
             }
+            // A fallback is one of the choice's options, named in the program (appendix AL.2.1).
+            if let Some(o) = &d.otherwise {
+                let options: Option<Vec<String>> = match &d.point {
+                    Some(x) => match x.split_once("'s ") {
+                        Some((k, a)) => Some(p.sources_of(k, a).into_iter().map(|s| s.adapter.clone()).collect()),
+                        None => p.slot(x).map(|s| s.alternatives.clone()),
+                    },
+                    None => None,
+                };
+                let ok = o == "prefer" || options.as_ref().is_some_and(|xs| xs.contains(o));
+                if !ok {
+                    let msg = match (&d.point, options) {
+                        (None, _) => format!("`otherwise {o}`: a fallback is one of a choice's options, so the `decide` names its choice point"),
+                        (Some(x), None) => format!("`otherwise {o}`: {x} is chosen among entities that exist only as the program runs, so its fallback is `prefer`"),
+                        (Some(x), Some(xs)) => format!("`otherwise {o}`: {x} is one of {}", xs.join(", ")),
+                    };
+                    self.errors.push(err(&d.at, msg));
+                    continue;
+                }
+            }
             let route = match &d.router {
-                Some((router, within, sure)) => {
+                Some((router, within, sure, otherwise)) => {
+                    if let Some(o) = otherwise.as_ref().filter(|o| !among.iter().any(|m| ir::candidate(m) == **o)) {
+                        self.errors.push(err(&d.at, format!("`otherwise {o}`: a router falls back to one of its candidates, {}", among.iter().map(ir::candidate).collect::<Vec<_>>().join(", "))));
+                        continue;
+                    }
                     let within = within.unwrap_or(1000);
                     if !(1..=MAX_WITHIN_MS).contains(&within) {
                         self.errors.push(err(&d.at, format!("a model's `within` is from 1 millisecond to {} minutes", MAX_WITHIN_MS / 60_000)));
                         continue;
                     }
-                    Some(ir::Route { router: router.clone(), within_ms: within, among, sure: *sure })
+                    Some(ir::Route { router: router.clone(), within_ms: within, among, sure: *sure, otherwise: otherwise.clone() })
                 }
                 None => None,
             };
             // Only a decision that compiled is compared for ties below.
             kept.push((p.decisions.len(), d));
-            p.decisions.push(Decision { point: d.point.clone(), scope, cond, model: d.model.clone(), scope_text, within_ms, route, sure: d.sure, source: d.source.clone() });
+            p.decisions.push(Decision { point: d.point.clone(), scope, cond, model: d.model.clone(), scope_text, within_ms, route, sure: d.sure, otherwise: d.otherwise.clone().filter(|o| o != "prefer"), source: d.source.clone() });
         }
         // Two that can both decide one choice, at the same rank (J.2.3).
         let mut seen = vec![];

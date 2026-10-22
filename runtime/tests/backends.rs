@@ -47,7 +47,7 @@ fn choice() -> Choice {
         ],
         currency: "EUR".into(),
         media: Default::default(),
-        sure: None,
+        sure: None, otherwise: None,
     }
 }
 

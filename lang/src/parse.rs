@@ -715,6 +715,15 @@ fn decide(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     let asks = model.is_some() || or.iter().any(Option::is_some);
     let within_ms = within(&mut c, asks)?;
     let sure = at_least_sure(&mut c, asks)?;
+    // `otherwise Writeoff`: what is taken when the model is no help (appendix AL).
+    let otherwise = if c.eat_word("otherwise") {
+        if !asks {
+            return Err(c.error("`with prefer` answers at once; `otherwise` is for when a model is no help"));
+        }
+        Some(c.word()?)
+    } else {
+        None
+    };
     // `, picked by model "router@1"`: a model picks the model (appendix AJ).
     let router = if c.eat_sym(',') {
         c.expect_word("picked")?;
@@ -722,7 +731,9 @@ fn decide(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
         c.expect_word("model")?;
         let r = quoted_model(&mut c)?;
         let within = within(&mut c, true)?;
-        Some((r, within, at_least_sure(&mut c, true)?))
+        let sure = at_least_sure(&mut c, true)?;
+        let otherwise = if c.eat_word("otherwise") { Some(crate::ir::candidate(&handler_model(&mut c)?)) } else { None };
+        Some((r, within, sure, otherwise))
     } else {
         None
     };
@@ -733,7 +744,7 @@ fn decide(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     if or.is_empty() && router.is_some() {
         return Err(c.error("`picked by` picks among models: name two or more, as in `with model \"fast@1\" or model \"careful@1\", picked by model \"router@1\"`"));
     }
-    out.decides.push(DecideDecl { point, scope, cond, model, within_ms, sure, or, router, source: text(&toks), at });
+    out.decides.push(DecideDecl { point, scope, cond, model, within_ms, sure, otherwise, or, router, source: text(&toks), at });
     Ok(())
 }
 

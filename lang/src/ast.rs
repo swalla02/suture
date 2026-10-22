@@ -363,8 +363,11 @@ pub struct DecideDecl {
     pub or: Vec<Option<String>>,
     /// `at least 0.8 sure`, in thousandths (appendix AK).
     pub sure: Option<u16>,
-    /// The router, its `within` and its `at least … sure`.
-    pub router: Option<(String, Option<u64>, Option<u16>)>,
+    /// `otherwise Writeoff`: the option taken when the model is no help (appendix AL).
+    pub otherwise: Option<String>,
+    /// The router, its `within`, its `at least … sure` and its `otherwise`
+    /// (a candidate's name, or `prefer`).
+    pub router: Option<(String, Option<u64>, Option<u16>, Option<String>)>,
     pub source: String,
     pub at: Loc,
 }

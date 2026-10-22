@@ -123,6 +123,10 @@ pub struct Decision {
     /// every deployment (appendix AK).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sure: Option<u16>,
+    /// `otherwise Writeoff`: the option its model's choice falls back to,
+    /// when it is still an option, instead of `prefer`'s (appendix AL).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub otherwise: Option<String>,
     pub source: String,
 }
 
@@ -137,6 +141,9 @@ pub struct Route {
     pub among: Vec<Option<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sure: Option<u16>,
+    /// The candidate a router's choice falls back to, by its name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub otherwise: Option<String>,
 }
 
 /// A router's name for a candidate: the model's, or `prefer`.
@@ -151,20 +158,21 @@ impl Decision {
             Some(m) => format!("model \"{m}\""),
             None => "`prefer`".to_string(),
         };
-        let within = |ms: u64, sure: Option<u16>| {
+        let within = |ms: u64, sure: Option<u16>, otherwise: &Option<String>| {
             let w = if ms != 1000 { format!(" within {ms} ms") } else { String::new() };
             let s = sure.map_or_else(String::new, |t| format!(" at least {} sure", f64::from(t) / 1000.0));
-            format!("{w}{s}")
+            let o = otherwise.as_ref().map_or_else(String::new, |o| format!(" otherwise {o}"));
+            format!("{w}{s}{o}")
         };
         match (&self.route, &self.model) {
             (Some(r), _) => format!(
                 "{}{}, picked by model \"{}\"{}",
                 r.among.iter().map(one).collect::<Vec<_>>().join(" or "),
-                within(self.within_ms, self.sure),
+                within(self.within_ms, self.sure, &self.otherwise),
                 r.router,
-                within(r.within_ms, r.sure)
+                within(r.within_ms, r.sure, &r.otherwise)
             ),
-            (None, Some(_)) => format!("{}{}", one(&self.model), within(self.within_ms, self.sure)),
+            (None, Some(_)) => format!("{}{}", one(&self.model), within(self.within_ms, self.sure, &self.otherwise)),
             (None, None) => one(&None),
         }
     }

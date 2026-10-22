@@ -281,3 +281,63 @@ fn a_single_model_and_a_slot_take_a_bound_too() {
     assert_eq!(errors(&prefer), ["t.st:9: `with prefer` answers at once; `at least … sure` bounds a model's answer"]);
 }
 
+
+#[test]
+fn otherwise_names_the_option_taken_when_the_model_is_no_help() {
+    // Slice 36: `otherwise …` on a `decide` (spec appendix AL).
+    let line = "decide Outcome with model \"fast@1\" or model \"careful@1\", picked by model \"router@1\"";
+    let p = prog(&CLAIM.replace(line, "decide Outcome with model \"careful@1\" at least 0.9 sure otherwise Writeoff"));
+    assert_eq!(p.decisions[0].handler(), "model \"careful@1\" at least 0.9 sure otherwise Writeoff");
+    let r = passes(
+        &p,
+        "  when   model \"careful@1\" picks Repair at 0.8
+  and    staff Sam files a new Claim C1 with note \"roof\"
+  expect C1 has a Writeoff
+",
+    );
+    assert!(has(&r, "choice: Writeoff for C1?Outcome#1 by otherwise (model \"careful@1\" was unsure, at 0.80)"), "{}", r.host.trace.join("\n"));
+    // A sure pick is used as before.
+    let r = passes(
+        &p,
+        "  when   model \"careful@1\" picks Repair at 0.95
+  and    staff Sam files a new Claim C1 with note \"roof\"
+  expect C1 has a Repair
+",
+    );
+    assert!(r.passed(), "{:?}", r.failures);
+    // A router falls back to the candidate it names.
+    let p = prog(&CLAIM.replace(line, &format!("{line} at least 0.7 sure otherwise model \"careful@1\"")));
+    let r = passes(
+        &p,
+        "  when   model \"router@1\" picks \"fast@1\" at 0.5
+  and    model \"careful@1\" picks Writeoff
+  and    staff Sam files a new Claim C1 with note \"roof\"
+  expect C1 has a Writeoff
+",
+    );
+    assert!(has(&r, "model for C1?Outcome#1: careful@1 by otherwise (model \"router@1\" was unsure, at 0.50)"), "{}", r.host.trace.join("\n"));
+}
+
+#[test]
+fn otherwise_is_one_of_the_choices_options() {
+    let line = "decide Outcome with model \"fast@1\" or model \"careful@1\", picked by model \"router@1\"";
+    let with = |d: &str| errors(&CLAIM.replace(line, d));
+    assert_eq!(with("decide Outcome with model \"careful@1\" otherwise Refund"), ["t.st:9: `otherwise Refund`: Outcome is one of Repair, Writeoff"]);
+    assert_eq!(with("decide Outcome with prefer otherwise Writeoff"), ["t.st:9: `with prefer` answers at once; `otherwise` is for when a model is no help"]);
+    assert_eq!(
+        with(&format!("{line} otherwise model \"slow@1\"")),
+        ["t.st:9: `otherwise slow@1`: a router falls back to one of its candidates, fast@1, careful@1"]
+    );
+    assert!(with("decide Outcome with model \"careful@1\" otherwise prefer").is_empty());
+}
+
+#[test]
+fn a_pooled_choice_falls_back_to_prefer_only() {
+    let src = SHOP.replace(
+        "model \"cheapest@1\" or model \"dearest@1\" or prefer within 2 seconds, picked by model \"router@1\" within 100 milliseconds",
+        "model \"cheapest@1\" otherwise Cheap",
+    );
+    let e = errors(&src);
+    assert_eq!(e.len(), 1, "{e:?}");
+    assert!(e[0].ends_with("`otherwise Cheap`: Carrier is chosen among entities that exist only as the program runs, so its fallback is `prefer`"), "{e:?}");
+}
