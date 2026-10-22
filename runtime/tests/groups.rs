@@ -52,4 +52,6 @@ fn the_read_back_keeps_the_group() {
 fn without_parentheses_it_is_still_an_error() {
     let e = compile(&SHOP.replace("and (it is paid or it is free)", "and it is paid or it is free")).unwrap_err();
     assert!(e.contains("without parentheses"), "{e}");
+    let e = compile(&SHOP.replace("and (it is paid or it is free)", "and (it is paid or it is free and it is shipped)")).unwrap_err();
+    assert!(e.contains("without parentheses"), "{e}");
 }

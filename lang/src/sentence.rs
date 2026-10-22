@@ -545,7 +545,12 @@ fn part(c: &mut Cursor) -> Result<Cond, Error> {
     if c.peek() == Some(&Tok::Sym('(')) {
         let mut g = c.clone();
         g.next();
-        if let Ok(inner) = condition(&mut g)
+        let inner = condition(&mut g);
+        if let Err(e) = &inner
+            && e.msg.contains("without parentheses") {
+            return Err(e.clone());
+        }
+        if let Ok(inner) = inner
             && g.eat_sym(')')
             && !(g.is_word("is") || g.is_word("are") || matches!(g.peek(), Some(Tok::Sym('+' | '-' | '*' | '/')))) {
             *c = g;
