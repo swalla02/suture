@@ -246,12 +246,13 @@ It's a good fit for workflows with many steps, outside services, shared resource
 
 Agents write most code now. Suture suits them for two reasons:
 
-- **It's compact.** The ports above are 7 to 12 times shorter than the code they replace, so a whole system fits in an agent's context at once, and so does the language: `suture help all` prints the agent book, every form with recipes and limits, in about 4k tokens. An agent reads it once instead of searching a guide.
+- **It's compact.** The ports above are 7 to 12 times shorter than the code they replace, so a whole system fits in an agent's context at once, and so does the language. `suture help` prints the core, every form with recipes and limits, in about 2k tokens; `suture help --for ⟨dir⟩` adds the details of the forms a module already uses, and each error names the topic to read. An agent reads what it needs instead of searching a guide.
 - **It's understandable.** What the agent writes is English with one meaning per sentence, and `suture build` reads every rule back in plain words. You review the read-back and the scenarios, not the syntax, so you can check an agent's work without learning the language first.
 
 ```sh
 suture init billing        # AGENTS.md, CLAUDE.md, and a module that passes
-suture help all            # the whole language, about 4k tokens
+suture help                # every form, recipes and limits, about 2k tokens
+suture help --for billing  # the details of the forms billing uses
 suture check billing       # compile and run every scenario; traces only for what failed, --json for tools
 ```
 

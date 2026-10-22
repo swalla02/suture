@@ -6,7 +6,7 @@ suture build   ⟨dir⟩
 suture run     ⟨dir⟩ --scenario ⟨file⟩ [--models]
 suture explain ⟨dir⟩ --scenario ⟨file⟩ ⟨name⟩
 suture init    ⟨dir⟩
-suture help    [⟨topic⟩ | all]
+suture help    [⟨topic⟩ | all | --for ⟨dir or file⟩]
 ```
 
 `⟨dir⟩` is the directory that holds the program's `.st` files. The command exits with 0 on success, 1 when a scenario fails (or, for `check`, anything fails), and 2 when the program does not compile or the arguments are wrong.
@@ -29,8 +29,10 @@ suture help    [⟨topic⟩ | all]
 
 Most code is now written by agents, and an agent has never seen Suture before. It doesn't need this guide:
 
-- **`suture help all`** prints the agent book, docs/agents/suture.md: the whole language in about 4k tokens, meant to be read once and kept in context. It has the loop, one module that uses most of the language, every declaration and sentence form, what the runtime does, a table from requirements to forms (`recipes`), and what cannot be written yet with what to write instead (`limits`). `suture help` lists its sections, and `suture help ⟨section⟩` prints one. Every example in it compiles and every scenario passes; the test suite checks it, and fails if the book grows past 20 KB.
-- **`suture init ⟨dir⟩`** writes an `AGENTS.md` with the loop (read the book, write, check, build), a `CLAUDE.md` that points to it, and, if the directory has no module yet, a small module and scenario that pass. It never overwrites a file.
+- **`suture help`** prints the core of the agent book, docs/agents/core.md: about 2k tokens, read once and kept in context. It has the loop, one line for every form with the topic that explains it, a table from requirements to forms (`recipes`), and what cannot be written yet with what to write instead (`limits`). The test suite fails if it grows past 10 KB, so a new form costs it one line.
+- **`suture help ⟨topic⟩`** prints one topic of docs/agents/topics: `kinds`, `gate`, `parts`, `rules`, `reactions`, `time`, `scenarios`, `models`, `serve` and `examples`. **`suture help --for ⟨dir or file⟩`** prints the topics whose forms a module already uses, so an agent about to change it reads what is in front of it; a statement that does not parse is skipped. `suture help all` prints the core and every topic. Every example in them compiles and every scenario passes; the test suite checks it.
+- **Errors name their topic:** `suture check` ends each error with `(suture help ⟨topic⟩)`, the topic of the statement it is on, and `--json` gives it as `topic`.
+- **`suture init ⟨dir⟩`** writes an `AGENTS.md` with the loop (read the core, `help --for` before an edit, write, check, build), a `CLAUDE.md` that points to it, and, if the directory has no module yet, a small module and scenario that pass. It never overwrites a file.
 - **`suture check ⟨dir⟩`**, above, keeps the agent's loop short.
 
 There is no MCP server: an agent with a shell needs none, and tool descriptions would cost context on every turn.

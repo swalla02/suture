@@ -102,8 +102,8 @@ pub fn parse_scenarios(file: &str, src: &str) -> Result<Vec<Scenario>, Error> {
         c.expect_end()?;
         // A line that adds a list element (`and a member with …`) or says the
         // creation is refused continues the step above it.
-        let mut lines: Vec<Vec<Tok>> = vec![];
-        for line in &st.lines[1..] {
+        let mut lines: Vec<(Vec<Tok>, usize)> = vec![];
+        for (line, &at) in st.lines[1..].iter().zip(&st.at[1..]) {
             let word = |i: usize| match line.get(i) {
                 Some(Tok::Word(w)) => w.as_str(),
                 _ => "",
@@ -111,13 +111,25 @@ pub fn parse_scenarios(file: &str, src: &str) -> Result<Vec<Scenario>, Error> {
             let element = word(2).starts_with(char::is_lowercase) && word(2) != "new";
             let continues = (word(0) == "and" && (word(1) == "a" || word(1) == "an") && element) || (word(0) == "is" && word(1) == "refused");
             match lines.last_mut() {
-                Some(prev) if continues => prev.extend(line.iter().cloned()),
-                _ => lines.push(line.clone()),
+                Some((prev, _)) if continues => prev.extend(line.iter().cloned()),
+                _ => lines.push((line.clone(), at)),
             }
         }
+        // Errors name the line they are on; an `and` after an `expect` is
+        // another expect.
         let (mut steps, mut given) = (vec![], false);
-        for line in &lines {
-            let mut c = Cursor::new(line, &st.file, st.line);
+        for (line, at) in &lines {
+            let mut c = Cursor::new(line, &st.file, *at);
+            let expecting = matches!(steps.last(), Some(ScenarioStep::Expect { .. } | ScenarioStep::ExpectPart { .. } | ScenarioStep::Alert { .. } | ScenarioStep::ExpectCond { .. }));
+            if expecting && c.is_word("and") {
+                let mut e = c.clone();
+                e.next();
+                if let Ok(s) = expect_rest(&mut e)
+                    && e.at_end() {
+                    steps.push(s);
+                    continue;
+                }
+            }
             steps.push(step(&mut c, &mut given)?);
             c.expect_end()?;
         }
@@ -128,6 +140,14 @@ pub fn parse_scenarios(file: &str, src: &str) -> Result<Vec<Scenario>, Error> {
 
 fn step(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {
     if c.eat_word("expect") {
+        return expect_rest(c);
+    }
+    step_input(c, given)
+}
+
+/// What follows `expect`.
+fn expect_rest(c: &mut Cursor) -> Result<ScenarioStep, Error> {
+    {
         let alert = if c.eat_word("no") {
             Some(true)
         } else if c.eat_word("an") || c.eat_word("a") {
@@ -146,8 +166,11 @@ fn step(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {
             return Ok(short);
         }
         *c = saved;
-        return expect_cond(c);
+        expect_cond(c)
     }
+}
+
+fn step_input(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {
     if c.eat_word("given") {
         *given = true;
     } else if c.eat_word("when") {

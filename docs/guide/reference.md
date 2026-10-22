@@ -136,7 +136,7 @@ suture deploy  ⟨dir⟩ [--state ⟨dir⟩]               check a new version a
 suture explain ⟨dir⟩ --scenario ⟨file⟩ ⟨name⟩      … and explain one entity at the end of each
 suture lsp                                         the language server, over stdin and stdout (chapter 21)
 suture init    ⟨dir⟩                               AGENTS.md, CLAUDE.md and a starter module, for a coding agent
-suture help    [⟨section⟩ | all]                   the agent book: the language in about 4k tokens (chapter 12)
+suture help    [⟨topic⟩ | all | --for ⟨path⟩]      the agent book: the core, a topic, or the topics a module uses (chapter 12)
 ```
 
 Exit status: 0 success, 1 a scenario failed (for `check`, anything failed), 2 the program does not compile or bad arguments.

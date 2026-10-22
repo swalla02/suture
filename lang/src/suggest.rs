@@ -341,10 +341,10 @@ pub fn improve(src: &Source, st: &Stmt, e: Error) -> Error {
     let restate = |sentence: &str| -> Option<Stmt> {
         let head = text(&toks[..toks.iter().position(|t| *t == Tok::Sym(':'))? + 1]);
         let line = tokens(&format!("{head} {sentence}")).ok()?;
-        Some(Stmt { file: st.file.clone(), line: st.line, lines: vec![line] })
+        Some(Stmt { file: st.file.clone(), line: st.line, lines: vec![line], at: vec![st.line] })
     };
     let mut mean = None;
-    if !hits.is_empty() && compiles(src, &Stmt { file: st.file.clone(), line: st.line, lines: vec![fixed.clone()] }) {
+    if !hits.is_empty() && compiles(src, &Stmt { file: st.file.clone(), line: st.line, lines: vec![fixed.clone()], at: vec![st.line] }) {
         mean = Some(sentence(&fixed));
     }
     let mut closest = None;

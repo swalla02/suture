@@ -2101,3 +2101,34 @@ The agent eval's task A (appendix AO) needed a loan that becomes overdue on its 
   - a replay of the log passes at the same times.
 - lang tests: the checker refuses a passing on an unknown or non-Time attribute, on a part's kind, and on an attribute a reaction sets.
 - The book's recipe "becomes overdue by itself" uses the sentence, tested.
+
+## Appendix AR. Prototype slice 42: the book loads by need (2026-10-22)
+
+Slice 39's book (appendix AO) was read whole, and each new form made it longer. At 19.8 KB it was about to pass its 20 KB guard. Slice 42 splits it. A small core is always read, and it names every form, because an agent cannot use a form it does not know exists. The details load when the module in front of the agent uses them, or when an error points at them.
+
+### AR.1 What slice 42 adds
+
+| Added in slice 42 | Still waits |
+|---|---|
+| docs/agents/core.md, `suture help`: the loop, a line per form with its topic, recipes, limits | the form list generated from the grammar |
+| docs/agents/topics/*.md, `suture help ⟨topic⟩`: ten topics | a topic per form |
+| `suture help --for ⟨dir or file⟩`: the topics a module uses | the forms an error expected, not only its statement's topic |
+| `suture check` errors end with `(suture help ⟨topic⟩)`, and `--json` gives `topic` | |
+
+### AR.2 Semantics that slice 42 settles
+
+1. **The core is read whole.** It holds the loop, every form on one line with the topic that explains it, the requirement-to-form table and the limits. A test fails past 10 KB, and another fails if a form names a topic that does not exist. A new form costs the core one line.
+2. **Topics are read by need.** Each is a file whose first line is `# ⟨topic⟩: ⟨what it covers⟩`: `kinds`, `gate`, `parts`, `rules`, `reactions`, `time`, `scenarios`, `models`, `serve` and `examples`. A topic may grow as its forms do. `suture help all` prints the core and then every topic in order. Every code block in them follows the guide's rules (§7.5) and is checked by runtime/tests/guide.rs.
+3. **`--for`.** For a directory, it reads each `.st` file with the tolerant parser (statements that do not parse are skipped) and notes any `.scenario` file. It prints the topics whose forms appear, in book order: `kinds` for a module line or kind; `gate` for roles and admits; `parts` for needs, slots, uses and effects; `rules` for rules, definitions and `keep`; `reactions` for reactions; `time` for periods, goals with `within`, times that pass and days between dates; `scenarios` for scenario files; `models` for decisions or sources by a model. `serve` and `examples` are printed only by name. A file names only its own topics.
+4. **Errors name a topic.** The topic is that of the statement on the error's line, found by its first word; for a scenario file, it is `scenarios`.
+5. **AGENTS.md and the skill** say: read `suture help` once; before editing a module, `suture help --for .`; and `suture help ⟨topic⟩` for anything else.
+6. **Scenario lines,** found by the eval. A scenario's error names the line it is on, not the scenario's title line. An `and` line after an `expect` is read as another expect when it reads as one (`and T1 is not withdrawn`, `and no alert for T1`); otherwise it is an input, as before (`and payments answers paid for T1`).
+
+### AR.3 Acceptance
+
+- cli/src/help.rs:
+  - the core stays under 10 KB, and every topic its form list names exists;
+  - `--for` gives a module's topics even when a statement does not parse, and a scenario file's;
+  - errors map to the topics of their statements.
+- runtime/tests/guide.rs: every example in the core and the topics holds.
+- eval/agents/RESULTS.md: a fresh agent on task B with the core and topics, against the whole book.

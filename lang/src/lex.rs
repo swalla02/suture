@@ -43,6 +43,8 @@ pub struct Stmt {
     pub line: usize,
     /// The first line's tokens, then each continuation line's.
     pub lines: Vec<Vec<Tok>>,
+    /// The file line of each of `lines`.
+    pub at: Vec<usize>,
 }
 
 impl Stmt {
@@ -67,11 +69,14 @@ pub fn statements(file: &str, src: &str) -> Result<Vec<Stmt>, Error> {
         let toks = tokens(text).map_err(|msg| Error { file: file.to_string(), line, msg })?;
         let indented = text.starts_with(' ') || text.starts_with('\t');
         match out.last_mut() {
-            Some(s) if indented => s.lines.push(toks),
+            Some(s) if indented => {
+                s.lines.push(toks);
+                s.at.push(line);
+            }
             None if indented => {
                 return Err(Error { file: file.to_string(), line, msg: "indented line outside a statement".into() });
             }
-            _ => out.push(Stmt { file: file.to_string(), line, lines: vec![toks] }),
+            _ => out.push(Stmt { file: file.to_string(), line, lines: vec![toks], at: vec![line] }),
         }
     }
     Ok(out)

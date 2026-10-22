@@ -247,7 +247,7 @@ const STATEMENTS: &[(&str, &str)] = &[
 /// Whether the tokens can begin a statement: they parse, or the parser
 /// stops only at their end, wanting more.
 fn viable(lines: &[Vec<Tok>]) -> bool {
-    let st = Stmt { file: String::new(), line: 1, lines: lines.to_vec() };
+    let st = Stmt { file: String::new(), line: 1, lines: lines.to_vec(), at: (1..=lines.len()).collect() };
     match statement(&st, &mut Source::default()) {
         Ok(()) => true,
         Err(e) => e.msg.contains("the end of the statement"),
