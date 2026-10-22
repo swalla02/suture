@@ -5,6 +5,7 @@ There is no `now` in sentences: a fact never changes while nothing happens. Time
 | Need | Form |
 |---|---|
 | a date computed from another | `due: Time = created + 14 days` (a formula) |
+| the days from one date to another | `days: Count = the days from its from to its to`: calendar dates, both ends counted, so 2027-01-05 to 2027-01-08 is 4 |
 | a deadline on outside work | `effect … within 1 day`: re-sent, then `timed out` |
 | something that should be true by then | `desired within 3 days: every Order that is open is shipped` raises an alert for each one that is not |
 | a fallback after a wait | `prefer Return: Courier, then Collection after 2 days` |

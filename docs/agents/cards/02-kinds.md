@@ -11,6 +11,8 @@ kind Order    { customer: Customer, product: Product, quantity: Count,
                 status: open | paid | shipped = open,
                 total: Money = product's price * quantity,
                 due: Time = created + 14 days }
+kind Stay     { guest: Customer, from: Time, to: Time,
+                nights: Count = the days from its from to its to - 1 }
 
 admit add a new Customer or Product by clerk
 admit place a new Order by clerk

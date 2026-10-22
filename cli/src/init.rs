@@ -81,3 +81,32 @@ pub fn init(dir: &Path) -> Result<String, String> {
     out += &format!("next: `suture check {}`\n", dir.display());
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_skill_says_what_agents_md_says() {
+        let skill = include_str!("../../docs/agents/skill/suture/SKILL.md");
+        assert!(skill.starts_with("---\nname: suture\n"));
+        assert!(skill.ends_with(AGENTS), "docs/agents/skill/suture/SKILL.md must end with init.rs's AGENTS text");
+    }
+
+    #[test]
+    fn init_writes_what_is_missing_and_keeps_the_rest() {
+        let dir = std::env::temp_dir().join(format!("suture-init-{}", std::process::id())).join("rooms");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("AGENTS.md"), "mine").unwrap();
+        let out = init(&dir).unwrap();
+        assert!(out.contains("kept    AGENTS.md") && out.contains("wrote   rooms.st") && out.contains("wrote   .mcp.json"), "{out}");
+        assert_eq!(std::fs::read_to_string(dir.join("AGENTS.md")).unwrap(), "mine");
+        let found = crate::check::check(&dir);
+        assert!(found.passed(), "{}", found.text());
+        // A module already there gets no starter.
+        std::fs::remove_file(dir.join("rooms.scenario")).unwrap();
+        assert!(!init(&dir).unwrap().contains("rooms.scenario"));
+        std::fs::remove_dir_all(dir.parent().unwrap()).unwrap();
+    }
+}
