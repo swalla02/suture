@@ -28,8 +28,8 @@ define: an Application is sound when it is fitting and it is affordable and it i
 define: an Application is valid when its to is at least its from and its days is more than 0 and it is sound
 define: an Application is permitted when its employee's company is selfish
 
-define: an Allocation is pending when the total days of its Applications that are open is more than 0
-define: an Allocation is used when the total days of its Applications that are approved is more than 0
+keep the total days of each Allocation's Applications that are open
+keep the total days of each Allocation's Applications that are approved
 
 rule apart: for each Employee and day from their from to their to, the number of their Applications that are held is at most 1
 rule balance: the total days of each Allocation's Applications that are counted is at most its leaves

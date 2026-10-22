@@ -38,7 +38,7 @@ hrms's count drops, by pattern, its lines about holidays and half days, attendan
 
 **Two bugs in Suture, found by porting and fixed here.**
 - **`applies` was not `apply`.** The third person of a verb ending in a consonant and `y` was `applys`, so `employee E applies …` matched no `admit`. Every such verb was broken: apply, deny, carry, copy, reply, verify. Neither earlier eval had one.
-- **An `expect` about a total the program does not keep read 0.** `expect the total days of AT's Applications that are approved is 4` failed, saying 0, because no rule read that total, so no unit added to it. It is now an error that says so. The dashboard's totals are kept by two `define`s that nothing else uses, which is a workaround: a program should be able to say "keep this total".
+- **An `expect` about a total the program does not keep read 0.** `expect the total days of AT's Applications that are approved is 4` failed, saying 0, because no rule read that total, so no unit added to it. It is now an error that says so. The dashboard's totals were kept by two `define`s that nothing else used, as a workaround. Since slice 33 they are two `keep`s (below).
 
 **What Suture could not express.**
 - **Overlap, the biggest gap (ported since slice 28, below).** "No two open or approved leaves of one employee overlap" compares a sibling with the reader: `the number of its employee's Applications that are approved and whose to is at least its from and whose from is at most its to`. A `that` filter on a relation reads only the sibling, so it cannot be written. The same gap blocks consecutive leave across applications. Six tests need it. Booking, scheduling and rostering have the same shape.
@@ -69,9 +69,13 @@ rule consecutive: for each Allocation and day from their from to their to, the d
 
 The rule also covers one application longer than its type allows (`test_max_continuous_leaves`), as hrms's `validate_max_days` does. The port groups the run by allocation, because a rule's group is one unit, and hrms groups it by employee and leave type. A run across two allocations of the same type is therefore not joined. The run counts calendar days, and hrms counts leave days less holidays. In the hrms test that is 11 days, and in the port it is 12. Both are over the limit of 10.
 
+## After slice 33: kept totals
+
+The two `define`s that kept the dashboard's totals are now `keep the total days of each Allocation's Applications that are open` and `… that are approved`. That is +2 −2 lines, and the port no longer has two states that nothing reads. `suture explain` now shows an allocation's running totals.
+
 ## Next
 
 Slices from these gaps, most valuable first:
 1. ~~runs across entities (consecutive leave)~~ slice 32;
-2. a way to keep a total that only a reader or an `expect` uses;
+2. ~~a way to keep a total that only a reader or an `expect` uses~~ slice 33;
 3. days between dates.
