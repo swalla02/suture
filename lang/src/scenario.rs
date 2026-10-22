@@ -324,7 +324,7 @@ fn many(line: &Cursor, given: bool) -> Result<Option<Vec<ScenarioStep>>, Error> 
     };
     let by = if matches!(c.peek(), Some(Tok::Num(_))) {
         None
-    } else if matches!(c.peek_at(3), Some(Tok::Num(_))) {
+    } else if matches!(c.peek_at(3), Some(Tok::Num(_))) && (0..3).all(|i| matches!(c.peek_at(i), Some(Tok::Word(_)))) && !c.is_word("model") {
         let (role, name, verb) = (c.word()?, c.word()?, c.word()?);
         Some(Caller { role, name, verb })
     } else {
