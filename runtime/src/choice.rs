@@ -53,9 +53,10 @@ pub struct Choice {
 }
 
 impl Choice {
-    /// The hashes of the media among the facts and the options, each once.
+    /// The hashes of the media among the facts, the options and a router's
+    /// `among`, each once.
     pub fn media_named(&self) -> Vec<&str> {
-        let vals = self.facts.iter().chain(self.options.iter().flat_map(|o| o.attrs.iter())).map(|(_, v)| v);
+        let vals = self.facts.iter().chain(self.options.iter().chain(&self.among).flat_map(|o| o.attrs.iter())).map(|(_, v)| v);
         let mut out: Vec<&str> = vals.filter_map(|v| if let Val::Media { sha256, .. } = v { Some(sha256.as_str()) } else { None }).collect();
         out.sort();
         out.dedup();
