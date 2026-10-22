@@ -58,6 +58,14 @@ fn totals(prog: &Program, unit: &Unit, out: &mut Vec<String>) {
             continue;
         }
         seen.push(&t.name);
+        if !t.group.is_empty() {
+            // One line per group held (appendix AP.2.2): `its number of Reviews with the same reviewer Bo: 1`.
+            let prefix = format!("{}#", t.name);
+            for (name, v) in unit.taken.iter().filter(|(n, v)| n.starts_with(&prefix) && **v != crate::interp::zero(t.ty)) {
+                out.push(format!("  its {}: {}", crate::state::take_text(name), v.show(&prog.currency)));
+            }
+            continue;
+        }
         let v = unit.taken.get(&t.name).cloned().unwrap_or_else(|| crate::interp::zero(t.ty));
         let what = if t.name.starts_with("number of ") { t.name.clone() } else { format!("total {}", t.name) };
         out.push(format!("  its {what}: {}", v.show(&prog.currency)));

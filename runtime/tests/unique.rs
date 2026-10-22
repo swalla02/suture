@@ -57,6 +57,10 @@ fn a_reviewer_reviews_a_talk_once() {
     );
     assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
     assert!(r.host.trace.iter().any(|l| l.contains("number of Reviews that are not withdrawn with the same reviewer Bo taken")), "{}", r.host.trace.join("\n"));
+    let t = suture_runtime::explain::explain(&compiled(CFP), &r.host.unit("T").unwrap(), |_| None).join("\n");
+    for who in ["Ann", "Bo"] {
+        assert!(t.contains(&format!("its number of Reviews that are not withdrawn with the same reviewer {who}: 1")), "{t}");
+    }
 }
 
 #[test]
