@@ -197,3 +197,21 @@ fn a_value_an_answer_sets_cannot_be_compared() {
     let e = errors(&src);
     assert!(e.iter().any(|e| e.contains("set by an effect's answer")), "{e:?}");
 }
+
+#[test]
+fn an_event_whose_reaction_would_make_two_alike_is_refused() {
+    let src = format!("{CFP}rule pulled: no two Reviews have the same talk and withdrawn\n");
+    let r = runs(
+        &src,
+        &format!(
+            "{PEOPLE}  when   reviewer Bo scores a new Review R1 with talk T, reviewer Bo and score 4
+  and    reviewer Bo withdraws R1
+  and    reviewer Ann scores a new Review R2 with talk T, reviewer Ann and score 3
+  and    reviewer Ann withdraws R2
+         is refused by rule pulled
+  expect R2 is not withdrawn
+"
+        ),
+    );
+    assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
+}
