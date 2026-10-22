@@ -1,46 +1,49 @@
-//! `suture help`: the agent cards, compiled into the binary so the command
-//! and its documentation never differ (appendix AO). runtime/tests/guide.rs
-//! checks every example in them.
+//! `suture help`: the agent book, docs/agents/suture.md, compiled into the
+//! binary so the command and the book never differ (appendix AO).
+//! runtime/tests/guide.rs checks every example in it.
 
-/// The cards, in order. Each starts `# ⟨topic⟩: ⟨what it covers⟩`.
-const CARDS: [&str; 11] = [
-    include_str!("../../docs/agents/cards/01-start.md"),
-    include_str!("../../docs/agents/cards/02-kinds.md"),
-    include_str!("../../docs/agents/cards/03-gate.md"),
-    include_str!("../../docs/agents/cards/04-rules.md"),
-    include_str!("../../docs/agents/cards/05-parts.md"),
-    include_str!("../../docs/agents/cards/06-time.md"),
-    include_str!("../../docs/agents/cards/07-recipes.md"),
-    include_str!("../../docs/agents/cards/08-scenarios.md"),
-    include_str!("../../docs/agents/cards/09-models.md"),
-    include_str!("../../docs/agents/cards/10-api.md"),
-    include_str!("../../docs/agents/cards/11-limits.md"),
-];
+const BOOK: &str = include_str!("../../docs/agents/suture.md");
 
-/// A card's topic and summary, from its first line.
-fn head(card: &str) -> (&str, &str) {
-    let first = card.lines().next().unwrap_or("").trim_start_matches("# ");
-    first.split_once(": ").unwrap_or((first, ""))
+/// The book's sections: each `## ⟨topic⟩: ⟨what it covers⟩` to the next.
+fn sections() -> Vec<(&'static str, &'static str, &'static str)> {
+    let mut out = vec![];
+    let starts: Vec<usize> = BOOK.match_indices("\n## ").map(|(i, _)| i + 1).collect();
+    for (k, &at) in starts.iter().enumerate() {
+        let text = &BOOK[at..starts.get(k + 1).copied().unwrap_or(BOOK.len())];
+        let head = text.lines().next().unwrap_or("").trim_start_matches("## ");
+        let (topic, what) = head.split_once(": ").unwrap_or((head, ""));
+        out.push((topic, what, text));
+    }
+    out
 }
 
-/// The card for `topic`, every card for `all`, or the list of topics.
+/// One section, the whole book for `all`, or the list of sections.
 pub fn help(topic: Option<&str>) -> Result<String, String> {
     let list = || {
-        let mut out = String::from("suture help ⟨topic⟩ prints one card; `suture help all` prints every card.\n\n");
-        for c in CARDS {
-            let (t, what) = head(c);
-            out += &format!("  {t:<10} {what}\n");
+        let mut out = format!("suture help all prints the whole book ({} KB, about {}k tokens); suture help ⟨topic⟩ one section:\n\n", BOOK.len() / 1000, BOOK.len() / 4000);
+        for (t, what, _) in sections() {
+            out += &format!("  {t:<13} {what}\n");
         }
         out
     };
     match topic {
         None => Ok(list()),
-        Some("all") => Ok(CARDS.join("\n")),
-        Some(t) => CARDS.iter().find(|c| head(c).0 == t).map(|c| c.to_string()).ok_or_else(|| format!("no card `{t}`\n\n{}", list())),
+        Some("all") => Ok(BOOK.to_string()),
+        Some(t) => sections().into_iter().find(|s| s.0 == t).map(|s| s.2.to_string()).ok_or_else(|| format!("no section `{t}`\n\n{}", list())),
     }
 }
 
-/// The topics, for a client that lists them.
-pub fn topics() -> Vec<(&'static str, &'static str)> {
-    CARDS.iter().map(|c| head(c)).collect()
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_book_fits_in_a_context_and_every_section_is_reachable() {
+        // The book is meant to be read whole: keep it under about 5k tokens.
+        assert!(BOOK.len() < 20_000, "the book has grown to {} bytes", BOOK.len());
+        let topics: Vec<&str> = sections().iter().map(|s| s.0).collect();
+        assert_eq!(topics, ["loop", "example", "declarations", "sentences", "semantics", "recipes", "limits", "scenarios", "models", "serve"]);
+        assert!(help(Some("recipes")).unwrap().starts_with("## recipes:"));
+        assert!(help(Some("nope")).unwrap_err().starts_with("no section `nope`"));
+    }
 }

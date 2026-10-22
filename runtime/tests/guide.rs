@@ -113,16 +113,11 @@ fn every_example_in_the_guide_holds() {
 }
 
 #[test]
-fn every_example_in_the_agent_cards_holds() {
-    // `suture help` prints these cards, so they are checked as the guide is (appendix AO).
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/agents/cards");
-    let mut files: Vec<_> = std::fs::read_dir(dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "md")).collect();
-    files.sort();
-    let mut problems = vec![];
-    for f in &files {
-        problems.extend(check(&f.file_name().unwrap().to_string_lossy(), &std::fs::read_to_string(f).unwrap()));
-    }
-    assert!(files.len() >= 10, "{files:?}");
+fn every_example_in_the_agent_book_holds() {
+    // `suture help` prints the book, so it is checked as the guide is (appendix AO).
+    let md = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/agents/suture.md")).unwrap();
+    assert!(blocks(&md).iter().filter(|b| b.info == "scenario").count() >= 3);
+    let problems = check("suture.md", &md);
     assert!(problems.is_empty(), "{}", problems.join("\n\n"));
 }
 

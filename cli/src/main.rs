@@ -10,7 +10,6 @@ mod check;
 mod help;
 mod init;
 mod lsp;
-mod mcp;
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -26,7 +25,7 @@ macro_rules! outln {
 }
 
 const USAGE: &str =
-    "usage:\n  suture init <dir>\n  suture help [<topic> | all]\n  suture check <dir> [--json]\n  suture build <dir>\n  suture run <dir> --scenario <file> [--models]\n  suture explain <dir> --scenario <file> <name>\n  suture serve <dir> [--state <dir>] [--listen <addr>] [--pod <name>] [--models]\n  suture deploy <dir> [--state <dir>]\n  suture lsp\n  suture mcp";
+    "usage:\n  suture init <dir>\n  suture help [<topic> | all]\n  suture check <dir> [--json]\n  suture build <dir>\n  suture run <dir> --scenario <file> [--models]\n  suture explain <dir> --scenario <file> <name>\n  suture serve <dir> [--state <dir>] [--listen <addr>] [--pod <name>] [--models]\n  suture deploy <dir> [--state <dir>]\n  suture lsp";
 
 /// Where `suture serve` listens unless told otherwise.
 const LISTEN: &str = "127.0.0.1:7878";
@@ -39,7 +38,7 @@ fn main() -> ExitCode {
         ["help", topic] => help::help(Some(topic)).map(|t| print_ok(&t)),
         ["init", dir] => init::init(Path::new(dir)).map(|t| print_ok(&t)),
         ["check", dir] => Ok(print_check(Path::new(dir), false)),
-        ["check", dir, "--json"] => Ok(print_check(Path::new(dir), true)),
+        ["check", dir, "--json"] | ["check", "--json", dir] => Ok(print_check(Path::new(dir), true)),
         ["build", dir] => build(Path::new(dir)),
         ["run", dir, "--scenario", file] => scenarios(Path::new(dir), Path::new(file), None, false),
         ["run", dir, "--scenario", file, "--models"] => scenarios(Path::new(dir), Path::new(file), None, true),
@@ -48,7 +47,6 @@ fn main() -> ExitCode {
         ["deploy", dir] => deploy(Path::new(dir), None),
         ["deploy", dir, "--state", state] => deploy(Path::new(dir), Some(Path::new(state))),
         ["lsp"] => lsp::run(),
-        ["mcp"] => mcp::run(),
         _ => Err(USAGE.to_string()),
     };
     match result {

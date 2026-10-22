@@ -9,8 +9,8 @@ pub const AGENTS: &str = "# Working on this Suture module
 This directory is a Suture module: a backend written as rules, permissions, needs and effects, in controlled English.
 You have probably not seen Suture before. Do not guess its syntax from other languages; look it up.
 
-1. `suture help` lists the cards; read `suture help start` and `suture help recipes` first, and `suture help limits`
-   before you decide something cannot be written. `suture help all` prints every card (about 450 lines).
+1. Read `suture help all` once: the whole language in about 4k tokens, with recipes and limits.
+   Check its `limits` section before you decide something cannot be written.
 2. Write the `.st` files and a `.scenario` file per topic, in this directory.
 3. Run `suture check .` after every edit. It compiles, runs every scenario, and shows only what failed.
    Exit 0 means everything compiles and passes. Fix the first error first; each error names the form it expected.
@@ -18,12 +18,7 @@ You have probably not seen Suture before. Do not guess its syntax from other lan
    (`is refused by rule ⟨name⟩`, `is refused at the gate`).
 5. When it passes, run `suture build .` and give the person its read-back: every rule in plain English.
    That read-back, and the scenarios, are what they review, so keep rule names meaningful.
-
-With MCP, the same commands are the tools `suture_help`, `suture_check`, `suture_build` and `suture_explain` (`suture mcp`).
 ";
-
-/// The MCP server, for Claude Code and other clients that read `.mcp.json`.
-const MCP: &str = "{\n  \"mcpServers\": {\n    \"suture\": { \"command\": \"suture\", \"args\": [\"mcp\"] }\n  }\n}\n";
 
 const MODULE: &str = "role staff
 
@@ -62,7 +57,6 @@ pub fn init(dir: &Path) -> Result<String, String> {
     let mut files: Vec<(String, String)> = vec![
         ("AGENTS.md".into(), AGENTS.into()),
         ("CLAUDE.md".into(), "@AGENTS.md\n".into()),
-        (".mcp.json".into(), MCP.into()),
     ];
     if !has_module {
         files.push((format!("{name}.st"), module));
@@ -71,11 +65,13 @@ pub fn init(dir: &Path) -> Result<String, String> {
     let mut out = String::new();
     for (file, text) in files {
         let path = dir.join(&file);
-        if path.exists() {
+        if path.symlink_metadata().is_ok() {
             out += &format!("  kept    {file}\n");
             continue;
         }
-        std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+        // `create_new`, so a file that appeared meanwhile is never overwritten.
+        let file_ = std::fs::OpenOptions::new().write(true).create_new(true).open(&path);
+        std::io::Write::write_all(&mut file_.map_err(|e| format!("{}: {e}", path.display()))?, text.as_bytes()).map_err(|e| format!("{}: {e}", path.display()))?;
         out += &format!("  wrote   {file}\n");
     }
     out += &format!("next: `suture check {}`\n", dir.display());
@@ -100,7 +96,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("AGENTS.md"), "mine").unwrap();
         let out = init(&dir).unwrap();
-        assert!(out.contains("kept    AGENTS.md") && out.contains("wrote   rooms.st") && out.contains("wrote   .mcp.json"), "{out}");
+        assert!(out.contains("kept    AGENTS.md") && out.contains("wrote   rooms.st") , "{out}");
         assert_eq!(std::fs::read_to_string(dir.join("AGENTS.md")).unwrap(), "mine");
         let found = crate::check::check(&dir);
         assert!(found.passed(), "{}", found.text());
