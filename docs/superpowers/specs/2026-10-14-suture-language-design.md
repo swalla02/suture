@@ -2270,3 +2270,30 @@ Slice 40's `no two` (appendix AP.2.4) refused any attribute that could change af
   - changing a slot's hour moves it within the room's group;
   - a value an answer sets is an error;
   - `withdrawn`, which an event sets, may be compared.
+
+## Appendix AY. Prototype slice 49: a router sees the options (2026-10-22)
+
+Slice 34's router (appendix AJ) got the chooser's facts and the candidate models, but not the options the picked model would choose among. Which model fits often depends on those options: a choice among costly carriers deserves the careful model.
+
+### AY.1 What slice 49 adds
+
+| Added in slice 49 | Still waits |
+|---|---|
+| `Choice.among`: a router's choice carries the decision's options, with their facts | |
+| Jev: the instructions end with `The model you choose will choose among: Cheap (fee 5 EUR, zone EU); …` | |
+| the custom format: `among`, a list like `options` | |
+
+### AY.2 Semantics that slice 49 settles
+
+1. **What a router sees.** It sees the options the rules allow, in `prefer` order, with the facts a model would get, and their media in the same store. It still picks only a candidate model's name or `prefer`.
+2. A choice that is not a router's has an empty `among`, and the custom format sends no `among` field.
+3. Nothing in the language changes, and nothing new is journaled: the router's answer is journaled as before (appendix AJ.2.5).
+
+### AY.3 Acceptance
+
+- runtime/tests/backends.rs: Jev's instructions and the custom request carry the options; a plain choice sends no `among`.
+- runtime/tests/routing.rs: a router that picks by the options' fees sends a choice with a 9 EUR carrier to `dearest@1`.
+
+### AY.4 Not in this slice: a reaction that sets another entity
+
+A reaction can set only its own unit's entities. Setting a referenced shared entity would be a write from one unit into another, and the runtime is built on each unit owning its state. The way around it (a `define` on that entity, from a total of what refers to it) stays the recipe until that is decided.

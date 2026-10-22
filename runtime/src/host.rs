@@ -131,7 +131,8 @@ fn resolve(model: &str, names: &[&str], answer: &Answer, within: u64, otherwise:
 }
 
 /// The choice a router gets: the same facts and media, with the candidates
-/// as its options, and its own key, `…?model` (appendix AJ.2.2).
+/// as its options, the decision's options as `among`, and its own key,
+/// `…?model` (appendices AJ.2.2, AY).
 fn routing_choice(c: &Choice, r: &Route) -> Choice {
     Choice {
         point: format!("{}?model", c.point),
@@ -139,6 +140,7 @@ fn routing_choice(c: &Choice, r: &Route) -> Choice {
         options: r.among.iter().map(|m| Option_ { label: candidate(m), attrs: vec![] }).collect(),
         sure: r.sure.map(thousandths),
         otherwise: r.otherwise.clone(),
+        among: c.options.clone(),
         ..c.clone()
     }
 }
@@ -523,6 +525,7 @@ impl Host {
             media: BTreeMap::new(),
             sure: sure.map(thousandths),
             otherwise,
+            among: vec![],
         };
         if self.defer_models {
             self.defer_routed(model, route, choice, within, Chooses::Bind { hole, decide: d.clone(), pool: key.to_string() });
@@ -694,6 +697,7 @@ impl Host {
             media: BTreeMap::new(),
             sure: sure.map(thousandths),
             otherwise,
+            among: vec![],
         };
         if self.defer_models {
             self.defer_routed(ask.adapter.clone(), route, c, within, Chooses::Ask { hole, ask: ask.clone() });

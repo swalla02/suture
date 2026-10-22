@@ -341,3 +341,23 @@ fn a_pooled_choice_falls_back_to_prefer_only() {
     assert_eq!(e.len(), 1, "{e:?}");
     assert!(e[0].ends_with("`otherwise Cheap`: Carrier is chosen among entities that exist only as the program runs, so its fallback is `prefer`"), "{e:?}");
 }
+
+#[test]
+fn the_router_sees_the_options_and_picks_by_them() {
+    // Appendix AY: dearer carriers go to the careful model.
+    let p = prog(SHOP);
+    let sc = &parse_scenarios("t.scenario", &format!("scenario \"s\":\n{WORLD}  when   staff Sam places a new Order O1 with product K and zone EU\n")).unwrap()[0];
+    let r = suture_runtime::scenario::run_with(&p, sc, |h| {
+        h.models.register(
+            "router@1",
+            Box::new(|c: &Choice| {
+                let dear = c.among.iter().any(|o| o.attrs.iter().any(|(k, v)| k == "fee" && matches!(v, Val::Money(x) if *x > 800)));
+                Some(if dear { "dearest@1" } else { "cheapest@1" }.to_string())
+            }),
+        );
+        h.models.register("dearest@1", Box::new(|c: &Choice| c.options.last().map(|o| o.label.clone())));
+        h.models.register("cheapest@1", Box::new(|c: &Choice| c.options.first().map(|o| o.label.clone())));
+    });
+    assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
+    assert!(has(&r, "model for O1/Shipment#1@Carrier: dearest@1 by model \"router@1\""), "{}", r.host.trace.join("\n"));
+}

@@ -47,7 +47,7 @@ fn choice() -> Choice {
         ],
         currency: "EUR".into(),
         media: Default::default(),
-        sure: None, otherwise: None,
+        sure: None, otherwise: None, among: vec![],
     }
 }
 
@@ -236,3 +236,39 @@ fn the_programs_bound_holds_with_the_backends_own_minimum() {
     assert_eq!(m.ask("f@1", &bounded, 1000), Answer::Failed("it gave no confidence, and the program needs at least 0.8 sure".into()));
 }
 
+
+#[test]
+fn a_router_is_sent_what_the_model_it_picks_will_choose_among() {
+    // Appendix AY.
+    let router = Choice {
+        point: "Carrier?model".into(),
+        options: vec![Option_ { label: "cheapest@1".into(), attrs: vec![] }, Option_ { label: "dearest@1".into(), attrs: vec![] }],
+        among: choice().options,
+        ..choice()
+    };
+    let fake = Fake::new(Ok(jev_answer("dearest@1", 0.9)));
+    assert_eq!(jev(&fake).decide(&router, Duration::from_secs(1)), Answer::Picked("dearest@1".into()));
+    let body = fake.sent.borrow()[0].2.clone();
+    let text = body["questions"]["pick"]["instructions"].as_str().unwrap().to_string();
+    assert!(text.ends_with("The model you choose will choose among: Cheap (fee 5 EUR, zone EU); Fast (fee 9 EUR, zone EU)."), "{text}");
+    let fake = Fake::new(Ok(json!({ "pick": "cheapest@1" })));
+    let mut c = Custom {
+        url: "https://models.example/route".into(),
+        key_env: None,
+        pick: "/pick".into(),
+        value: None,
+        confidence: None,
+        min_confidence: None,
+        media: MediaMode::Inline,
+        max_media_bytes: MAX_MEDIA_SENT,
+        transport: Box::new(fake.clone()),
+    };
+    assert_eq!(c.decide(&router, Duration::from_secs(1)), Answer::Picked("cheapest@1".into()));
+    let body = fake.sent.borrow()[0].2.clone();
+    assert_eq!(body["among"][1], json!({ "label": "Fast", "facts": { "fee": "9 EUR", "zone": "EU" } }));
+    // A choice that is not a router's sends no `among`.
+    let fake = Fake::new(Ok(json!({ "pick": "Cheap" })));
+    c.transport = Box::new(fake.clone());
+    c.decide(&choice(), Duration::from_secs(1));
+    assert!(fake.sent.borrow()[0].2.get("among").is_none());
+}

@@ -26,4 +26,4 @@ scenario "an unsure model leaves the claim to the fallback":
   expect C1 has a Writeoff
 ```
 
-Also: `decide … with model "a@1" or model "b@1", picked by model "router@1"`, and `source ⟨Kind⟩'s ⟨attr⟩ via model "invoices@1" within 10 seconds` with `sends its invoice`, `asking "…"`, `at least 0.8 sure`, `otherwise use ⟨literal⟩`.
+Also: `decide … with model "a@1" or model "b@1", picked by model "router@1"` (the router sees the options the model it picks will choose among), and `source ⟨Kind⟩'s ⟨attr⟩ via model "invoices@1" within 10 seconds` with `sends its invoice`, `asking "…"`, `at least 0.8 sure`, `otherwise use ⟨literal⟩`.

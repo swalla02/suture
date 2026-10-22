@@ -285,7 +285,7 @@ decide Carrier with model "fast@1" or model "careful@1" or prefer within 2 secon
 admit place a new Order by staff
 ```
 
-The router is a decision model like any other. It gets the same facts and media as the choice would, and its options are the candidates by name: `fast@1`, `careful@1` and `prefer`. It picks one, and that one makes the choice. A router never sees the carriers, and the model it picks still only picks among the carriers the rules allow:
+The router is a decision model like any other. It gets the same facts and media as the choice would, and its options are the candidates by name: `fast@1`, `careful@1` and `prefer`. It picks one, and that one makes the choice. The router also sees the carriers it is choosing a model for, with their facts, so it can send a choice among costly carriers to the careful model. Jev gets them in its instructions, and the custom format as `among`, a list like `options`. It still cannot pick a carrier, and the model it picks only picks among the carriers the rules allow:
 
 ```scenario
 scenario "the router sends the order to the careful model":

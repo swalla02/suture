@@ -47,6 +47,9 @@ pub struct Choice {
     /// The program's `otherwise …`: the option taken, while it is one, when
     /// the model is no help, instead of `prefer`'s first (appendix AL).
     pub otherwise: Option<String>,
+    /// For a router: the options the model it picks will choose among, so
+    /// that it can pick by them (appendix AY). Empty otherwise.
+    pub among: Vec<Option_>,
 }
 
 impl Choice {

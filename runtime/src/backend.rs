@@ -253,13 +253,18 @@ impl Jev {
                 (o.label.clone(), desc)
             })
             .collect();
-        let instructions = format!(
+        let mut instructions = format!(
             "Choose the {} for {} ({}). The options, best first by the program's own preference: {}.",
             c.point,
             c.unit,
             c.chooser,
             labels.join(", ")
         );
+        // A router picks the model that will choose among these (appendix AY).
+        if !c.among.is_empty() {
+            let among: Vec<String> = c.among.iter().map(|o| if o.attrs.is_empty() { o.label.clone() } else { format!("{} ({})", o.label, o.attrs.iter().map(|(k, v)| format!("{k} {}", shown(v, &c.currency))).collect::<Vec<_>>().join(", ")) }).collect();
+            instructions += &format!(" The model you choose will choose among: {}.", among.join("; "));
+        }
         json!({
             "model": self.model,
             "state": state(c, self.media),
@@ -316,8 +321,13 @@ pub struct Custom {
 
 impl Custom {
     pub fn request(&self, c: &Choice) -> Value {
-        let options: Vec<Value> = c.options.iter().map(|o| json!({ "label": o.label, "facts": facts(&o.attrs, c, self.media) })).collect();
-        json!({ "point": c.point, "state": state(c, self.media), "options": options })
+        let list = |xs: &[crate::choice::Option_]| -> Vec<Value> { xs.iter().map(|o| json!({ "label": o.label, "facts": facts(&o.attrs, c, self.media) })).collect() };
+        let mut out = json!({ "point": c.point, "state": state(c, self.media), "options": list(&c.options) });
+        // A router also gets what the model it picks will choose among (appendix AY).
+        if !c.among.is_empty() {
+            out["among"] = json!(list(&c.among));
+        }
+        out
     }
 
     /// A reading: the same state, and the field to read.
