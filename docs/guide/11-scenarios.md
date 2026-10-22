@@ -70,12 +70,22 @@ given a ⟨Kind⟩ ⟨Name⟩ [with ⟨attr⟩ ⟨value⟩[, ⟨attr⟩ ⟨value
 - A reference is the other entity's name: `client Ada`. A set is `{North, South}`, or one name.
 - `given` is the world, not an input: it never passes the gate. Use it for shared entities and anything that exists before the story starts.
 
+To fill a limit, create many alike in one line. `⟨n⟩ ⟨Kinds⟩ ⟨first⟩ to ⟨last⟩` creates one per name, in order, each with the same values. The kind is written in its plural, and the names share a prefix and count up by one:
+
+```text
+given  14 Talks T1 to T14 with program P1 and length 45
+when   member Ada books 3 new Bookings B1 to B3 with class Yoga
+```
+
+A range cannot be refused as a whole. Create the one that must be refused on a line of its own.
+
 ## Inputs: `when`
 
 | Step | Means |
 |---|---|
 | `when a new ⟨Kind⟩ ⟨Name⟩ with …` | creates a root, with no caller (only in a program with no `admit`) |
 | `when ⟨role⟩ ⟨Name⟩ ⟨verb⟩s a new ⟨Kind⟩ ⟨Name⟩ with …` | an admitted creation |
+| `when ⟨role⟩ ⟨Name⟩ ⟨verb⟩s ⟨n⟩ new ⟨Kinds⟩ ⟨A1⟩ to ⟨An⟩ with …` | n admitted creations, one per name |
 | `  and a ⟨element⟩ with …` | an element of the new entity's list, on the next line |
 | `when ⟨role⟩ ⟨Name⟩ ⟨verb⟩s ⟨Name⟩['s ⟨Part⟩] [with …]` | an admitted event, to the entity or its part, with its data |
 | `when ⟨role⟩ ⟨Name⟩ changes ⟨Name⟩'s ⟨attr⟩ to ⟨value⟩` | an admitted change |

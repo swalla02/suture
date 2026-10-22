@@ -3,6 +3,7 @@
 ```text
 scenario "⟨title⟩":
   given  a ⟨Kind⟩ ⟨Name⟩ [with ⟨attr⟩ ⟨value⟩, … and ⟨attr⟩ ⟨value⟩]     no gate
+  given  14 ⟨Kinds⟩ T1 to T14 [with …]                                 n alike; also `⟨verb⟩s 3 new ⟨Kinds⟩ B1 to B3`
   when   ⟨role⟩ ⟨Caller⟩ ⟨verb⟩s a new ⟨Kind⟩ ⟨Name⟩ with …              through the gate
   when   ⟨role⟩ ⟨Caller⟩ ⟨verb⟩s ⟨Name⟩
   when   ⟨role⟩ ⟨Caller⟩ changes ⟨Name⟩'s ⟨attr⟩ to ⟨value⟩

@@ -164,6 +164,8 @@ fn create(
     items: &[(String, Vec<(String, Literal)>)],
     gated: Option<Option<&Caller>>,
 ) -> Result<(), String> {
+    // A range names the kind by its plural (appendix AS).
+    let kind = prog.kinds.iter().find(|k| k.plural == kind && k.name != kind).map_or(kind, |k| k.name.as_str());
     let given = values(prog, &mut host.media, base, attrs)?;
     let mut elements = vec![];
     for (one, pairs) in items {

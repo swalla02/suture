@@ -19,3 +19,15 @@ fn and_after_an_expect_expects() {
     assert!(matches!(&sc.steps[3], ScenarioStep::Alert { negated: true, .. }));
     assert!(matches!(&sc.steps[4], ScenarioStep::Answer { .. }));
 }
+
+#[test]
+fn a_range_creates_one_entity_per_name() {
+    let src = "scenario \"x\":\n  given  3 Talks T1 to T3 with length 45\n  and    a Talk T4\n  when   member Ada books 2 new Bookings B1 to B2 with talk T1\n  and    3 days pass\n";
+    let sc = &parse_scenarios("t.scenario", src).unwrap()[0];
+    let names: Vec<_> = sc.steps.iter().filter_map(|s| match s { ScenarioStep::Create { name, given, .. } => Some((name.as_str(), *given)), _ => None }).collect();
+    assert_eq!(names, [("T1", true), ("T2", true), ("T3", true), ("T4", true), ("B1", false), ("B2", false)]);
+    assert!(matches!(&sc.steps[4], ScenarioStep::Create { kind, by: Some(b), .. } if kind == "Bookings" && b.name == "Ada"));
+    assert!(matches!(sc.steps[6], ScenarioStep::Pass { .. }));
+    let bad = parse_scenarios("t.scenario", "scenario \"x\":\n  given 3 Talks T1 to T4\n").unwrap_err();
+    assert!(bad.msg.contains("numbers 3 apart"), "{}", bad.msg);
+}

@@ -2132,3 +2132,27 @@ Slice 39's book (appendix AO) was read whole, and each new form made it longer. 
   - errors map to the topics of their statements.
 - runtime/tests/guide.rs: every example in the core and the topics holds.
 - eval/agents/RESULTS.md: a fresh agent on task B with the core and topics, against the whole book.
+
+## Appendix AS. Prototype slice 43: many alike in one scenario line (2026-10-22)
+
+The agent eval's task B needed 14 talks to pass a 600-minute limit. The agent wrote them one per line and miscounted once. A scenario can now create a range.
+
+### AS.1 What slice 43 adds
+
+| Added in slice 43 | Still waits |
+|---|---|
+| `given ⟨n⟩ ⟨Kinds⟩ ⟨A1⟩ to ⟨An⟩ [with …]` | values that vary along the range |
+| `when ⟨role⟩ ⟨Name⟩ ⟨verb⟩s ⟨n⟩ new ⟨Kinds⟩ ⟨A1⟩ to ⟨An⟩ [with …]` | a range that is refused |
+
+### AS.2 Semantics that slice 43 settles
+
+1. **A range is n creations.** The parser expands it into one creation per name, in order, each with the same values and list elements. The scenario runs as if they were written one per line; a `given` range never passes the gate, and an admitted one passes it once per entity.
+2. **Names.** The first and last names share a prefix, end in numbers, and are exactly n apart (`T1 to T14` for 14). n is at most 1000. Anything else is an error that shows the form.
+3. **The kind is in its plural** (`Talks`, `People`), resolved against the program's plurals when the scenario runs.
+4. **No refusal.** `is refused …` after a range is an error: the entity that must be refused is written on its own line.
+5. An `and` after a range continues it as `given` or `when`, as after a single creation.
+
+### AS.3 Acceptance
+
+- lang/tests/scenario_lines.rs: a range expands into its names, keeps `given`, has its caller, and leaves `and 3 days pass` alone; a miscount is an error.
+- runtime/tests/ranges.rs: 13 accepted talks of 45 minutes and two admitted ones fill a program; the next accepted talk is refused by the rule.

@@ -130,6 +130,11 @@ pub fn parse_scenarios(file: &str, src: &str) -> Result<Vec<Scenario>, Error> {
                     continue;
                 }
             }
+            if let Some(many) = many(&c, given)? {
+                given = matches!(many.first(), Some(ScenarioStep::Create { given: true, .. }));
+                steps.extend(many);
+                continue;
+            }
             steps.push(step(&mut c, &mut given)?);
             c.expect_end()?;
         }
@@ -274,17 +279,7 @@ fn step_input(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {
         c.eat_word("new");
         let kind = c.kind_name()?;
         let name = c.word()?;
-        let attrs = if c.eat_word("with") { pairs(c)? } else { vec![] };
-        let mut items = vec![];
-        while c.is_word("and") {
-            c.expect_word("and")?;
-            if !c.eat_word("a") {
-                c.expect_word("an")?;
-            }
-            let element = c.word()?;
-            c.expect_word("with")?;
-            items.push((element, pairs(c)?));
-        }
+        let (attrs, items) = values_and_items(c)?;
         let refused = refusal(c)?;
         return Ok(ScenarioStep::Create { kind, name, attrs, items, by, given: *given, refused });
     }
@@ -294,6 +289,78 @@ fn step_input(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {
     let data = if c.eat_word("with") { pairs(c)? } else { vec![] };
     let target = if c.eat_word("for") { Some(c.word()?) } else { None };
     Ok(ScenarioStep::Answer { adapter, outcome, data, target })
+}
+
+/// `with ⟨attr⟩ ⟨value⟩, …` and each `and a ⟨element⟩ with …` of a creation.
+type Pairs = Vec<(String, Literal)>;
+fn values_and_items(c: &mut Cursor) -> Result<(Pairs, Vec<(String, Pairs)>), Error> {
+    let attrs = if c.eat_word("with") { pairs(c)? } else { vec![] };
+    let mut items = vec![];
+    while c.is_word("and") {
+        c.expect_word("and")?;
+        if !c.eat_word("a") {
+            c.expect_word("an")?;
+        }
+        let element = c.word()?;
+        c.expect_word("with")?;
+        items.push((element, pairs(c)?));
+    }
+    Ok((attrs, items))
+}
+
+/// `given 14 Talks T1 to T14 with length 45`, or `when member Ada books
+/// 3 new Bookings B1 to B3 with …`: one creation per name, in order, each
+/// with the same values (appendix AS). None when the line is not a range.
+fn many(line: &Cursor, given: bool) -> Result<Option<Vec<ScenarioStep>>, Error> {
+    let mut c = line.clone();
+    let given = if c.eat_word("given") {
+        true
+    } else if c.eat_word("when") {
+        false
+    } else if c.eat_word("and") {
+        given
+    } else {
+        return Ok(None);
+    };
+    let by = if matches!(c.peek(), Some(Tok::Num(_))) {
+        None
+    } else if matches!(c.peek_at(3), Some(Tok::Num(_))) {
+        let (role, name, verb) = (c.word()?, c.word()?, c.word()?);
+        Some(Caller { role, name, verb })
+    } else {
+        return Ok(None);
+    };
+    let n = match (c.peek(), c.peek_at(1)) {
+        (Some(Tok::Num(n)), Some(Tok::Word(w))) if w.starts_with(char::is_uppercase) || (w == "new" && by.is_some()) => n.clone(),
+        _ => return Ok(None),
+    };
+    c.next();
+    if given && by.is_some() {
+        return Err(c.error("a `given` is the world, with no caller; write `when` for a caller's input"));
+    }
+    if by.is_some() {
+        c.expect_word("new")?;
+    }
+    let kinds = c.kind_name()?;
+    let first = c.word()?;
+    c.expect_word("to")?;
+    let last = c.word()?;
+    let split = |w: &str| {
+        let digits = w.len() - w.trim_end_matches(|ch: char| ch.is_ascii_digit()).len();
+        let (pre, num) = w.split_at(w.len() - digits);
+        num.parse::<u64>().ok().map(|n| (pre.to_string(), n, digits))
+    };
+    let count: u64 = n.parse().map_err(|_| c.error(format!("`{n}` is not a whole number of entities")))?;
+    let names: Vec<String> = match (split(&first), split(&last)) {
+        (Some((p, a, _)), Some((q, b, _))) if p == q && b >= a && b - a + 1 == count && count <= 1000 => (a..=b).map(|i| format!("{p}{i}")).collect(),
+        _ => return Err(c.error(format!("`{n} {kinds} {first} to {last}`: name the first and the last with the same prefix and numbers {n} apart, as in `{n} {kinds} T1 to T{n}` (at most 1000)"))),
+    };
+    let (attrs, items) = values_and_items(&mut c)?;
+    if c.is_word("is") {
+        return Err(c.error("a range cannot be refused; refuse its next entity on a line of its own"));
+    }
+    c.expect_end()?;
+    Ok(Some(names.into_iter().map(|name| ScenarioStep::Create { kind: kinds.clone(), name, attrs: attrs.clone(), items: items.clone(), by: by.clone(), given, refused: None }).collect()))
 }
 
 /// `is refused by rule late`, `is refused at the gate`, or nothing.
