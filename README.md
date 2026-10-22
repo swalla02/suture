@@ -1,33 +1,53 @@
 # Suture
 
-Suture is a declarative language for building software that runs business processes: orders, bookings, provisioning, anything with steps, outside services, shared resources and rules that must never be broken.
+**Stop writing the glue. Declare the rules.**
 
-You do not write the steps. You declare what exists, what each thing needs, the rules that must always hold and the goals to reach. The runtime works out the order, waits when a rule says so, retries what times out, gives back what a cancelled step took, and records every step so the same inputs always give the same result.
+Most backend code isn't business logic. It's coordination: call this provider, retry on timeout, roll back if a later step fails, check that the seat is still free, make sure nobody approves their own expense, keep a state machine for every order and log what happened in case someone asks. It's hard to read, easy to get wrong, and it's where the bugs live.
 
-Suture is a v0 prototype: a Rust compiler and runtime, a guide whose every example is tested, and five example systems. It is not production software yet.
+Suture is a declarative language for that code. You state what exists, what each thing needs, the rules that must never break and the goals to reach, in controlled English. The runtime works out the order. It waits when a rule says so, retries what times out, gives back what a cancelled step took, and journals every step, so the same inputs always give the same result.
 
-## Where Suture fits
+```text
+rule seats: the total quantity taken from each Session is at most its seats
+rule early: no Booking has a Ticket that is sent unless it is paid
+desired within 1 day: every Booking that is not cancelled is paid and issued
+```
 
-Suture is not infrastructure, and it does not replace your databases or providers. It replaces the code in the middle: the services written to coordinate steps, call providers, retry, compensate, check permissions, keep a state machine per entity and log what happened. Today, that code is most of a backend team's work.
+Those three lines are the whole ordering, capacity and alerting logic of a ticketing system. There is no `if`, no loop and no call order.
 
-![Suture runs as pods in a Kubernetes cluster that Terraform provisions. Its runtime pods sit in the middle and link every other pod: platform services, your services and adapters, the ingress, and decision models served by vLLM or SGLang on a GPU node pool](docs/architecture.svg)
+> **Status:** v0 prototype. It has a Rust compiler and runtime, an HTTP service with a durable log, replay and multi-pod serving, and a guide whose every example is compiled and run by the test suite. It is not production software yet. Read [the limits](docs/guide/16-limits-of-v0.md) before betting on it.
 
-Everything stands on the same base: Terraform provisions the cluster and its CPU and GPU node pools, and Kubernetes schedules every pod. Suture's runtime pods, with their journal on a persistent volume, are the one place that links all the others:
+## The numbers
 
-| Around Suture | Runs as | Linked by |
-|---|---|---|
-| callers: apps, staff tools, partner systems | outside, through the ingress | `admit`: only admitted inputs get in |
-| platform services: PostgreSQL, Redis, Vault, Prometheus | pods | `source` for facts; API keys from Vault as environment variables; metrics and alerts out |
-| your services, and adapters to payment, mail and carrier providers | pods, which call out | `effect`, with a deadline and the outcomes it may report |
-| decision models | vLLM or SGLang pods on GPU nodes, or a hosted API | `decide`: pick one of the options the rules allow |
+We ported three real workflows to Suture, two of them from open-source projects whose code we didn't write, and counted. Each `eval/` folder has the ported program, the scenarios, a script that does the counting, and a write-up that includes where Suture lost.
 
-Suture links services; it does not prompt a model. There are no prompts and no generated code. A model only ever picks among options the rules already allow, every pick is checked and journaled, and with every model off, `prefer` decides and the system still runs. The compute engines are the motor for those picks, not the logic.
+| Workflow | Suture | The original | Control flow in Suture |
+|---|---|---|---|
+| **Leave applications**, ported from [frappe/hrms](https://github.com/frappe/hrms), with 16 of its tests turned into scenarios | **41 lines** | 487 lines of Python, in 29 functions | none |
+| **Returns**, ported from [Solidus](https://github.com/solidusio/solidus), with 8 real changes from its git history replayed | **82 lines** | 661 lines of Ruby | none |
+| **Motor claims**, with a model reading the photo and the invoice, against a hand-written Rust baseline | **62 lines** | 464 lines of Rust | none |
 
-In v0, `suture serve` runs a program as one process: inputs over HTTP, requests posted to adapters, the real clock, and a log on disk that a restart replays; `suture deploy` checks a new version against the live units before it is started; `secret` and `personal` fields reach only the adapters granted them, and `suture build` writes a manifest of what each adapter receives. Several pods can serve one state directory, taking turns on its log, each posting the requests of the units it owns, and taking over those of a pod that stops (guide chapter 20).
+Changes are where the gap shows:
 
-## A program
+- **A new business rule is usually one sentence.** A yearly payout cap per policy cost Suture **+1** line and the Rust baseline **+43**. Overlapping leave cost **+2** lines; hrms spends 38 on it. Leave that runs across several applications is one rule; hrms spends 49 lines on it.
+- **Some bugs can't be written.** Solidus fixed a bug in which one customer's return item could cancel another order's return items (`2741034ae`). In Suture a unit can't touch another unit, so that path never existed, and the fix was one `where` clause.
+- **Suture doesn't always win.** In claims, adding a third payout type cost Suture +9 −4 lines against the baseline's +5 −4. In returns, adding a new reception state first cost Suture twice what it cost Solidus, until slice 25 added a state form. Each loss went on the roadmap. The write-ups list them all: [claims](eval/claims/RESULTS.md), [returns](eval/returns/RESULTS.md), [leave](eval/leave/RESULTS.md).
 
-Here is a whole ticketing system ([`examples/tickets/tickets.st`](examples/tickets/tickets.st)). Fans book seats, the system charges them, finds a session with room and mails the ticket:
+## What you stop writing
+
+| You'd normally write | In Suture |
+|---|---|
+| step ordering, sagas, workflow definitions | `needs` plus rules; the runtime finds the order |
+| retries, timeouts, dead-letter handling | an `effect` with a deadline and the outcomes it may report |
+| compensation on cancel | nothing; a part that's no longer needed is withdrawn and gives back what it took |
+| capacity and double-booking checks, locks | `rule … is at most its seats`, checked per group before anything happens |
+| a state machine per entity | state attributes and `define`d states |
+| permission checks scattered across handlers | `admit … by ⟨role⟩ where …`, checked at one gate |
+| "why is this order stuck?" log diving | `suture explain`, which says what it waits on, which rule holds it, and what is due when |
+| replay and audit infrastructure | built in: every input, answer, timer and choice is journaled |
+
+## A whole program
+
+Here is a complete ticketing system ([`examples/tickets/tickets.st`](examples/tickets/tickets.st)). Fans book seats, the system charges them, finds a session with room and mails the ticket:
 
 ```text
 module tickets version 1, currency EUR
@@ -76,11 +96,11 @@ admit add a new Show or Session by box
 admit change Session's seats by box
 ```
 
-Nothing says "charge first, then issue": rule `early` holds the ticket back until the payment is charged. Nothing says "release the seats on cancellation": a cancelled booking no longer needs its ticket, so the unsent ticket is withdrawn and gives its seats back. Nothing says "retry the mailer": the effect's deadline does that. There is no `if`, no loop and no call order anywhere.
+Nothing says "charge first, then issue": rule `early` holds the ticket back until the payment is charged. Nothing says "release the seats on cancellation": a cancelled booking no longer needs its ticket, so the unsent ticket is withdrawn and gives its seats back. Nothing says "retry the mailer": the effect's deadline does that.
 
-## What the compiler tells you
+## It's English, but it isn't ambiguous
 
-Rules are written in controlled English: a fixed set of sentence patterns, each with exactly one meaning, read by an ordinary parser. For every rule, `suture build` prints the formula it understood, a paraphrase, and what checking it costs, so you can see that it read what you meant:
+Rules are written in controlled English: a fixed set of sentence patterns, each with exactly one meaning, read by an ordinary parser. No model is involved in compiling. For every rule, `suture build` prints the formula it understood, a paraphrase, and what checking it costs, so you and the person who owns the policy can both check that it reads what you meant:
 
 ```text
 rule seats: the total quantity taken from each Session is at most its seats
@@ -94,9 +114,9 @@ rule early: no Booking has a Ticket that is sent unless it is paid
   cost:            local
 ```
 
-It also lists every choice the program leaves open, such as which session a ticket takes, with who decides it. A sentence it cannot read gets the closest pattern it knows, with the line.
+The build also lists every choice the program leaves open and who decides it, and warns about anything that could wait forever. A sentence it can't read gets the closest pattern it knows, as a suggestion that compiles. An editor language server (`suture lsp`) gives you these as you type.
 
-## What the runtime shows you
+## Tests read like the spec
 
 Scenarios are written in the same style, and `suture run` prints every step the runtime took:
 
@@ -121,45 +141,26 @@ scenario "a fan books two seats"
   passed
 ```
 
-`suture explain` says where one entity stands and why: what it waits on, which rule holds it, and what is due when.
+Time is simulated (`when 3 days pass`, `when it is 2026-03-01`), providers are scripted (`when payments answers declined`), and every run is deterministic. No mocks, no sleeps, and no flaky tests.
+
+## AI that can't break your rules
+
+Suture never prompts a model and never generates code. Models are optional. When you use them, they do two narrow jobs:
+
+- **Decide.** A program is full of small choices the rules leave open: which carrier, which garage, repair or write-off. `decide Outcome with model "assessor@1"` hands one to a decision model. The model is given only the options the rules already allow, and its pick is checked again. If it declines, is late, is unsure or fails, `prefer` picks by fixed criteria, and the trace says why.
+- **Read.** `source Claim's amount via model "invoices@1"` reads a value off a document or a photo, with a minimum confidence and a fallback.
+
+Every model answer is journaled, so replay never calls a model. With every model switched off, the system still runs. That makes Suture a governed runtime for AI decisions: a model can be wrong, but it can't take you past a limit, skip an approval or pay twice. See [chapter 15](docs/guide/15-decision-models.md) and [chapter 14](docs/guide/14-sourcing.md).
 
 ## What it guarantees
 
-- **Rules hold.** Every change is checked against the rules before it happens. A step that would break one waits, or is refused, and the trace names the rule.
-- **Same inputs, same result.** Every input, answer, timer and choice is journaled. Replaying a journal rebuilds exactly the same state, and a journal does not replay under a changed program.
+- **Rules hold.** Every change is checked against the rules before it happens. A step that would break one waits or is refused, and the trace names the rule.
+- **Same inputs, same result.** Every input, answer, timer and choice is journaled. Replaying a journal rebuilds exactly the same state, and a journal won't replay under a changed program.
 - **Only admitted inputs.** Callers have roles, and each `admit` says who may create, change or cancel what.
-- **No AI needed.** Every open choice has a deterministic default (`prefer`). Decision models are optional, and they only ever pick among options the rules already allow.
+- **Data goes only where you allow it.** `secret` and `personal` fields reach only the adapters granted them, and `suture build` writes a manifest of what each adapter receives.
+- **Safe deploys.** `suture deploy` checks a new version against the live units before it starts.
 
-## The language, construct by construct
-
-| Construct | Says |
-|---|---|
-| `kind` | what exists, with typed attributes, defaults and formulas |
-| `needs`, slots | what each thing needs, under conditions; or one of several alternatives, tried in order with patience |
-| `uses … taking` | a binding to a shared entity, such as stock, seats or a carrier, picked from a pool and checked by its rules |
-| `effect` | how a step talks to an outside service: what it sends, what it may report, and its deadline |
-| `rule` | what must always hold, per entity, per group, or per period |
-| `define`, `desired` | named states, and the goals to reach within a deadline, with alerts when they are missed |
-| `when` | reactions to outcomes and admitted events |
-| `admit`, `role` | who may do what |
-| `source` | facts fetched from outside when a rule needs them, with how long they are trusted and what to do when the fetch fails |
-| `decide … with model` | which decision model, if any, makes an open choice, at app, workflow, step, choice or condition level |
-
-## Decision models
-
-A program is full of small choices the rules leave open: which carrier, which stock, which delivery method, which credit bureau to ask. `prefer` makes them by fixed criteria. A `decide` can hand a choice to a decision model instead:
-
-```text
-decide Carrier with model "carriers@1"
-decide Return with model "routing@1" within 300 milliseconds
-decide Carrier for Orders whose total is at least 1000 EUR with model "careful@1"
-```
-
-A model is given the options, best first under `prefer`, and picks one by name. Its pick is checked by the rules like any other. If it declines, is late, is unsure or fails, `prefer` picks, and the trace says why. Models are pinned by name and version in the compiled program, and every pick is journaled, so replay never calls a model.
-
-By default, models are reached through the [Jev](https://docs.typesafe.ai/api) decision API. A custom JSON format, or any Rust backend, adapts other services. Backends are configured in a `models.json` beside the program, and the key is read from an environment variable. See [chapter 15](docs/guide/15-decision-models.md).
-
-## Try it
+## Try it in two minutes
 
 With Rust 1.85 or later:
 
@@ -174,7 +175,7 @@ target/release/suture explain examples/shop --scenario examples/shop/orders.scen
 target/release/suture serve   examples/tickets --listen 127.0.0.1:7878
 ```
 
-`suture serve` takes inputs over HTTP and keeps its log in `examples/tickets/.suture`; [chapter 17](docs/guide/17-serving.md) walks through a session with `curl`.
+`suture serve` takes inputs over HTTP and keeps its log in `examples/tickets/.suture`; [chapter 17](docs/guide/17-serving.md) walks through a session with `curl`. A [Dockerfile and Kubernetes manifests](docs/guide/22-containers.md) run it as pods sharing one log.
 
 | Example | Shows |
 |---|---|
@@ -183,28 +184,61 @@ target/release/suture serve   examples/tickets --listen 127.0.0.1:7878
 | [`workspaces`](examples/workspaces) | multi-tenant workspace provisioning |
 | [`credit`](examples/credit) | a credit check fetched from a bureau, trusted for a day, with a fallback |
 | [`returns`](examples/returns) | a decision model picking how a return is handled, with `prefer` behind it |
+| [`eval/leave`](eval/leave/suture), [`eval/returns`](eval/returns), [`eval/claims`](eval/claims) | the three measured ports above |
+
+## Where Suture fits
+
+Suture is not infrastructure, and it doesn't replace your databases or providers. It replaces the coordinating code in the middle: the services written to sequence steps, call providers, retry, compensate, check permissions and keep state per entity.
+
+![Suture runs as pods in a Kubernetes cluster that Terraform provisions. Its runtime pods sit in the middle and link every other pod: platform services, your services and adapters, the ingress, and decision models served by vLLM or SGLang on a GPU node pool](docs/architecture.svg)
+
+| Around Suture | Runs as | Linked by |
+|---|---|---|
+| callers: apps, staff tools, partner systems | outside, through the ingress | `admit`: only admitted inputs get in |
+| platform services: PostgreSQL, Redis, Vault, Prometheus | pods | `source` for facts; API keys from environment variables; metrics and alerts out |
+| your services, and adapters to payment, mail and carrier providers | pods, which call out | `effect`, with a deadline and the outcomes it may report |
+| decision and reading models | vLLM or SGLang pods on GPU nodes, or a hosted API | `decide` and `source … via model` |
+
+It's a good fit for workflows with many steps, outside services, shared resources and rules that must never break: bookings, orders and returns, claims, approvals, provisioning, rostering. It's a poor fit for heavy computation, UIs, or code that is mostly algorithms.
+
+## The language, construct by construct
+
+| Construct | Says |
+|---|---|
+| `kind` | what exists, with typed attributes, states, defaults and formulas |
+| `needs`, slots | what each thing needs, under conditions; or one of several alternatives, tried in order with patience |
+| `uses … taking` | a binding to a shared entity, such as stock, seats or a carrier, picked from a pool and checked by its rules |
+| `effect` | how a step talks to an outside service: what it sends, what it may report, and its deadline |
+| `rule` | what must always hold: per entity, per group, per period, or per day an entity spans |
+| `define`, `desired` | named states, and the goals to reach within a deadline, with alerts when they are missed |
+| `when` | reactions to outcomes and admitted events |
+| `admit`, `role` | who may do what |
+| `source` | facts fetched from outside, or read off a document by a model, with how long they are trusted and what to do when the fetch fails |
+| `decide … with model` | which decision model, if any, makes an open choice |
+| `keep` | a running total kept for dashboards and tests |
 
 ## Learn it
 
-**[The Suture guide](docs/guide/README.md)** is the place to start: a tutorial, one chapter per construct, modelling patterns, the limits of v0, and a quick reference. Every program, error and scenario in it is compiled and run by the test suite.
+**[The Suture guide](docs/guide/README.md)** is the place to start: a tutorial, one chapter per construct, modelling patterns, the limits of v0, and a [one-page reference](docs/guide/reference.md). Every program, error and scenario in it is compiled and run by the test suite.
 
-The design is in the [language spec](docs/superpowers/specs/2026-10-14-suture-language-design.md). Its appendices B to P describe each prototype slice.
+The design is in the [language spec](docs/superpowers/specs/2026-10-14-suture-language-design.md). Its appendices describe each prototype slice, and what each one still leaves open.
 
 ## Inside
 
 ```text
 src/        the kernel: an interaction-net machine with a journal, replay and explanations
-lang/       the compiler: lexer, controlled-English parser, checker, read-backs, suggestions
+lang/       the compiler: lexer, controlled-English parser, checker, read-backs, suggestions, LSP
 runtime/    the interpreter and host: units, needs, rules, deadlines, shared entities,
             sources, choice points, model backends, and the service (log, HTTP API,
-            adapters, clock), on top of the kernel
-cli/        the `suture` command: build, run, explain, serve
+            adapters, clock, pods), on top of the kernel
+cli/        the `suture` command: build, run, explain, serve, deploy, lsp
+eval/       the three measured ports, with their counting scripts
 docs/       the guide, the spec, the kernel IR (ir-spec.md), and research notes
 examples/   the example systems above
 ```
 
 ```sh
-cargo test --workspace     # compiler, runtime, guide, examples, replay
+cargo test --workspace     # compiler, runtime, guide, examples, evals, replay
 ```
 
 Each running entity, with everything it owns, is one agent on the kernel. Messages between them, outside answers, timers and model picks all enter through the journal, which is why a run can be replayed and explained step by step. The kernel's design is in [`docs/ir-spec.md`](docs/ir-spec.md). The research notes Suture grew from are in [`docs/design-notes.md`](docs/design-notes.md).
