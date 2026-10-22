@@ -47,6 +47,7 @@ fn choice() -> Choice {
         ],
         currency: "EUR".into(),
         media: Default::default(),
+        sure: None,
     }
 }
 
@@ -216,3 +217,22 @@ fn models_json_sets_how_media_is_sent() {
     let e = backend::load(r#"{"a@1": {"media": "all"}}"#, || Box::new(Fake::new(Ok(json!({}))))).err().unwrap();
     assert!(e.contains("`media` is \"inline\" or \"omit\""), "{e}");
 }
+
+#[test]
+fn the_programs_bound_holds_with_the_backends_own_minimum() {
+    // The stricter of `min_confidence` and `at least … sure` applies (appendix AK.2.2).
+    let mut j = Jev::new(Box::new(Fake::new(Ok(jev_answer("Fast", 0.7)))));
+    j.key_env = None;
+    j.min_confidence = Some(0.5);
+    assert_eq!(j.decide(&choice(), Duration::from_secs(1)), Answer::Picked("Fast".into()));
+    let bounded = Choice { sure: Some(0.8), ..choice() };
+    assert_eq!(j.decide(&bounded, Duration::from_secs(1)), Answer::Unsure(0.7));
+    j.min_confidence = Some(0.9);
+    assert_eq!(j.decide(&bounded, Duration::from_secs(1)), Answer::Unsure(0.7));
+    // A function model gives no confidence, so a bounded choice does not use it.
+    let mut m = suture_runtime::choice::Models::default();
+    m.register("f@1", Box::new(|_: &Choice| Some("Fast".into())));
+    assert_eq!(m.ask("f@1", &choice(), 1000), Answer::Picked("Fast".into()));
+    assert_eq!(m.ask("f@1", &bounded, 1000), Answer::Failed("it gave no confidence, and the program needs at least 0.8 sure".into()));
+}
+

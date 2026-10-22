@@ -9,7 +9,7 @@ use std::time::Duration;
 use base64::Engine;
 use serde_json::{json, Map, Value};
 
-use crate::choice::{Answer, Backend, Choice, Reading};
+use crate::choice::{confident, Answer, Backend, Choice, Reading};
 use crate::state::Val;
 use suture_lang::ir::Ty;
 
@@ -203,12 +203,6 @@ fn key_from(env: Option<&str>) -> Result<Option<String>, String> {
     }
 }
 
-fn confident(pick: String, confidence: Option<f64>, min: Option<f64>) -> Answer {
-    match (confidence, min) {
-        (Some(c), Some(m)) if c < m => Answer::Unsure(c),
-        _ => Answer::Picked(pick),
-    }
-}
 
 /// The Jev decision API: one `choice` question whose criteria are the options.
 pub struct Jev {
@@ -272,9 +266,14 @@ impl Jev {
 
     /// Reads `answers.pick.choice` and `answers.pick.confidence`.
     pub fn read(&self, answer: &Value) -> Answer {
+        self.read_bounded(answer, None)
+    }
+
+    /// [`Jev::read`], held to the program's `at least … sure` too (appendix AK).
+    pub fn read_bounded(&self, answer: &Value, sure: Option<f64>) -> Answer {
         let q = &answer["answers"]["pick"];
         let Some(pick) = q["choice"].as_str() else { return Answer::Failed("no answers.pick.choice in the answer".into()) };
-        confident(pick.to_string(), q["confidence"].as_f64(), self.min_confidence)
+        confident(pick.to_string(), q["confidence"].as_f64(), self.min_confidence, sure)
     }
 }
 
@@ -289,7 +288,7 @@ impl Backend for Jev {
         };
         let body = self.request(c);
         match self.transport.post(&self.url, key.as_deref(), &body, within) {
-            Ok(v) => self.read(&v),
+            Ok(v) => self.read_bounded(&v, c.sure),
             Err(e) if e == TIMED_OUT => Answer::Late,
             Err(e) => Answer::Failed(e),
         }
@@ -326,6 +325,11 @@ impl Custom {
     }
 
     pub fn read(&self, answer: &Value) -> Answer {
+        self.read_bounded(answer, None)
+    }
+
+    /// [`Custom::read`], held to the program's `at least … sure` too (appendix AK).
+    pub fn read_bounded(&self, answer: &Value, sure: Option<f64>) -> Answer {
         if self.pick.is_empty() {
             return Answer::Failed("this model reads values; it has no `pick` pointer".into());
         }
@@ -333,7 +337,7 @@ impl Custom {
             return Answer::Failed(format!("no text at {} in the answer", self.pick));
         };
         let confidence = self.confidence.as_deref().and_then(|p| answer.pointer(p)).and_then(Value::as_f64);
-        confident(pick.to_string(), confidence, self.min_confidence)
+        confident(pick.to_string(), confidence, self.min_confidence, sure)
     }
 }
 
@@ -348,7 +352,7 @@ impl Backend for Custom {
         };
         let body = self.request(c);
         match self.transport.post(&self.url, key.as_deref(), &body, within) {
-            Ok(v) => self.read(&v),
+            Ok(v) => self.read_bounded(&v, c.sure),
             Err(e) if e == TIMED_OUT => Answer::Late,
             Err(e) => Answer::Failed(e),
         }

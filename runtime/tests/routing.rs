@@ -206,3 +206,78 @@ fn a_routed_decide_names_two_or_more_models_once_and_ends_with_its_router() {
     );
     assert_eq!(errors(&two), ["t.st:10: a model's `within` is from 1 millisecond to 10 minutes"]);
 }
+
+#[test]
+fn a_bound_in_the_program_holds_for_the_candidates_and_the_router() {
+    // Slice 35: `at least … sure` on a `decide` (spec appendix AK).
+    let src = SHOP.replace(
+        "or prefer within 2 seconds, picked by model \"router@1\" within 100 milliseconds",
+        "or prefer within 2 seconds at least 0.8 sure, picked by model \"router@1\" within 100 milliseconds at least 0.7 sure",
+    );
+    let p = prog(&src);
+    assert_eq!(
+        p.decisions[0].handler(),
+        "model \"cheapest@1\" or model \"dearest@1\" or `prefer` within 2000 ms at least 0.8 sure, picked by model \"router@1\" within 100 ms at least 0.7 sure"
+    );
+    let r = passes(
+        &p,
+        &format!(
+            "{WORLD}  when   model \"router@1\" picks \"dearest@1\" at 0.9
+  and    model \"dearest@1\" picks Fast at 0.95
+  and    staff Sam places a new Order O1 with product K and zone EU
+"
+        ),
+    );
+    assert!(has(&r, "choice: Fast for O1/Shipment#1@Carrier by model \"dearest@1\""), "{}", r.host.trace.join("\n"));
+    // An unsure router leaves the choice to the first candidate, and an
+    // unsure candidate to `prefer`.
+    let r = passes(
+        &p,
+        &format!(
+            "{WORLD}  when   model \"router@1\" picks \"dearest@1\" at 0.6
+  and    model \"cheapest@1\" picks Fast at 0.5
+  and    staff Sam places a new Order O1 with product K and zone EU
+"
+        ),
+    );
+    assert!(has(&r, "model for O1/Shipment#1@Carrier: cheapest@1 by prefer (model \"router@1\" was unsure, at 0.60)"), "{}", r.host.trace.join("\n"));
+    assert!(has(&r, "choice: Cheap for O1/Shipment#1@Carrier by prefer (model \"cheapest@1\" was unsure, at 0.50)"), "{}", r.host.trace.join("\n"));
+    // With a bound, a pick that gives no confidence is not used.
+    let r = passes(
+        &p,
+        &format!(
+            "{WORLD}  when   model \"router@1\" picks \"dearest@1\" at 0.9
+  and    model \"dearest@1\" picks Fast
+  and    staff Sam places a new Order O1 with product K and zone EU
+"
+        ),
+    );
+    assert!(
+        has(&r, "choice: Cheap for O1/Shipment#1@Carrier by prefer (model \"dearest@1\" failed: it gave no confidence, and the program needs at least 0.8 sure)"),
+        "{}",
+        r.host.trace.join("\n")
+    );
+}
+
+#[test]
+fn a_single_model_and_a_slot_take_a_bound_too() {
+    let src = CLAIM.replace(
+        "decide Outcome with model \"fast@1\" or model \"careful@1\", picked by model \"router@1\"",
+        "decide Outcome with model \"careful@1\" at least 0.9 sure",
+    );
+    let p = prog(&src);
+    let r = passes(
+        &p,
+        "  when   model \"careful@1\" picks Writeoff at 0.8
+  and    staff Sam files a new Claim C1 with note \"roof\"
+  expect C1 has a Repair
+",
+    );
+    assert!(has(&r, "choice: Repair for C1?Outcome#1 by prefer (model \"careful@1\" was unsure, at 0.80)"), "{}", r.host.trace.join("\n"));
+    let prefer = CLAIM.replace(
+        "decide Outcome with model \"fast@1\" or model \"careful@1\", picked by model \"router@1\"",
+        "decide Outcome with prefer at least 0.9 sure",
+    );
+    assert_eq!(errors(&prefer), ["t.st:9: `with prefer` answers at once; `at least … sure` bounds a model's answer"]);
+}
+

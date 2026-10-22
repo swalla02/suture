@@ -194,7 +194,7 @@ fn workers_ai_sends_a_typed_field_and_the_image_and_reads_the_answer() {
     assert_eq!(w.extract(&reading(Ty::Time), within), Answer::Read(Val::Time(at), Some(0.99)));
     assert_eq!(f.sent.borrow()[0].2["fields"]["estimate"]["type"], "datetime");
     // Workers AI reads; it does not pick.
-    let c = suture_runtime::choice::Choice { point: "x".into(), unit: "C1".into(), key: "k".into(), chooser: "Claim".into(), facts: vec![], options: vec![], currency: "EUR".into(), media: Default::default() };
+    let c = suture_runtime::choice::Choice { point: "x".into(), unit: "C1".into(), key: "k".into(), chooser: "Claim".into(), facts: vec![], options: vec![], currency: "EUR".into(), media: Default::default(), sure: None };
     assert!(matches!(w.decide(&c, within), Answer::Failed(_)));
 }
 

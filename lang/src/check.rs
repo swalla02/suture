@@ -1749,7 +1749,7 @@ impl Checker {
                     continue;
                 }
             }
-            let named = d.model.iter().chain(d.or.iter().flatten()).chain(d.router.iter().map(|(r, _)| r));
+            let named = d.model.iter().chain(d.or.iter().flatten()).chain(d.router.iter().map(|(r, _, _)| r));
             if let Some(m) = named.clone().find(|m| !m.split_once('@').is_some_and(|(n, v)| !n.is_empty() && !v.is_empty() && !v.contains('@'))) {
                 self.errors.push(err(&d.at, format!("a model is named `name@version`, as in \"{m}@1\"")));
                 continue;
@@ -1778,19 +1778,19 @@ impl Checker {
                 continue;
             }
             let route = match &d.router {
-                Some((router, within)) => {
+                Some((router, within, sure)) => {
                     let within = within.unwrap_or(1000);
                     if !(1..=MAX_WITHIN_MS).contains(&within) {
                         self.errors.push(err(&d.at, format!("a model's `within` is from 1 millisecond to {} minutes", MAX_WITHIN_MS / 60_000)));
                         continue;
                     }
-                    Some(ir::Route { router: router.clone(), within_ms: within, among })
+                    Some(ir::Route { router: router.clone(), within_ms: within, among, sure: *sure })
                 }
                 None => None,
             };
             // Only a decision that compiled is compared for ties below.
             kept.push((p.decisions.len(), d));
-            p.decisions.push(Decision { point: d.point.clone(), scope, cond, model: d.model.clone(), scope_text, within_ms, route, source: d.source.clone() });
+            p.decisions.push(Decision { point: d.point.clone(), scope, cond, model: d.model.clone(), scope_text, within_ms, route, sure: d.sure, source: d.source.clone() });
         }
         // Two that can both decide one choice, at the same rank (J.2.3).
         let mut seen = vec![];

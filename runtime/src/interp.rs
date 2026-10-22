@@ -1421,10 +1421,11 @@ fn fill(prog: &Program, u: &mut Unit, at: &[usize], slot: &str, alt: &str, why: 
 }
 
 /// The model a choice `h` handles is put to first, its deadline, and, for a
-/// routed choice, the decision's index, by which the host finds its candidates
-/// (appendix AJ.2.2). `None` for `prefer`.
+/// routed or bounded choice, the decision's index, by which the host finds
+/// its candidates and bounds (appendix AJ.2.2, AK.2.2). `None` for `prefer`.
 fn asked_by(prog: &Program, h: &suture_lang::ir::Decision) -> Option<(String, u64, Option<usize>)> {
-    let route = h.route.as_ref().and_then(|_| prog.decisions.iter().position(|d| std::ptr::eq(d, h)));
+    let named = h.route.is_some() || h.sure.is_some();
+    let route = named.then(|| prog.decisions.iter().position(|d| std::ptr::eq(d, h))).flatten();
     Some((h.asked()?.to_string(), h.within_ms, route))
 }
 

@@ -119,6 +119,10 @@ pub struct Decision {
     /// With a router, `model` is the first candidate (appendix AJ).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub route: Option<Route>,
+    /// `at least 0.8 sure`, in thousandths: below it a pick is not used, in
+    /// every deployment (appendix AK).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sure: Option<u16>,
     pub source: String,
 }
 
@@ -131,6 +135,8 @@ pub struct Route {
     pub within_ms: u64,
     /// Every candidate, first first; `None` is `prefer`.
     pub among: Vec<Option<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sure: Option<u16>,
 }
 
 /// A router's name for a candidate: the model's, or `prefer`.
@@ -145,16 +151,20 @@ impl Decision {
             Some(m) => format!("model \"{m}\""),
             None => "`prefer`".to_string(),
         };
-        let within = |ms: u64| if ms != 1000 { format!(" within {ms} ms") } else { String::new() };
+        let within = |ms: u64, sure: Option<u16>| {
+            let w = if ms != 1000 { format!(" within {ms} ms") } else { String::new() };
+            let s = sure.map_or_else(String::new, |t| format!(" at least {} sure", f64::from(t) / 1000.0));
+            format!("{w}{s}")
+        };
         match (&self.route, &self.model) {
             (Some(r), _) => format!(
                 "{}{}, picked by model \"{}\"{}",
                 r.among.iter().map(one).collect::<Vec<_>>().join(" or "),
-                within(self.within_ms),
+                within(self.within_ms, self.sure),
                 r.router,
-                within(r.within_ms)
+                within(r.within_ms, r.sure)
             ),
-            (None, Some(_)) => format!("{}{}", one(&self.model), within(self.within_ms)),
+            (None, Some(_)) => format!("{}{}", one(&self.model), within(self.within_ms, self.sure)),
             (None, None) => one(&None),
         }
     }

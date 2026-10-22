@@ -475,20 +475,8 @@ fn source(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
             c.next();
             c.expect_end()?;
         } else if model && c.is_word("at") {
-            // `at least 0.8 sure`
-            c.next();
-            c.expect_word("least")?;
-            let bound = match c.peek() {
-                Some(Tok::Num(n)) => n.parse::<f64>().ok().filter(|x| (0.0..=1.0).contains(x)).map(|x| (x * 1000.0).round() as u16),
-                _ => None,
-            };
-            let Some(bound) = bound else {
-                return Err(c.error(format!("expected a confidence from 0 to 1, as in `at least 0.8 sure`, found {}", c.found())));
-            };
-            c.next();
-            c.expect_word("sure")?;
+            sure = at_least_sure(&mut c, true)?;
             c.expect_end()?;
-            sure = Some(bound);
         } else if c.eat_word("good") {
             c.expect_word("for")?;
             good_for = Some(duration(&mut c)?);
@@ -724,14 +712,17 @@ fn decide(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     while c.eat_word("or") {
         or.push(handler_model(&mut c)?);
     }
-    let within_ms = within(&mut c, model.is_some() || or.iter().any(Option::is_some))?;
+    let asks = model.is_some() || or.iter().any(Option::is_some);
+    let within_ms = within(&mut c, asks)?;
+    let sure = at_least_sure(&mut c, asks)?;
     // `, picked by model "router@1"`: a model picks the model (appendix AJ).
     let router = if c.eat_sym(',') {
         c.expect_word("picked")?;
         c.expect_word("by")?;
         c.expect_word("model")?;
         let r = quoted_model(&mut c)?;
-        Some((r, within(&mut c, true)?))
+        let within = within(&mut c, true)?;
+        Some((r, within, at_least_sure(&mut c, true)?))
     } else {
         None
     };
@@ -742,8 +733,31 @@ fn decide(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     if or.is_empty() && router.is_some() {
         return Err(c.error("`picked by` picks among models: name two or more, as in `with model \"fast@1\" or model \"careful@1\", picked by model \"router@1\"`"));
     }
-    out.decides.push(DecideDecl { point, scope, cond, model, within_ms, or, router, source: text(&toks), at });
+    out.decides.push(DecideDecl { point, scope, cond, model, within_ms, sure, or, router, source: text(&toks), at });
     Ok(())
+}
+
+/// `at least 0.8 sure`, in thousandths: the confidence below which a model's
+/// answer is not used (appendix AF.2.1, AK.2.1). Only after a model (`asks`).
+fn at_least_sure(c: &mut Cursor, asks: bool) -> Result<Option<u16>, Error> {
+    if !c.is_word("at") {
+        return Ok(None);
+    }
+    if !asks {
+        return Err(c.error("`with prefer` answers at once; `at least … sure` bounds a model's answer"));
+    }
+    c.next();
+    c.expect_word("least")?;
+    let bound = match c.peek() {
+        Some(Tok::Num(n)) => n.parse::<f64>().ok().filter(|x| (0.0..=1.0).contains(x)).map(|x| (x * 1000.0).round() as u16),
+        _ => None,
+    };
+    let Some(bound) = bound else {
+        return Err(c.error(format!("expected a confidence from 0 to 1, as in `at least 0.8 sure`, found {}", c.found())));
+    };
+    c.next();
+    c.expect_word("sure")?;
+    Ok(Some(bound))
 }
 
 /// `model "carriers@1"`, or `prefer`: `None`.

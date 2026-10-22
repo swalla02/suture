@@ -41,6 +41,9 @@ pub struct Choice {
     /// The content of the media among the facts and the options, by hash,
     /// as far as the store has it (appendix V.2.3).
     pub media: BTreeMap<String, crate::media::Blob>,
+    /// The program's `at least … sure`: below it, and with no confidence, a
+    /// pick is not used, whatever the backend's own minimum (appendix AK).
+    pub sure: Option<f64>,
 }
 
 impl Choice {
@@ -109,14 +112,30 @@ struct Func(Model);
 
 impl Backend for Func {
     fn decide(&mut self, c: &Choice, _: Duration) -> Answer {
-        (self.0)(c).map_or(Answer::Declined, Answer::Picked)
+        (self.0)(c).map_or(Answer::Declined, |p| confident(p, None, None, c.sure))
+    }
+}
+
+/// A pick with its confidence, held to the stricter of a backend's
+/// `min_confidence` and the program's `at least … sure`. Under the program's
+/// bound, a pick with no confidence is not used (appendix AK.2.2).
+pub fn confident(pick: String, confidence: Option<f64>, min: Option<f64>, sure: Option<f64>) -> Answer {
+    let bound = match (min, sure) {
+        (Some(m), Some(s)) => Some(m.max(s)),
+        (m, s) => m.or(s),
+    };
+    match (confidence, bound) {
+        (None, _) if let Some(s) = sure => Answer::Failed(format!("it gave no confidence, and the program needs at least {s} sure")),
+        (Some(c), Some(b)) if c < b => Answer::Unsure(c),
+        _ => Answer::Picked(pick),
     }
 }
 
 /// A scripted stand-in's next answer (appendix K.1).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Scripted {
-    Pick(String),
+    /// A pick, with its confidence in thousandths if it gives one (appendix AK).
+    Pick(String, Option<u16>),
     Decline,
     Late,
     /// A value read, with its confidence if it gives one (appendix AF).
@@ -158,7 +177,7 @@ impl Models {
 
     /// Queues picks for a stand-in: each choice it handles takes the next.
     pub fn script(&mut self, name: &str, picks: impl IntoIterator<Item = String>) {
-        self.answers(name, picks.into_iter().map(Scripted::Pick));
+        self.answers(name, picks.into_iter().map(|p| Scripted::Pick(p, None)));
     }
 
     /// Queues a stand-in's answers: picks, declines and late answers.
@@ -171,7 +190,7 @@ impl Models {
     pub fn ask(&mut self, name: &str, c: &Choice, within_ms: u64) -> Answer {
         let within = Duration::from_millis(within_ms);
         match self.scripted.get_mut(name).and_then(VecDeque::pop_front) {
-            Some(Scripted::Pick(p)) => return Answer::Picked(p),
+            Some(Scripted::Pick(p, sure)) => return confident(p, sure.map(|t| f64::from(t) / 1000.0), None, c.sure),
             Some(Scripted::Late) => return Answer::Late,
             Some(Scripted::Decline) => return Answer::Declined,
             Some(Scripted::Read(..)) => return Answer::Failed("it was scripted to read a value, not to pick".into()),
@@ -192,7 +211,7 @@ impl Models {
             Some(Scripted::Read(v, c)) => return Answer::Read(v, c.map(|t| f64::from(t) / 1000.0)),
             Some(Scripted::Late) => return Answer::Late,
             Some(Scripted::Decline) => return Answer::Declined,
-            Some(Scripted::Pick(p)) => return Answer::Failed(format!("it was scripted to pick {p}, not to read a value")),
+            Some(Scripted::Pick(p, _)) => return Answer::Failed(format!("it was scripted to pick {p}, not to read a value")),
             None => {}
         }
         if let Some(b) = self.backends.get_mut(name) {

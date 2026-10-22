@@ -133,8 +133,14 @@ fn routing_choice(c: &Choice, r: &Route) -> Choice {
         point: format!("{}?model", c.point),
         key: format!("{}?model", c.key),
         options: r.among.iter().map(|m| Option_ { label: candidate(m), attrs: vec![] }).collect(),
+        sure: r.sure.map(thousandths),
         ..c.clone()
     }
+}
+
+/// A confidence in thousandths, as a fraction.
+fn thousandths(t: u16) -> f64 {
+    f64::from(t) / 1000.0
 }
 
 /// A pool key as the host indexes it.
@@ -498,8 +504,8 @@ impl Host {
         let options = self.options(u, d, key);
         let first = options.first()?.label.clone();
         // With one option there is no choice, and no model is asked (appendix K.2.2).
-        let model = interp::handler(&prog, u, d).and_then(|h| Some((h.asked()?.to_string(), h.within_ms, h.route.clone()))).filter(|_| options.len() > 1);
-        let Some((model, within, route)) = model else { return Some(Gathered::Pick(first, String::new())) };
+        let model = interp::handler(&prog, u, d).and_then(|h| Some((h.asked()?.to_string(), h.within_ms, h.route.clone(), h.sure))).filter(|_| options.len() > 1);
+        let Some((model, within, route, sure)) = model else { return Some(Gathered::Pick(first, String::new())) };
         let (chooser, facts) = interp::chooser(&prog, u, d).unwrap_or_default();
         let choice = Choice {
             point: b.target.clone(),
@@ -510,6 +516,7 @@ impl Host {
             options: options.iter().map(|o| Option_ { label: o.label.clone(), attrs: unmarked(&prog, o.root.attrs.clone().into_iter().collect()) }).collect(),
             currency: prog.currency.clone(),
             media: BTreeMap::new(),
+            sure: sure.map(thousandths),
         };
         if self.defer_models {
             self.defer_routed(model, route, choice, within, Chooses::Bind { hole, decide: d.clone(), pool: key.to_string() });
@@ -668,7 +675,8 @@ impl Host {
         };
         let sent = |name: &str| ask.sends.iter().find(|(n, _)| n == name).and_then(|(_, v)| if let Val::Count(x) = v { usize::try_from(*x).ok() } else { None });
         let within = sent("within").unwrap_or(0) as u64;
-        let route = sent("decision").and_then(|i| self.prog.decisions.get(i)).and_then(|d| d.route.clone());
+        let decision = sent("decision").and_then(|i| self.prog.decisions.get(i));
+        let (route, sure) = (decision.and_then(|d| d.route.clone()), decision.and_then(|d| d.sure));
         let c = Choice {
             point: ask.kind.clone(),
             unit: ask.label.clone(),
@@ -678,6 +686,7 @@ impl Host {
             options: options.iter().map(|o| Option_ { label: o.clone(), attrs: vec![] }).collect(),
             currency: self.prog.currency.clone(),
             media: BTreeMap::new(),
+            sure: sure.map(thousandths),
         };
         if self.defer_models {
             self.defer_routed(ask.adapter.clone(), route, c, within, Chooses::Ask { hole, ask: ask.clone() });

@@ -18,7 +18,8 @@ pub struct Scenario {
 /// A scripted model's answer in a scenario.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ModelAnswer {
-    Pick(String),
+    /// `picks Fast [at 0.9]`, with its confidence in thousandths (appendix AK.2.3).
+    Pick(String, Option<u16>),
     Decline,
     Late,
     /// `reads 1200 EUR [at 0.4]`: a value, with its confidence in thousandths (appendix AF).
@@ -189,18 +190,21 @@ fn step(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {
         } else {
             c.expect_word("picks")?;
             // A router picks a model by its quoted name (appendix AJ.2.4).
-            let pick = |c: &mut Cursor| match c.peek() {
-                Some(Tok::Str(m)) => {
-                    let m = m.clone();
-                    c.next();
-                    Ok(m)
-                }
-                _ => c.word(),
+            let pick = |c: &mut Cursor| -> Result<ModelAnswer, Error> {
+                let name = match c.peek() {
+                    Some(Tok::Str(m)) => {
+                        let m = m.clone();
+                        c.next();
+                        m
+                    }
+                    _ => c.word()?,
+                };
+                Ok(ModelAnswer::Pick(name, confidence(c)?))
             };
-            let mut picks = vec![ModelAnswer::Pick(pick(c)?)];
+            let mut picks = vec![pick(c)?];
             while c.eat_sym(',') {
                 c.expect_word("then")?;
-                picks.push(ModelAnswer::Pick(pick(c)?));
+                picks.push(pick(c)?);
             }
             picks
         };
@@ -278,18 +282,21 @@ fn read(c: &mut Cursor) -> Result<ModelAnswer, Error> {
     let Some(value) = literal(c)? else {
         return Err(c.error(format!("expected the value the model reads, or `nothing`, found {}", c.found())));
     };
-    let sure = if c.eat_word("at") {
-        let sure = match c.peek() {
-            Some(Tok::Num(n)) => n.parse::<f64>().ok().filter(|x| (0.0..=1.0).contains(x)).map(|x| (x * 1000.0).round() as u16),
-            _ => None,
-        };
-        let Some(sure) = sure else { return Err(c.error(format!("expected a confidence from 0 to 1, as in `at 0.4`, found {}", c.found()))) };
-        c.next();
-        Some(sure)
-    } else {
-        None
+    Ok(ModelAnswer::Read(value, confidence(c)?))
+}
+
+/// `at 0.4` after a scripted answer, in thousandths.
+fn confidence(c: &mut Cursor) -> Result<Option<u16>, Error> {
+    if !c.eat_word("at") {
+        return Ok(None);
+    }
+    let sure = match c.peek() {
+        Some(Tok::Num(n)) => n.parse::<f64>().ok().filter(|x| (0.0..=1.0).contains(x)).map(|x| (x * 1000.0).round() as u16),
+        _ => None,
     };
-    Ok(ModelAnswer::Read(value, sure))
+    let Some(sure) = sure else { return Err(c.error(format!("expected a confidence from 0 to 1, as in `at 0.4`, found {}", c.found()))) };
+    c.next();
+    Ok(Some(sure))
 }
 
 fn refusal(c: &mut Cursor) -> Result<Option<Refused>, Error> {

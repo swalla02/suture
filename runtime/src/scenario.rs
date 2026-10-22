@@ -64,7 +64,7 @@ pub fn run_with(prog: &Program, sc: &Scenario, setup: impl FnOnce(&mut Host)) ->
                     .iter()
                     .map(|a| {
                         Ok(match a {
-                            ModelAnswer::Pick(p) => Scripted::Pick(p.clone()),
+                            ModelAnswer::Pick(p, sure) => Scripted::Pick(p.clone(), *sure),
                             ModelAnswer::Decline | ModelAnswer::Nothing => Scripted::Decline,
                             ModelAnswer::Late => Scripted::Late,
                             ModelAnswer::Read(l, sure) => Scripted::Read(values(prog, &mut host.media, &base, &[("value".into(), l.clone())])?.remove(0).1, *sure),
@@ -77,7 +77,8 @@ pub fn run_with(prog: &Program, sc: &Scenario, setup: impl FnOnce(&mut Host)) ->
                         .zip(answers)
                         .map(|(s, a)| match (s, a) {
                             (_, ModelAnswer::Nothing) => "read nothing".into(),
-                            (Scripted::Pick(p), _) => format!("pick {p}"),
+                            (Scripted::Pick(p, None), _) => format!("pick {p}"),
+                            (Scripted::Pick(p, Some(t)), _) => format!("pick {p} at {}", f64::from(*t) / 1000.0),
                             (Scripted::Decline, _) => "decline".into(),
                             (Scripted::Late, _) => "be late".into(),
                             (Scripted::Read(v, sure), _) => {

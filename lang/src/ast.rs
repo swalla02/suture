@@ -361,7 +361,10 @@ pub struct DecideDecl {
     /// [within …]`: the other candidates, `None` for `prefer`, and the
     /// model that picks among them (appendix AJ).
     pub or: Vec<Option<String>>,
-    pub router: Option<(String, Option<u64>)>,
+    /// `at least 0.8 sure`, in thousandths (appendix AK).
+    pub sure: Option<u16>,
+    /// The router, its `within` and its `at least … sure`.
+    pub router: Option<(String, Option<u64>, Option<u16>)>,
     pub source: String,
     pub at: Loc,
 }
