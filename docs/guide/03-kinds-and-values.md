@@ -100,6 +100,7 @@ Calculations use `+`, `-`, `*`, `/` (or `−`, `×`) and parentheses. `*` and `/
 | `Time + Duration`, `Time - Duration` | Time |
 | `Duration ± Duration`, `Duration * Count`, `Duration / Count` | Duration |
 | `the days from Time to Time` | Count: calendar days, both ends counted |
+| `the weekdays from Time to Time` | Count: the same, Monday to Friday only |
 
 Anything else is a compile error: you cannot add a Count to Money. Division rounds toward zero (to the cent for Money). An overflow or a division by zero makes the result unknown.
 
@@ -113,7 +114,9 @@ A `-` directly before an amount makes it negative, `-2.50 EUR`. Only amounts can
 kind Leave { employee: Employee, from: Time, to: Time, days: Count = the days from its from to its to }
 ```
 
-Each end is one value. `the days from its from to its to - 1` is one day fewer than the count. To count to a calculated time, put it in brackets: `the days from its from to (its to + 1 day)`. Holidays and half days are not counted yet.
+Each end is one value. `the days from its from to its to - 1` is one day fewer than the count. To count to a calculated time, put it in brackets: `the days from its from to (its to + 1 day)`.
+
+`the weekdays from its from to its to` counts the same way but only Mondays to Fridays, so a leave from Friday to Monday is 2 days and a weekend is 0. Holidays and half days are not counted yet.
 
 ## References
 

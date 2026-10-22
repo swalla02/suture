@@ -91,3 +91,27 @@ fn the_days_are_between_two_times() {
     assert_eq!(e.len(), 1, "{e:?}");
     assert!(e[0].contains("expected `to`"), "{e:?}");
 }
+
+#[test]
+fn the_weekdays_count_monday_to_friday() {
+    // 2026-01-05 is a Monday (appendix AW).
+    let src = LEAVE.replace("days: Count = the days from its from to its to", "days: Count = the weekdays from its from to its to");
+    let r = runs(
+        &src,
+        "  given  a Employee E with name Ann and allowed 100
+  when   staff Sam files a new Leave L1 with employee E, from 2026-01-05 and to 2026-01-11
+  and    staff Sam files a new Leave L2 with employee E, from 2026-01-09 and to 2026-01-12
+  and    staff Sam files a new Leave L3 with employee E, from 2026-01-01 and to 2026-12-31
+  and    staff Sam files a new Leave L4 with employee E, from 1969-12-29 and to 1970-01-04
+  and    staff Sam files a new Leave L5 with employee E, from 2026-01-10 and to 2026-01-11
+         is refused by rule ordered
+  expect L1's days is 5
+  expect L2's days is 2
+  expect L3's days is 261
+  expect L4's days is 5
+",
+    );
+    assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
+    let p = compiled(&src);
+    assert!(p.kinds.iter().any(|k| k.attrs.iter().any(|a| format!("{a:?}").contains("Weekdays"))));
+}

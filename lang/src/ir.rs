@@ -612,6 +612,9 @@ pub enum Arith {
     /// `the days from x to y`: how many calendar days, in UTC, from the
     /// left time's to the right's, both counted (appendix AN.2.1).
     Days,
+    /// `the weekdays from x to y`: the same, counting Monday to Friday only
+    /// (appendix AW).
+    Weekdays,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

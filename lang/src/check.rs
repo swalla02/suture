@@ -77,7 +77,7 @@ fn show_num(n: &ast::Num) -> String {
         ast::Num::Over { calc, list } => format!("the total of {} over {}", show_num(calc), show(list)),
         ast::Num::Taken { attr, from } => format!("the total {attr} taken from {}", show(from)),
         ast::Num::Run { of, .. } => format!("the days in a row of {}", show(of)),
-        ast::Num::Days { from, to } => format!("the days from {} to {}", show_num(from), show_num(to)),
+        ast::Num::Days { from, to, weekdays } => format!("the {} from {} to {}", if *weekdays { "weekdays" } else { "days" }, show_num(from), show_num(to)),
     }
 }
 
@@ -2602,7 +2602,7 @@ impl Checker {
                     }
                 }
             }
-            ast::Num::Days { from: x, to: y } => {
+            ast::Num::Days { from: x, to: y, weekdays } => {
                 let (l, lt) = self.num(p, at, from, x)?;
                 let (r, rt) = self.num(p, at, from, y)?;
                 if (lt, rt) != (Ty::Time, Ty::Time) {
@@ -2611,7 +2611,7 @@ impl Checker {
                     self.errors.push(err(at, format!("`{}` counts the days between two times, and `{what}` is a {ty:?}", show_num(n))));
                     return None;
                 }
-                Some((Num::Bin(Box::new(l), Arith::Days, Box::new(r)), Ty::Count))
+                Some((Num::Bin(Box::new(l), if *weekdays { Arith::Weekdays } else { Arith::Days }, Box::new(r)), Ty::Count))
             }
             ast::Num::Bin(x, op, y) => {
                 let (l, lt) = self.num(p, at, from, x)?;

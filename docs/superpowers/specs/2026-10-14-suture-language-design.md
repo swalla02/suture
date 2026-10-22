@@ -2221,3 +2221,26 @@ The returns eval's second round found that a condition shared by several events 
 ### AV.3 Acceptance
 
 - runtime/tests/verbs.rs: one admit for three events gives four admits, admits two of the events and refuses the third at the gate by its shared condition; `change` among verbs is an error.
+
+## Appendix AW. Prototype slice 47: weekdays (2026-10-22)
+
+The leave eval needed working days. Holiday lists need dates as data across units, and half days a count that is not whole: both wait for a design decision. A count of weekdays needs neither.
+
+### AW.1 What slice 47 adds
+
+| Added in slice 47 | Still waits |
+|---|---|
+| `the weekdays from ⟨Time⟩ to ⟨Time⟩`: a Count of Mondays to Fridays | holiday lists; half days; another working week |
+
+### AW.2 Semantics that slice 47 settles
+
+1. **The count.** It counts Mondays to Fridays from the first time's UTC date to the second's, both ends counted. It is 0 when the second is before the first; unlike `the days from`, it is never negative.
+2. Everything else is as for `the days from` (appendix AN): it is a Count, it can be a formula or appear in a rule, each end is one value, and the read-back says `the weekdays from … to …`.
+
+### AW.3 Acceptance
+
+- runtime/tests/days.rs: a week is 5, Friday to Monday is 2, a weekend is 0 (refused by `every Leave's days is more than 0`), 2026 is 261, and a week before 1970 is 5.
+
+### AW.4 Not in this slice: order within a relation
+
+The returns port's `seq` stands for "the newest Item of its unit". Writing it directly needs a relation filter that compares each sibling with the reader (`… that are created after it`), which is also what holiday lists across units need. That is a larger change than a slice, so it waits for a design decision.

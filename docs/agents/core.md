@@ -64,7 +64,7 @@ Conditions (`⟨cond⟩`), noun phrases, numbers and filters are in `rules`; act
 | deadline that alerts | `desired within 30 days: every Talk is decided` |
 | becomes overdue by itself | `due: Time = created + 14 days` + `when a Loan's due passes: it is overdue`; guard with `define: a Loan is late when it is overdue and it is not returned` |
 | limit per day or month | `rule daily: for each Member and day, the number of their Bookings is at most 2` |
-| number of days between dates | `days: Count = the days from its from to its to` |
+| number of days between dates | `days: Count = the days from its from to its to`; Monday to Friday: `the weekdays from …` |
 
 ## limits: not writable yet, and what to do
 

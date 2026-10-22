@@ -2343,6 +2343,19 @@ fn relation(prog: &Program, v: View, at: &[usize], of: &Path, kind: &str, filter
     )
 }
 
+/// Monday to Friday from day `a` to day `b` since 1970-01-01, both counted;
+/// 0 when `b` is before `a` (appendix AW.2.1).
+fn weekdays(a: i64, b: i64) -> i64 {
+    // Days since a Monday up to day `d`, both counted, that are weekdays;
+    // 1970-01-01 was a Thursday, so day 0 is 3 days after a Monday.
+    let upto = |d: i64| {
+        let n = d + 3; // day 0 of this count is a Monday
+        let (weeks, rest) = (n.div_euclid(7), n.rem_euclid(7));
+        weeks * 5 + (rest + 1).min(5)
+    };
+    if b < a { 0 } else { upto(b) - upto(a - 1) }
+}
+
 /// Checked arithmetic on amounts and counts; division rounds toward zero.
 fn arith(x: Val, op: Arith, y: Val) -> Option<Val> {
     let f = |a: i64, b: i64| match op {
@@ -2350,11 +2363,12 @@ fn arith(x: Val, op: Arith, y: Val) -> Option<Val> {
         Arith::Sub => a.checked_sub(b),
         Arith::Mul => a.checked_mul(b),
         Arith::Div => a.checked_div(b),
-        Arith::Days => None,
+        Arith::Days | Arith::Weekdays => None,
     };
     match (x, y) {
         // Calendar days in UTC, both counted: none or fewer when `b` is before `a` (appendix AN.2.2).
         (Val::Time(a), Val::Time(b)) if op == Arith::Days => Some(Val::Count(b.div_euclid(86_400) - a.div_euclid(86_400) + 1)),
+        (Val::Time(a), Val::Time(b)) if op == Arith::Weekdays => Some(Val::Count(weekdays(a.div_euclid(86_400), b.div_euclid(86_400)))),
         (Val::Money(a), Val::Money(b)) if matches!(op, Arith::Add | Arith::Sub) => f(a, b).map(Val::Money),
         (Val::Money(a), Val::Count(b)) if matches!(op, Arith::Mul | Arith::Div) => f(a, b).map(Val::Money),
         (Val::Count(a), Val::Money(b)) if op == Arith::Mul => f(a, b).map(Val::Money),

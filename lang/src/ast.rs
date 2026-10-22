@@ -81,7 +81,8 @@ pub enum Num {
     /// `the days in a row of their Applications [that …]` (appendix AH)
     Run { of: NounPhrase, filter: Option<Box<Cond>> },
     /// `the days from its from to its to`: calendar days, both ends counted (appendix AN)
-    Days { from: Box<Num>, to: Box<Num> },
+    /// `the weekdays from … to …`: Monday to Friday only (appendix AW).
+    Days { from: Box<Num>, to: Box<Num>, weekdays: bool },
 }
 
 /// What follows `is`: a literal, a noun phrase, or a bare word that the

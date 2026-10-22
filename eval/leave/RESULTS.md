@@ -91,3 +91,7 @@ kind Application { …, from: Time, to: Time, days: Count = the days from its fr
 ```
 
 Both ends are counted, by calendar date. No line is added: the attribute's line only gets longer. The scenarios no longer give `days`, and all 16 still pass. Of the 33 applications in them, 31 had given the calendar count. The other two, in `test_validate_application_across_allocations`, gave 6 days for 2025-12-26 to 2026-01-05, which hrms counts less holidays; the port counts 11. Both are refused at the gate either way. The two tests that count days (`half_day_date_cannot_be_holiday`, `leave_days_across_two_holiday_lists`) still need holiday lists. hrms's own count is not added to its side, because the port does not do what that function does with holidays.
+
+## After slice 47: weekdays
+
+`the weekdays from … to …` counts Monday to Friday only (spec appendix AW). The port keeps `the days from`, because hrms takes weekends from the holiday list, not from the calendar, and the port has no holiday lists. A port for a company that does not work weekends would write `the weekdays from its from to its to`. Holiday lists and half days still wait: one needs dates as data across units (a holiday calendar), the other a count that is not whole.
