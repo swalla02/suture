@@ -147,7 +147,7 @@ Time is simulated (`when 3 days pass`, `when it is 2026-03-01`), providers are s
 
 Suture never prompts a model and never generates code. Models are optional. When you use them, they do two narrow jobs:
 
-- **Decide.** A program is full of small choices the rules leave open: which carrier, which garage, repair or write-off. `decide Outcome with model "assessor@1"` hands one to a decision model. The model is given only the options the rules already allow, and its pick is checked again. If it declines, is late, is unsure or fails, `prefer` picks by fixed criteria, and the trace says why.
+- **Decide.** A program is full of small choices the rules leave open: which carrier, which garage, repair or write-off. `decide Outcome with model "assessor@1"` hands one to a decision model. The model is given only the options the rules already allow, and its pick is checked again. If it declines, is late, is unsure or fails, the program's own fallback is taken, and the trace says why.
 - **Read.** `source Claim's amount via model "invoices@1"` reads a value off a document or a photo, with a minimum confidence and a fallback.
 
 **Multimodal.** A model can look at an image, listen to a recording, watch a video or read a PDF before it decides or reads. Give an entity, or the options, an attribute of type `Media`:
@@ -156,6 +156,7 @@ Suture never prompts a model and never generates code. Models are optional. When
 kind Claim { policy: Policy, photo: Media, invoice: Media, amount: Money, … }
 
 decide Outcome with model "assessor@1"                 -- sees the photo, picks repair, write-off or cash
+  at least 0.8 sure otherwise Writeoff                 -- not sure enough: write it off
 source Claim's amount via model "invoices@1" within 10 seconds
   sends      its invoice
   asking     "the total the invoice charges"
@@ -169,8 +170,10 @@ Media is stored once, by its SHA-256, and a unit holds only a reference: `photo 
 
 ```text
 decide Outcome with model "fast@1" or model "careful@1" or prefer,
-  picked by model "router@1" within 100 milliseconds
+  picked by model "router@1" within 100 milliseconds at least 0.7 sure otherwise model "careful@1"
 ```
+
+How sure a model must be, and what is taken when it isn't, are in the program, not in a deployment's config. `suture build` shows both, so a reviewer sees them next to the rules. Without an `otherwise`, `prefer` picks by fixed criteria.
 
 Every model answer is journaled, so replay never calls a model. With every model switched off, the system still runs. That makes Suture a governed runtime for AI decisions: a model can be wrong, but it can't take you past a limit, skip an approval or pay twice. See [chapter 15](docs/guide/15-decision-models.md) and [chapter 14](docs/guide/14-sourcing.md).
 
