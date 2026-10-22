@@ -25,3 +25,13 @@ fn a_range_fills_a_program_up_to_its_limit() {
     let r = run(&prog, &sc[0]);
     assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
 }
+
+#[test]
+fn a_range_keeps_leading_zeros() {
+    let sc = suture_lang::scenario::parse_scenarios("t.scenario", "scenario \"x\":\n  given 3 Talks T09 to T11\n").unwrap();
+    let names: Vec<_> = sc[0].steps.iter().map(|s| match s {
+        suture_lang::scenario::ScenarioStep::Create { name, .. } => name.clone(),
+        _ => String::new(),
+    }).collect();
+    assert_eq!(names, ["T09", "T10", "T11"]);
+}

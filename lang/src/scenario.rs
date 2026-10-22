@@ -352,7 +352,11 @@ fn many(line: &Cursor, given: bool) -> Result<Option<Vec<ScenarioStep>>, Error> 
     };
     let count: u64 = n.parse().map_err(|_| c.error(format!("`{n}` is not a whole number of entities")))?;
     let names: Vec<String> = match (split(&first), split(&last)) {
-        (Some((p, a, _)), Some((q, b, _))) if p == q && b >= a && b - a + 1 == count && count <= 1000 => (a..=b).map(|i| format!("{p}{i}")).collect(),
+        // `T09 to T11` keeps the width of a first name with a leading zero.
+        (Some((p, a, w)), Some((q, b, _))) if p == q && b >= a && b - a + 1 == count && count <= 1000 => {
+            let width = if first[p.len()..].starts_with('0') { w } else { 0 };
+            (a..=b).map(|i| format!("{p}{i:0width$}")).collect()
+        }
         _ => return Err(c.error(format!("`{n} {kinds} {first} to {last}`: name the first and the last with the same prefix and numbers {n} apart, as in `{n} {kinds} T1 to T{n}` (at most 1000)"))),
     };
     let (attrs, items) = values_and_items(&mut c)?;
@@ -363,7 +367,6 @@ fn many(line: &Cursor, given: bool) -> Result<Option<Vec<ScenarioStep>>, Error> 
     Ok(Some(names.into_iter().map(|name| ScenarioStep::Create { kind: kinds.clone(), name, attrs: attrs.clone(), items: items.clone(), by: by.clone(), given, refused: None }).collect()))
 }
 
-/// `is refused by rule late`, `is refused at the gate`, or nothing.
 /// `1200 EUR [at 0.4]` or `nothing`: what a model reads (appendix AF).
 fn read(c: &mut Cursor) -> Result<ModelAnswer, Error> {
     if c.eat_word("nothing") {
@@ -389,6 +392,7 @@ fn confidence(c: &mut Cursor) -> Result<Option<u16>, Error> {
     Ok(Some(sure))
 }
 
+/// `is refused by rule late`, `is refused at the gate`, or nothing.
 fn refusal(c: &mut Cursor) -> Result<Option<Refused>, Error> {
     if !c.eat_word("is") {
         return Ok(None);

@@ -70,9 +70,20 @@ fn cond_formula(p: &Program, kind: &str, v: &str, c: &Cond) -> String {
     }
 }
 
-/// `words` in parentheses when `group` holds and they are not already in them.
+/// `words` in parentheses when `group` holds and they are not already in
+/// one pair that closes at their end (`(a or b) and c` is not).
 fn grouped(group: bool, words: String) -> String {
-    if group && !words.starts_with('(') { format!("({words})") } else { words }
+    let mut depth = 0;
+    let wrapped = words.starts_with('(')
+        && words.char_indices().all(|(i, ch)| {
+            depth += match ch {
+                '(' => 1,
+                ')' => -1,
+                _ => 0,
+            };
+            depth > 0 || i == words.len() - 1
+        });
+    if group && !wrapped { format!("({words})") } else { words }
 }
 
 fn cond_words(p: &Program, kind: &str, c: &Cond) -> String {
@@ -382,11 +393,6 @@ pub fn choice(p: &Program, b: &crate::ir::Binding) -> String {
     format!("{} uses a {}{per}: pool key {}'s {} {how} {key}, up to {} candidates, ranked {rank}", b.subject, b.target, b.target, b.key_attr, p.candidates)
 }
 
-fn a_kind(k: &str) -> String {
-    if k.starts_with(['A', 'E', 'I', 'O', 'U']) { format!("an {k}") } else { format!("a {k}") }
-}
-
-/// `customer (a Customer), support, staff` (appendix G.2.1).
 /// Who handles a choice point (appendix J.2.8): the `decide`s that can,
 /// most specific first, down to the first that always applies, then the
 /// `prefer` ranking every model falls back to.
@@ -455,9 +461,9 @@ pub fn watches(p: &Program) -> Vec<String> {
             i += 1;
         }
         let plural = |k: &str| p.kind(k).map_or(k.to_string(), |x| x.plural.clone());
-        let mut readers: Vec<String> = carry[1..].iter().map(|k| format!("{} that refer to {}", plural(k), a_kind(kind))).collect();
+        let mut readers: Vec<String> = carry[1..].iter().map(|k| format!("{} that refer to {}", plural(k), crate::check::a(kind))).collect();
         for b in p.bindings.iter().filter(|b| b.target == *kind) {
-            readers.push(format!("{} bound to {}", plural(&b.subject), a_kind(kind)));
+            readers.push(format!("{} bound to {}", plural(&b.subject), crate::check::a(kind)));
         }
         readers.dedup();
         let who = a.roles.join(", ");

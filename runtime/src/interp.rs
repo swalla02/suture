@@ -117,28 +117,16 @@ pub fn new_unit_with(
     given: &[(String, Val)],
     items: &[(String, Vec<(String, Val)>)],
 ) -> Result<Unit, String> {
-    new_unit_full(prog, label, kind, given, items, Facts::new(), 0)
-}
-
-/// A new unit with the elements of its lists (appendix E.2.6), each given as
-/// the list's name and the element's attributes, the facts of the shared
-/// entities it refers to, and the clock. Formulas are computed after
-/// defaults and given values, in whatever order they read each other.
-pub fn new_unit_full(
-    prog: &Program,
-    label: &str,
-    kind: &str,
-    given: &[(String, Val)],
-    items: &[(String, Vec<(String, Val)>)],
-    facts: Facts,
-    now: i64,
-) -> Result<Unit, String> {
-    let unit = build_unit(prog, label, kind, given, items, facts, now)?;
-    refused_at_creation(prog, &unit, now)?;
+    let unit = build_unit(prog, label, kind, given, items, Facts::new(), 0)?;
+    refused_at_creation(prog, &unit, 0)?;
     Ok(unit)
 }
 
-/// The unit as it would be created, before any rule is checked.
+/// The unit as it would be created, before any rule is checked: with the
+/// elements of its lists (appendix E.2.6), each given as the list's name and
+/// the element's attributes, the facts of the shared entities it refers to,
+/// and the clock. Formulas are computed after defaults and given values, in
+/// whatever order they read each other.
 pub fn build_unit(
     prog: &Program,
     label: &str,
@@ -166,7 +154,7 @@ pub fn build_unit(
     // Formulas may read each other and the owner in any order: compute
     // until nothing changes. Each attribute is set at most once.
     while (0..root.parts.len()).fold(formulas(prog, &mut root, &facts, &[]), |changed, i| formulas(prog, &mut root, &facts, &[i]) || changed) {}
-    let unit = Unit {
+    Ok(Unit {
         label: label.to_string(),
         root,
         notes: vec![],
@@ -177,8 +165,7 @@ pub fn build_unit(
         facts,
         taken: BTreeMap::new(),
         version: prog.version,
-    };
-    Ok(unit)
+    })
 }
 
 /// A creation that its first step would leave breaking a rule is refused.
@@ -638,8 +625,9 @@ fn granted(prog: &Program, u: &mut Unit, key: &str, by: &str, taken: &Option<(St
     };
     let Some((at, id)) = find_bind(u, key) else { return give_back(u, out, "its part is gone") };
     let n = node_at_mut(&mut u.root, &at);
-    // A held contribution may be asked for at any status (appendix AA.2.1).
-    if (n.status != Status::Idle && !is_held(prog, &id)) || !matches!(n.binds.get(&id), Some(Bind::Asked { .. } | Bind::Waiting { .. })) {
+    // A held contribution, and a `no two` count moving to a new group, may
+    // be asked for at any status (appendices AA.2.1, AX.2.2).
+    if (n.status != Status::Idle && !is_held(prog, &id) && !is_unique(prog, &id)) || !matches!(n.binds.get(&id), Some(Bind::Asked { .. } | Bind::Waiting { .. })) {
         return give_back(u, out, "not asked");
     }
     n.binds.insert(id.clone(), Bind::Granted { to: by.to_string(), taken: taken.clone() });
@@ -761,6 +749,10 @@ fn bound(prog: &Program, u: &Unit, at: &[usize]) -> bool {
 /// Whether the binding `id` adds to a total only while a filter holds.
 fn is_held(prog: &Program, id: &str) -> bool {
     prog.bindings.iter().any(|b| b.id == id && b.held.is_some())
+}
+
+fn is_unique(prog: &Program, id: &str) -> bool {
+    prog.bindings.iter().any(|b| b.id == id && b.unique)
 }
 
 /// Adds the node's contribution to a filtered total across units when its
@@ -917,17 +909,6 @@ fn decide_place(prog: &Program, u: &Unit, d: &Decide) -> Option<(Vec<usize>, Opt
     Some((at, elem.map(|(_, p)| p)))
 }
 
-/// The pick for a binding under `prefer` alone (appendix F.2.7), and how
-/// many options there were; see [`options`].
-pub fn choose_among(prog: &Program, u: &Unit, d: &Decide, candidates: impl Iterator<Item = Unit>) -> Option<(String, usize)> {
-    let ranked = options(prog, u, d, candidates);
-    let n = ranked.len();
-    ranked.into_iter().next().map(|c| (c.label, n))
-}
-
-/// The options of a binding's choice (appendix J.2.4): of the candidates, in
-/// creation order, the first `candidates` that meet the binding's filter,
-/// best first under its `prefer`.
 /// Whether the shared entity `c` would grant the binding `d` its take now
 /// (appendix S.2.1).
 pub fn would_grant(prog: &Program, c: &Unit, d: &Decide, now: i64) -> bool {
@@ -935,6 +916,9 @@ pub fn would_grant(prog: &Program, c: &Unit, d: &Decide, now: i64) -> bool {
     !step_at(prog, c, &take, now).sends.iter().any(|(_, m)| matches!(m, Msg::Refused { .. }))
 }
 
+/// The options of a binding's choice (appendix J.2.4): of the candidates, in
+/// creation order, the first `candidates` that meet the binding's filter,
+/// best first under its `prefer`.
 pub fn options(prog: &Program, u: &Unit, d: &Decide, candidates: impl Iterator<Item = Unit>) -> Vec<Unit> {
     let Some(b) = prog.bindings.get(d.binding as usize) else { return vec![] };
     let Some((at, elem)) = decide_place(prog, u, d) else { return vec![] };
@@ -951,8 +935,7 @@ pub fn options(prog: &Program, u: &Unit, d: &Decide, candidates: impl Iterator<I
             gathered.push((c, scores));
         }
     }
-    let scores: Vec<Vec<(u8, i128)>> = gathered.iter().map(|(_, s)| s.clone()).collect();
-    let mut slots: Vec<Option<Unit>> = gathered.into_iter().map(|(c, _)| Some(c)).collect();
+    let (mut slots, scores): (Vec<_>, Vec<_>) = gathered.into_iter().map(|(c, s)| (Some(c), s)).unzip();
     order(&scores).into_iter().filter_map(|i| slots[i].take()).collect()
 }
 
@@ -2121,10 +2104,6 @@ pub fn shown(prog: &Program, attr: &str, v: &Val) -> String {
     if personal && !matches!(v, Val::Secret(_)) { "(personal)".into() } else { v.show(&prog.currency) }
 }
 
-/// `a Payment`, `an Order`.
-pub fn a_kind(kind: &str) -> String {
-    if kind.starts_with(['A', 'E', 'I', 'O', 'U']) { format!("an {kind}") } else { format!("a {kind}") }
-}
 
 /// A rule `after` breaks that `before` did not.
 pub fn newly_violated<'p>(prog: &'p Program, before: &Unit, after: &Unit) -> Option<&'p Rule> {

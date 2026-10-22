@@ -215,3 +215,33 @@ fn an_event_whose_reaction_would_make_two_alike_is_refused() {
     );
     assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
 }
+
+#[test]
+fn a_part_whose_request_went_out_still_moves_its_count() {
+    // A requested part is not idle; its count must still move (review of slice 48).
+    let src = "module m version 1, currency EUR
+role staff
+kind Carrier  { name: Text }
+kind Order    { carrier: Carrier, slot: Count }
+kind Shipment { order: Order, carrier: Carrier = order's carrier, slot: Count = order's slot }
+Order needs Shipment
+effect send Shipment via carriers within 1 hour
+  sends    the order's carrier
+  reports  delivered
+rule one: no two Shipments have the same carrier and slot
+when a staff moves a Shipment: its slot becomes the hour
+admit move Shipment by staff with hour: Count
+admit place a new Order by staff
+";
+    let r = runs(
+        src,
+        "  given  a Carrier K with name \"K\"
+  when   staff Sam places a new Order O1 with carrier K and slot 1
+  and    staff Sam places a new Order O2 with carrier K and slot 2
+  and    staff Sam moves O1's Shipment with hour 5
+  and    staff Sam moves O2's Shipment with hour 5
+         is refused by rule one
+",
+    );
+    assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
+}

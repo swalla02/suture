@@ -47,9 +47,29 @@ pub(crate) fn plural_of(name: &str) -> String {
     format!("{name}{}", if es { "es" } else { "s" })
 }
 
-/// `a Payment`, `an Order`, for where a loop's `a` hides [`a`].
-fn a_(k: &str) -> String {
-    a(k)
+/// A rule from its declaration, before its read-back is written.
+fn new_rule(r: &ast::RuleDecl, subject: String, filter: Vec<Cond>, body: Body, tier: &str, period: Option<String>) -> Rule {
+    Rule {
+        name: r.name.clone(),
+        subject,
+        filter,
+        body,
+        source: r.source.clone(),
+        formula: String::new(),
+        paraphrase: String::new(),
+        tier: tier.into(),
+        period,
+        fixed: false,
+        sources: vec![],
+        fresh: r.fresh.clone(),
+        applies: None,
+    }
+}
+
+/// The kind that keeps a global total (`all Reviews`), with no attributes.
+fn global_kind(p: &mut Program, name: &str) {
+    p.kinds.push(Kind { name: name.to_string(), plural: name.to_string(), attrs: vec![], owner: None });
+    p.globals.push(name.to_string());
 }
 
 /// `talk`, `talk and reviewer`, `talk, day and reviewer`.
@@ -62,7 +82,7 @@ fn and_list(words: &[&String]) -> String {
 }
 
 /// `a Payment`, `an Order`.
-fn a(k: &str) -> String {
+pub fn a(k: &str) -> String {
     let an = k.starts_with(|c: char| "AEIOUaeiou".contains(c));
     format!("{} {k}", if an { "an" } else { "a" })
 }
@@ -1341,14 +1361,14 @@ impl Checker {
                     Some(Some(owner)) => {
                         self.errors.push(err(
                             &k.at,
-                            format!("{}.{}: {target} is a part of {owner}, so nothing outside {} can refer to it", k.name, a.name, a_(&owner)),
+                            format!("{}.{}: {target} is a part of {owner}, so nothing outside {} can refer to it", k.name, a.name, self::a(&owner)),
                         ));
                         continue;
                     }
                     Some(None) => {}
                 }
                 if a.default.is_some() {
-                    self.errors.push(err(&k.at, format!("{}.{} refers to {}; it has no default", k.name, a.name, a_(target))));
+                    self.errors.push(err(&k.at, format!("{}.{} refers to {}; it has no default", k.name, a.name, self::a(target))));
                 }
                 let kind = p.kinds.iter_mut().find(|x| x.name == k.name).expect("declared kinds are compiled");
                 kind.attrs.push(Attr { name: a.name.clone(), ty, of: Some(target.clone()), default: None, formula: None, mark: None, states: vec![] });
@@ -1436,7 +1456,7 @@ impl Checker {
                         Some(None) => {} // the noun phrase's own error is reported
                         _ => self.errors.push(err(
                             &k.at,
-                            format!("{}.{} refers to {}, so its formula must name one, as in `customer's {}`", k.name, a.name, a_(&target), a.name),
+                            format!("{}.{} refers to {}, so its formula must name one, as in `customer's {}`", k.name, a.name, self::a(&target), a.name),
                         )),
                     }
                     continue;
@@ -1719,19 +1739,7 @@ impl Checker {
                 }
                 data.push((name.clone(), ty));
             }
-            let mut sends = vec![];
-            self.sending = true;
-            self.marked.clear();
-            for np in &e.sends {
-                match self.np(p, &e.at, &e.kind, np) {
-                    Some((path, End::Value(_) | End::Ref(_) | End::Set(_))) => sends.push((np.steps.last().cloned().unwrap_or_default(), path)),
-                    Some((_, End::Node(k))) => {
-                        self.errors.push(err(&e.at, format!("an effect sends values; `{}` is a {k}", show(np))));
-                    }
-                    None => {}
-                }
-            }
-            self.sending = false;
+            let sends = self.sends(p, &e.at, &e.kind, &e.sends, "an effect", false);
             self.grants_for(src, &e.at, &e.adapter);
             p.effects.push(Effect {
                 kind: e.kind.clone(),
@@ -1949,19 +1957,7 @@ impl Checker {
                 self.errors.push(err(&s.at, format!("{}.{} is secret, so it cannot be sourced", s.kind, s.attr)));
                 continue;
             }
-            let mut sends = vec![];
-            self.sending = true;
-            self.reading = s.model;
-            self.marked.clear();
-            for np in &s.sends {
-                match self.np(p, &s.at, &s.kind, np) {
-                    Some((path, End::Value(_) | End::Ref(_) | End::Set(_))) => sends.push((np.steps.last().cloned().unwrap_or_default(), path)),
-                    Some((_, End::Node(k))) => self.errors.push(err(&s.at, format!("a source sends values; `{}` is a {k}", show(np)))),
-                    None => {}
-                }
-            }
-            self.sending = false;
-            self.reading = false;
+            let sends = self.sends(p, &s.at, &s.kind, &s.sends, "a source", s.model);
             if s.model {
                 // A model is not granted marked fields in v0 (appendix AF.2.2).
                 if let Some((kind, attr, m)) = std::mem::take(&mut self.marked).into_iter().next() {
@@ -2097,8 +2093,7 @@ impl Checker {
                     continue;
                 }
                 if p.kind(&subject.kind).is_none() {
-                    p.kinds.push(Kind { name: subject.kind.clone(), plural: subject.kind.clone(), attrs: vec![], owner: None });
-                    p.globals.push(subject.kind.clone());
+                    global_kind(p, &subject.kind);
                 }
             } else if r.globally {
                 self.errors.push(err(&r.at, format!("rule {}: only a rule about `all …` is checked globally", r.name)));
@@ -2146,21 +2141,7 @@ impl Checker {
             } else {
                 "local"
             };
-            let mut rule = Rule {
-                name: r.name.clone(),
-                subject: subject.kind.clone(),
-                filter,
-                body,
-                source: r.source.clone(),
-                formula: String::new(),
-                paraphrase: String::new(),
-                tier: tier.into(),
-                period: r.period.clone(),
-                fixed: false,
-                sources: vec![],
-                fresh: r.fresh.clone(),
-                applies: None,
-            };
+            let mut rule = new_rule(r, subject.kind.clone(), filter, body, tier, r.period.clone());
             rule.formula = readback::formula(p, &rule);
             rule.paraphrase = readback::paraphrase(p, &rule);
             p.rules.push(rule);
@@ -2219,8 +2200,7 @@ impl Checker {
             None => {
                 let all = format!("all {plural}");
                 if p.kind(&all).is_none() {
-                    p.kinds.push(Kind { name: all.clone(), plural: all.clone(), attrs: vec![], owner: None });
-                    p.globals.push(all.clone());
+                    global_kind(p, &all);
                 }
                 all
             }
@@ -2251,21 +2231,8 @@ impl Checker {
         self.contribs.last_mut().expect("just added").unique = true;
         self.add_contribs(p);
         let total = Num::Taken { of: Path::default(), name, ty: Ty::Count, period: None, kind: String::new(), run: false, group: !rest.is_empty() };
-        let mut rule = Rule {
-            name: r.name.clone(),
-            subject: target,
-            filter: vec![],
-            body: Body::Every(Cond::Cmp { left: total, op: Op::Le, right: Num::Lit(Lit::Count(1)) }),
-            source: r.source.clone(),
-            formula: String::new(),
-            paraphrase: String::new(),
-            tier: if by.is_some() { "per-group" } else { "global (bottleneck)" }.into(),
-            period: None,
-            fixed: false,
-            sources: vec![],
-            fresh: r.fresh.clone(),
-            applies: None,
-        };
+        let body = Body::Every(Cond::Cmp { left: total, op: Op::Le, right: Num::Lit(Lit::Count(1)) });
+        let mut rule = new_rule(r, target, vec![], body, if by.is_some() { "per-group" } else { "global (bottleneck)" }, None);
         rule.formula = readback::formula(p, &rule);
         let values = and_list(&rest);
         rule.formula = match (&by, rest.is_empty()) {
@@ -2931,6 +2898,25 @@ impl Checker {
     /// word is an attribute, a part, or the owner, tried in that order. Past a
     /// reference, the phrase reads a shared entity's carried facts, so only
     /// attributes can follow (appendix F.2.3).
+    /// What an effect or a source sends, each a value; `marked` is left
+    /// with the marked attributes they read.
+    fn sends(&mut self, p: &Program, at: &Loc, kind: &str, nps: &[NounPhrase], who: &str, reading: bool) -> Vec<(String, Path)> {
+        let mut sends = vec![];
+        self.sending = true;
+        self.reading = reading;
+        self.marked.clear();
+        for np in nps {
+            match self.np(p, at, kind, np) {
+                Some((path, End::Value(_) | End::Ref(_) | End::Set(_))) => sends.push((np.steps.last().cloned().unwrap_or_default(), path)),
+                Some((_, End::Node(k))) => self.errors.push(err(at, format!("{who} sends values; `{}` is a {k}", show(np)))),
+                None => {}
+            }
+        }
+        self.sending = false;
+        self.reading = false;
+        sends
+    }
+
     fn np(&mut self, p: &Program, at: &Loc, from: &str, np: &NounPhrase) -> Option<(Path, End)> {
         let mut steps = vec![];
         let mut cur = from.to_string();
@@ -3092,7 +3078,7 @@ impl Checker {
             if shared {
                 self.errors.push(err(
                     at,
-                    format!("`{}`: {} is shared, so only its attributes can be read, and it has no attribute `{w}`", show(np), a_(&cur)),
+                    format!("`{}`: {} is shared, so only its attributes can be read, and it has no attribute `{w}`", show(np), self::a(&cur)),
                 ));
                 return None;
             }

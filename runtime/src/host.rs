@@ -260,7 +260,7 @@ impl Host {
         self.gate_with(by, fits, &shown_target, &unit, &data, &at)?;
         let Some(by) = by else { return Ok(()) };
         if !self.prog.reactions.iter().any(|r| r.kind == kind && r.outcome == by.verb && r.by.contains(&by.role)) {
-            return Err(format!("nothing reacts when a {} {} {}", by.role, by.verb, interp::a_kind(&kind)));
+            return Err(format!("nothing reacts when a {} {} {}", by.role, by.verb, suture_lang::check::a(&kind)));
         }
         let mut facts = Facts::new();
         if self.prog.role(&by.role).is_some_and(|r| r.kind.is_some()) {
@@ -295,7 +295,7 @@ impl Host {
         if let Some(why) = suture_lang::check::unchangeable(&self.prog, &kind, attr) {
             return Err(why);
         }
-        let ty = self.prog.kind(&kind).and_then(|k| k.attr(attr)).map(|a| a.ty).ok_or_else(|| format!("{} has no attribute {attr}", interp::a_kind(&kind)))?;
+        let ty = self.prog.kind(&kind).and_then(|k| k.attr(attr)).map(|a| a.ty).ok_or_else(|| format!("{} has no attribute {attr}", suture_lang::check::a(&kind)))?;
         let value = match (ty, value) {
             (Ty::Ref | Ty::Set, _) => return Err(format!("{kind}.{attr} refers to shared entities, which cannot be changed yet")),
             (t, v) if v.ty() == t => v,

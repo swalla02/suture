@@ -55,3 +55,16 @@ fn without_parentheses_it_is_still_an_error() {
     let e = compile(&SHOP.replace("and (it is paid or it is free)", "and (it is paid or it is free and it is shipped)")).unwrap_err();
     assert!(e.contains("without parentheses"), "{e}");
 }
+
+#[test]
+fn a_read_back_keeps_a_group_that_starts_with_a_group() {
+    let src = "module m version 1, currency EUR
+kind Order { a: Bool = no, b: Bool = no, c: Bool = no, d: Bool = no }
+rule ok: no Order is d unless ((it is a or it is b) and it is c) or it is b
+";
+    let prog = compile(src).unwrap();
+    let r = &prog.rules[0];
+    for text in [suture_lang::readback::formula(&prog, r), suture_lang::readback::paraphrase(&prog, r)] {
+        assert!(text.contains("c) or") || text.contains("c)) or"), "{text}");
+    }
+}
