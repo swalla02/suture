@@ -79,7 +79,8 @@ The answer is 200 with the trace lines the input caused, 409 with `refused` when
 | `Bool` | `true` or `false` |
 | `Count` | an integer |
 | `Money` | a string with the module's currency: `"80 EUR"`, `"12.50 EUR"` |
-| `Duration`, `Time` | an integer number of seconds |
+| `Time` | RFC 3339: `"2026-03-01T14:30:00Z"`, `"2026-03-01T16:30:00+02:00"`, or a date, `"2026-03-01"`. Without an offset it is UTC. Times go out in UTC, with a `Z` |
+| `Duration` | ISO 8601: `"PT90S"`, `"PT2H30M"`, `"P3D"`, `"P1W"`, `"-PT45S"`. Years and months have no fixed length, so they aren't durations |
 | a reference | the entity's label: `"Hamlet"` |
 | a set | a list of labels: `["EU", "UK"]` |
 | `Media` | the reference `POST /media` gave: `{"sha256": "…", "mime": "image/png", "bytes": 48213}` |

@@ -1260,7 +1260,7 @@ Until slice 10, a program ran only inside a scenario: the inputs, the outside an
    - `GET /units/<label>` explains a unit.
    - `GET /trace?from=<n>` gives trace lines from the nth on.
    - `GET /health` answers ok.
-7. **Values in JSON** follow the attribute's type: text as a string, a yes or no as a boolean, a count as an integer, an amount as a string with its currency (`"80 EUR"`, `"12.50 EUR"`), a duration or a time as an integer number of seconds, a reference as the entity's label, and a set as a list of labels.
+7. **Values in JSON** follow the attribute's type: text as a string, a yes or no as a boolean, a count as an integer, an amount as a string with its currency (`"80 EUR"`, `"12.50 EUR"`), a duration or a time as an integer number of seconds (since slice 37, ISO 8601: AM), a reference as the entity's label, and a set as a list of labels.
 8. **Adapters.** `adapters.json` in the module's directory maps an adapter's name to `{"url", "key_env"}`. Once an input is written to the log, each new request is posted to its adapter's URL as `{"key", "adapter", "verb", "kind", "unit", "sends"}`. A reply with an `outcome` (and `data`) is that adapter's answer, applied and logged as one. A reply without one means the adapter answers later through `/answers`. A failed post is tried again every 5 seconds while the request waits, and its effect's deadline decides what happens next. An adapter that `adapters.json` does not name is reached through `GET /pending` and `/answers` only. On restart, every waiting request is posted again with the same key, which the adapter uses to do the work once.
 9. **Models.** With `--models`, `models.json` configures the backends as in K.2.7.
 
@@ -1968,4 +1968,27 @@ When a model was no help, `prefer`'s first option was taken (K.2.5). Slice 36 le
 ### AL.3 Acceptance
 
 - In runtime/tests/routing.rs, an unsure model on a slot falls to its `otherwise`, a sure one is used, and an unsure router falls to its named candidate. An unknown option, `with prefer otherwise …`, a router fallback that is not a candidate, and a fallback on a pooled binding are errors.
+
+## Appendix AM. Prototype slice 37: times and durations as ISO 8601 (2026-10-22)
+
+Programs and scenarios already wrote dates as ISO 8601 (`2026-03-01`). The API did not: it sent and took a time as seconds since the runtime clock's own 0, 2026-01-01 (F.2.14), and a duration as seconds (L.2.7). No other system counts from that day. Slice 37 makes every value that leaves or enters a running program use the standard forms.
+
+### AM.1 What slice 37 adds
+
+| Added in slice 37 | Still waits |
+|---|---|
+| a time in JSON is RFC 3339 (`"2026-03-01T14:30:00Z"`), on input and output | time zones in program text |
+| a duration in JSON is ISO 8601 (`"PT2H30M"`, `"P3D"`) | calendar durations: months and years |
+| facts sent to a decision or reading model use the same forms | |
+
+### AM.2 Semantics that slice 37 settles
+
+1. **Times.** A time is read as an ISO date (`2026-03-01`, meaning midnight UTC) or an RFC 3339 date and time, with `T` or a space, minutes or seconds, an optional fraction of a second (dropped), and `Z`, an offset such as `+02:00`, or no offset (UTC). The offset is applied, so `2026-03-01T16:30:00+02:00` and `2026-03-01T14:30:00Z` are the same time. A time is written in UTC with seconds and `Z`. A time given as a number is an error that names the form.
+2. **Durations.** A duration is read as ISO 8601: `P`, then weeks and days, then `T` with hours, minutes and seconds, each a whole number, in that order and at most once; a leading `-` makes it negative. `P1M` and `P1Y` are errors, because a month or a year has no fixed length. A duration is written with days, hours, minutes and seconds, leaving out zeros, and `PT0S` for none. A number is an error that names the form.
+3. **Models.** A fact that is a time or a duration goes to a model in these forms. A model may read a duration as a number of seconds, as before, or as ISO 8601. The program's semantics, the journal and replay are unchanged: values are still whole seconds on the runtime clock inside.
+4. **Program text is unchanged.** `2026-03-01 14:30` and `3 days` stay as they are. The trace and `explain` still show times the short way.
+
+### AM.3 Acceptance
+
+- In runtime/tests/service.rs, times with `Z`, an offset, a fraction or none, and dates, read to the same seconds, and impossible dates and numbers are errors. Durations round-trip through `PT0S`, `P1D`, `PT2H30M`, `P1DT12H` and `-PT45S`, and `P1M`, `P1Y`, `PT`, out-of-order or repeated units and numbers are errors.
 
