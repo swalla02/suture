@@ -66,6 +66,7 @@ rule ⟨name⟩: ⟨rule⟩[, with ⟨attr⟩ at most ⟨duration⟩ old[ and �
 define: a ⟨Kind⟩ is ⟨state⟩ when ⟨cond⟩
 desired [within ⟨duration⟩]: every ⟨subject⟩ is ⟨state⟩[ and ⟨state⟩…]
 when a ⟨Kind⟩ is ⟨outcome⟩: ⟨action⟩[ and ⟨action⟩…]
+when a ⟨Kind⟩'s ⟨Time attr⟩ passes: ⟨action⟩[ and ⟨action⟩…]
 when a ⟨role⟩ [or ⟨role⟩] ⟨verb⟩s a ⟨Kind⟩: ⟨action⟩[ and ⟨action⟩…]
 ```
 

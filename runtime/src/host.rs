@@ -1071,6 +1071,13 @@ impl Host {
                 }
                 self.tell(&label, &Msg::GoalDue { goal })
             }
+            Timer::Patience(label, id) if id.contains(interp::PASS_MARK) => {
+                let Some(unit) = self.unit(&label) else { return Ok(()) };
+                if interp::pass_matters(&unit, &id).is_none() {
+                    return Ok(());
+                }
+                self.tell(&label, &Msg::Due { id })
+            }
             Timer::Patience(label, id) if id.contains('~') => {
                 let Some(unit) = self.unit(&label) else { return Ok(()) };
                 if !interp::fetch_due_matters(&unit, &id) {

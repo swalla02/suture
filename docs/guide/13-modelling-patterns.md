@@ -175,6 +175,7 @@ There is no `now` in sentences: a rule must not change from true to false while 
 - deadlines on effects (`within`), which re-send and time out;
 - patience on slots (`after`);
 - goal deadlines (`desired within`), which raise alerts;
+- a time passing (`when a Loan's due passes: it is overdue`), which sets a fact;
 - `created`, and periods in rules (`for each Customer and month`).
 
 ## Prefer local rules

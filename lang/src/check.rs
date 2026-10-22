@@ -6,7 +6,7 @@ use crate::ast::{self, CmpOp, Head, Literal, Loc, NounPhrase, Source, Term, Type
 use crate::ir::{
     self,
     Action, Admit, Admitted, Arith, Attr, Binding, Body, Cond, Criterion, Decision, Define, Effect, Goal, Grant, Kind, Mark, Lit, Need, Num, Op, OwnerRef, Path,
-    third_person, Otherwise, Program, Reaction, Role, Rule, Slot, Step, Taking, Ty, CREATED, TIMED_OUT,
+    third_person, Otherwise, Program, Reaction, Role, Rule, Slot, Step, Taking, Ty, CREATED, PASSES, TIMED_OUT,
 };
 use crate::lex::Error;
 use crate::readback;
@@ -980,8 +980,17 @@ impl Checker {
         self.reactions(src, &mut p);
         self.keeps(src, &p);
         // What `no two` compares never changes, once every way to change a
-        // value is known (appendix AP.2.4).
+        // value is known (appendix AP.2.4); a time that passes changes only
+        // by an admitted change (appendix AQ.2.3).
         let changes = changeable(&p);
+        let inside = set_inside(&p);
+        for r in &src.reactions {
+            if let Some(attr) = r.outcome.strip_suffix(PASSES)
+                && (inside.iter().any(|(_, a)| a == attr) || p.source_of(&r.kind, attr).is_some())
+                && p.kind(&r.kind).is_some_and(|k| k.attr(attr).is_some_and(|x| x.ty == Ty::Time)) {
+                self.errors.push(err(&r.at, format!("a {}'s {attr} is set by a reaction, an answer or a source; only an admitted change may move a time that passes (appendix AQ.2.3)", r.kind)));
+            }
+        }
         for r in &src.rules {
             if let ast::RuleBody::Unique { subject, same } = &r.body
                 && let Some(a) = same.iter().find(|a| changes.contains(a)) {
@@ -2289,6 +2298,24 @@ impl Checker {
 
     fn reactions(&mut self, src: &Source, p: &mut Program) {
         for r in &src.reactions {
+            if let Some(attr) = r.outcome.strip_suffix(PASSES) {
+                // `when a Loan's due passes:` (appendix AQ.2.1).
+                let Some(k) = p.kind(&r.kind) else {
+                    self.errors.push(err(&r.at, format!("unknown kind {}", r.kind)));
+                    continue;
+                };
+                if k.owner.is_some() {
+                    self.errors.push(err(&r.at, format!("a {} is a part; only a time of an entity that is no part passes, for now", r.kind)));
+                    continue;
+                }
+                if k.attr(attr).is_none_or(|x| x.ty != Ty::Time) {
+                    self.errors.push(err(&r.at, format!("`{attr}` is not a Time attribute of {}, so it does not pass", a(&r.kind))));
+                    continue;
+                }
+                let actions = self.actions(p, r);
+                p.reactions.push(Reaction { kind: r.kind.clone(), outcome: r.outcome.clone(), by: vec![], actions });
+                continue;
+            }
             if !r.by.is_empty() {
                 if self.event(p, r) {
                     // The caller and the event's data can be read (appendix Q.2.3).

@@ -1,11 +1,11 @@
 # Suture, for agents: the whole language in one read
 
-Suture is a declarative backend language in controlled English: you state facts, rules, who may do what, and what work the system owes the world; the runtime does the rest (ordering, retries, compensation, limits, audit). Every sentence pattern has one meaning. You have not seen it in training, so do not guess forms from other languages: everything that exists is below.
+Suture is a declarative backend language in controlled English: you state facts, rules, who may do what, and what work the system owes the world; the runtime does the rest (ordering, retries, compensation, limits, audit). Every sentence pattern has one meaning. You have not seen it in training: do not guess forms; everything that exists is below.
 
 ## loop: how to work
 
 1. A module is the `.st` files of one directory; scenarios (tests) are `.scenario` files beside them.
-2. After every edit run `suture check <dir>`: it compiles, runs every scenario, prints each error as `file:line: message`, `✓` per passing scenario, and the trace of each failing one. Exit 0 = all good. `--json` for tools.
+2. After every edit run `suture check <dir>`: it compiles, runs every scenario, and prints errors (`file:line: message`) and the traces of failing scenarios. Exit 0 = all good; `--json` for tools.
 3. Fix the first error first; errors name the form they expected.
 4. Cover each requirement with a scenario, and each limit or permission with a refused input.
 5. When it passes, `suture build <dir>` prints every rule in plain English with its cost. Give that to the person: they review the read-back and the scenarios, not the syntax.
@@ -115,6 +115,7 @@ rule ⟨name⟩: for each ⟨Kind⟩ and day|week|month|year [from their ⟨attr
 define: a ⟨Kind⟩ is ⟨state⟩ when ⟨cond⟩
 desired [within ⟨duration⟩]: every ⟨subject⟩ is ⟨state⟩[ and ⟨state⟩]   alert if not met in time
 when a ⟨role⟩ [or ⟨role⟩] ⟨verb⟩s a ⟨Kind⟩: ⟨action⟩[ and ⟨action⟩]
+when a ⟨Kind⟩'s ⟨Time attr⟩ passes: ⟨action⟩[ and ⟨action⟩]          the clock reaches it
 when a ⟨Kind⟩ is ⟨outcome | timed out⟩: ⟨action⟩[ and ⟨action⟩]           an effect's outcome
 ```
 
@@ -132,8 +133,8 @@ when a ⟨Kind⟩ is ⟨outcome | timed out⟩: ⟨action⟩[ and ⟨action⟩] 
 - **Rules** are checked before every change. An input that would break one is refused, naming the rule. The system's own work (a part, a take from a pool) waits until the rule allows it. A rule also refuses the steps that would repair an old wrong state, so put conditions that must stay fixable in an `admit … where`.
 - **Definitions** are always current; a stored status you would keep in sync is a `define` instead.
 - **Needs** create parts; an effect sends the part's request, re-sends after `within` up to `attempts`, then the part is `timed out`. When a need's `while` turns false, an unfinished part is withdrawn and gives back what it took; one whose request went out stays and counts.
-- **Totals** across references (`each Class's Bookings`) are kept incrementally; `suture build` shows each rule's cost: local, per group, or global. Prefer local and per-group.
-- **No `now`.** A fact never changes while nothing happens; time acts only through deadlines, `after`, `desired within` and periods.
+- **Totals** across references (`each Class's Bookings`) are kept incrementally; `suture build` shows each rule's cost (local, per group, global).
+- **No `now`.** A fact never changes while nothing happens; time acts only through deadlines, `after`, `desired within`, periods and `… passes` (once per value; only an admitted change moves it).
 - **Everything is journaled** and replays to the same state.
 
 ## recipes: requirement → form
@@ -156,7 +157,7 @@ when a ⟨Kind⟩ is ⟨outcome | timed out⟩: ⟨action⟩[ and ⟨action⟩] 
 | try A, else B after a wait | `Return is Courier or Collection` + `prefer Return: Courier, then Collection after 2 days` |
 | shared stock | `Hold uses a Title where the Title's name is the Loan's title, taking the Loan's copies` + `rule stock: the total copies taken from each Title is at most its stock` |
 | deadline that alerts | `desired within 30 days: every Talk is decided` |
-| becomes overdue by itself | a part with `effect remind … within 14 days`, `attempts 1`, and `when a Reminder is timed out: its Loan is overdue`; guard with `define: … late when it is overdue and it is not returned` |
+| becomes overdue by itself | `due: Time = created + 14 days` + `when a Loan's due passes: it is overdue`; guard with `define: a Loan is late when it is overdue and it is not returned` |
 | limit per day or month | `rule daily: for each Member and day, the number of their Bookings is at most 2` |
 | number of days between dates | `days: Count = the days from its from to its to` |
 
@@ -171,7 +172,8 @@ kind Project  { name: Text, budget: Money }
 kind Expense  { employee: Employee, project: Project, amount: Money,
                 status: draft | approved = draft }
 kind Book     { title: Text }
-kind Loan     { book: Book, employee: Employee, returned: Bool = no }
+kind Loan     { book: Book, employee: Employee, returned: Bool = no,
+                due: Time = created + 14 days, overdue: Bool = no }
 kind Talk     { title: Text, length: Count, accepted: Bool = no }
 kind Review   { talk: Talk, reviewer: Employee, score: Count }
 
@@ -186,6 +188,7 @@ rule good:   no Talk is accepted unless the total score of its Reviews is at lea
 
 when a manager approves an Expense: the Expense is approved
 when a employee returns a Loan: the Loan is returned
+when a Loan's due passes: it is overdue
 when a manager accepts a Talk: the Talk is accepted
 
 admit submit a new Expense by employee where the Expense's employee is the caller
@@ -215,6 +218,9 @@ scenario "the recipes hold":
   expect K is lent
   when   employee Bo returns L1
   expect K is not lent
+  when   employee Ann borrows a new Loan L2 with book K and employee Ann
+  and    15 days pass
+  expect L2 is overdue
   when   employee Ann proposes a new Talk T1 with title "Rust" and length 40
          is refused at the gate
   when   employee Ann proposes a new Talk T2 with title "Rust" and length 45
@@ -232,7 +238,7 @@ scenario "the recipes hold":
 
 | Cannot | Instead |
 |---|---|
-| `now`, "past its due date" in a sentence | the reminder part above, or a `desired within` alert |
+| `now`, "past its due date" in a condition | `when a ⟨Kind⟩'s ⟨time⟩ passes` sets a fact the condition reads |
 | `no two` on a value that changes after creation | name only values set once, or say duplicates are not prevented |
 | a reaction setting another entity it only references | a `define` on that entity, from a total of what references it |
 | a negative `Count` (`score - 3` is not −1) | compare totals, or use `Money` |

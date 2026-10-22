@@ -5,10 +5,10 @@
 use suture_lang::ir::Mark;
 use std::collections::BTreeMap;
 
-use suture_lang::ir::{Action, Arith, Body, Cond, Criterion, Decision, Effect, Num, Op, Otherwise, Path, Program, Rule, Slot, Source, Step, Ty, CREATED, TIMED_OUT};
+use suture_lang::ir::{Action, Arith, Body, Cond, Criterion, Decision, Effect, Num, Op, Otherwise, Path, Program, Rule, Slot, Source, Step, Ty, CREATED, PASSES, TIMED_OUT};
 
 use crate::choice::order;
-use crate::state::{period_key, periods_in, span_key, take_text, SPAN_DAYS, Ask, Bind, Decide, Fact, Facts, Fetch, Msg, Node, Status, Unit, Val};
+use crate::state::{period_key, periods_in, span_key, take_text, time_text, SPAN_DAYS, Ask, Bind, Decide, Fact, Facts, Fetch, Msg, Node, Status, Unit, Val};
 
 static NO_TOTALS: BTreeMap<String, Val> = BTreeMap::new();
 
@@ -437,6 +437,7 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
         Msg::Create => {
             let attrs: Vec<String> = u.root.attrs.iter().map(|(k, v)| format!("{k} {}", shown(prog, k, v))).collect();
             u.notes.push(format!("placed: {}", attrs.join(", ")));
+            passing(prog, &mut u, None, now);
         }
         Msg::GoalDue { goal } => {
             goal_due(prog, &mut u, *goal);
@@ -462,6 +463,7 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
                 return Outcome::kept(unit, note, out);
             }
         }
+        Msg::Due { id } if id.contains(PASS_MARK) => passed(prog, &mut u, id),
         Msg::Due { id } => fetch_due(&mut u, id),
         Msg::Upgrade { goals, facts } => upgrade(prog, &mut u, goals, facts),
         Msg::Answer { key, outcome, .. } if outcome == TIMED_OUT => {
@@ -539,6 +541,7 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
         Msg::Change { attr, value, by } => {
             u.notes.push(format!("{by} changes {attr} to {}", shown(prog, attr, value)));
             u.root.attrs.insert(attr.clone(), value.clone());
+            passing(prog, &mut u, Some(attr), now);
         }
         Msg::Refresh { facts } => {
             // Only the facts it carries. A refresh is a fact and is never
@@ -1927,6 +1930,52 @@ pub fn fetch_due_matters(u: &Unit, id: &str) -> bool {
         _ => return false,
     };
     find_fetch(u, key, false).is_some_and(|(at, attr)| node_at(&u.root, &at).fetched.get(&attr).is_some_and(|f| f.sends == 0 && f.failed == again))
+}
+
+/// What marks a timer for a time that passes: `L1!passes:due@1767225600`.
+pub const PASS_MARK: &str = "!passes:";
+
+/// Arms the times of the unit that pass (appendix AQ.2.2–AQ.2.3): each one
+/// already past passes now; each later one is a timer. With `only`, just
+/// that attribute, which a change has just set.
+fn passing(prog: &Program, u: &mut Unit, only: Option<&str>, now: i64) {
+    let kind = u.root.kind.clone();
+    for r in prog.reactions.iter().filter(|r| r.kind == kind) {
+        let Some(attr) = r.outcome.strip_suffix(PASSES) else { continue };
+        if only.is_some_and(|o| o != attr) {
+            continue;
+        }
+        let Some(Val::Time(t)) = u.root.attrs.get(attr).cloned() else { continue };
+        if t <= now {
+            u.notes.push(format!("its {attr} has passed ({})", time_text(t)));
+            apply(prog, &mut u.root, &u.facts, &[], &r.actions, None, &mut u.notes);
+        } else {
+            let id = format!("{}{PASS_MARK}{attr}@{t}", u.label);
+            if !u.timers.iter().any(|(x, _)| *x == id) {
+                u.timers.push((id, (t - now) as u64));
+            }
+        }
+    }
+}
+
+/// Whether the timer `id` still stands for a time that passes: the
+/// attribute holds the time it was armed for (appendix AQ.2.3).
+pub fn pass_matters(u: &Unit, id: &str) -> Option<(String, i64)> {
+    let (_, rest) = id.split_once(PASS_MARK)?;
+    let (attr, t) = rest.rsplit_once('@')?;
+    let t: i64 = t.parse().ok()?;
+    (u.root.attrs.get(attr) == Some(&Val::Time(t))).then(|| (attr.to_string(), t))
+}
+
+/// A time passed: the reactions to it apply at the root.
+fn passed(prog: &Program, u: &mut Unit, id: &str) {
+    let Some((attr, t)) = pass_matters(u, id) else { return };
+    u.notes.push(format!("its {attr} passes ({})", time_text(t)));
+    let outcome = format!("{attr}{PASSES}");
+    let kind = u.root.kind.clone();
+    for r in prog.reactions.iter().filter(|r| r.kind == kind && r.outcome == outcome) {
+        apply(prog, &mut u.root, &u.facts, &[], &r.actions, None, &mut u.notes);
+    }
 }
 
 /// A source's timer (appendix I.2.5–I.2.6): after `ask again after`, the

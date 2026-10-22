@@ -40,6 +40,6 @@ One run per cell, so the numbers are indicative, not statistics. In each run of 
 ## Next
 
 - Done in slice 40: `rule once: no two Reviews have the same talk and reviewer` (spec appendix AP).
-- A time-driven state (`when a Loan's due passes: …`), so "overdue on its own" needs no reminder part.
+- Done in slice 41: `when a Loan's due passes: it is overdue` (spec appendix AQ).
 - `suture check` showing the steps around a failure first, not only the whole trace.
 - More tasks and repeated runs before claiming a trend.

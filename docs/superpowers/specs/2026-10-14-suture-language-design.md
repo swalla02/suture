@@ -2071,3 +2071,33 @@ In the agent eval (appendix AO), every run failed the same requirement: "a revie
   - a global uniqueness on a text refuses a second Member with the same email.
 - lang tests: the checker refuses an unknown or changing attribute, a kind given in the singular, and a uniqueness without a reference that is not `checked globally`.
 - The book's limits no longer list pair uniqueness. Its recipes and the guide's rules chapter show the sentence, tested.
+
+## Appendix AQ. Prototype slice 41: when a time passes (2026-10-22)
+
+The agent eval's task A (appendix AO) needed a loan that becomes overdue on its own. The only way to write it was a reminder part, with an effect that nobody answers, `attempts 1`, and a reaction to its timing out. Slice 41 says it directly.
+
+### AQ.1 What slice 41 adds
+
+| Added in slice 41 | Still waits |
+|---|---|
+| `when a ⟨Kind⟩'s ⟨time⟩ passes: ⟨action⟩[ and ⟨action⟩]` | a time on a part (`when a Line's due passes`) |
+| an admitted change to the time moves when it passes | a time set by a reaction, an answer or a source |
+| scenarios: `when 15 days pass` reaches it | `before`/`after` offsets (`when 2 days before its due`), written as a formula for now |
+
+### AQ.2 Semantics that slice 41 settles
+
+1. **What passes.** The time is a `Time` attribute of a kind that is no part: given at creation, or a formula such as `due: Time = created + 14 days`. It passes when the clock reaches it. The reaction's actions then apply to the entity, as an effect's reaction does (appendix C), and the step settles.
+2. **A time already past** when the entity is created passes in the step that creates it.
+3. **It passes once per value.** Only an admitted change (`admit change Loan's due by librarian`) may set the attribute after creation. A change to a later time moves the passing there, and one to a time already past passes at once. A passing that was scheduled for an old value does nothing. The checker refuses a passing on an attribute that a reaction, an effect's answer or a source sets.
+4. **How it is kept.** The unit asks the host for a timer `⟨label⟩!passes:⟨attr⟩@⟨time⟩`, as sources and slots do (appendix I.2.5). The firing is a journaled step, so a replay passes at the same times.
+5. **What it does not do.** It has no condition of its own: guard what it sets with a definition, such as `define: a Loan is late when it is overdue and it is not returned`.
+
+### AQ.3 Acceptance
+
+- runtime/tests/passes.rs:
+  - a Loan becomes overdue when its due passes, and not before;
+  - a due already past is overdue at creation;
+  - an admitted change before the due moves it, and the old time does nothing;
+  - a replay of the log passes at the same times.
+- lang tests: the checker refuses a passing on an unknown or non-Time attribute, on a part's kind, and on an attribute a reaction sets.
+- The book's recipe "becomes overdue by itself" uses the sentence, tested.

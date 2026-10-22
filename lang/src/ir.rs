@@ -641,6 +641,10 @@ pub enum Cond {
 /// The outcome of a request that got no answer in time (appendix C.3.3).
 pub const TIMED_OUT: &str = "timed out";
 
+/// The end of a reaction's outcome when it is to a time passing:
+/// `due passes`, for `when a Loan's due passes` (appendix AQ).
+pub const PASSES: &str = " passes";
+
 /// The built-in attribute every entity has: when it was created (appendix F.2.14).
 pub const CREATED: &str = "created";
 

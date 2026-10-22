@@ -2,7 +2,7 @@
 //! statement it is; a capitalized first word starts `Kind needs …`.
 
 use crate::ast::*;
-use crate::ir::{PERIODS, READ, UNREAD};
+use crate::ir::{PASSES, PERIODS, READ, UNREAD};
 use crate::lex::{statements, Cursor, Error, Stmt, Tok};
 use crate::sentence::{calc_expr, calc_formula, condition, literal, noun_phrase, predicate, rule_body, starts_noun_phrase, state_word, subject};
 
@@ -644,8 +644,17 @@ fn reaction(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
         (c.kind_name()?, verb)
     } else {
         let kind = c.kind_name()?;
-        c.expect_word("is")?;
-        (kind, state_word(&mut c)?)
+        if c.eat_poss() {
+            // `when a Loan's due passes:` (appendix AQ).
+            let attr = c.word()?;
+            if !c.eat_word("passes") {
+                return Err(c.error(format!("expected `passes`, as in `when a {kind}'s {attr} passes:`, found {}", c.found())));
+            }
+            (kind, format!("{attr}{PASSES}"))
+        } else {
+            c.expect_word("is")?;
+            (kind, state_word(&mut c)?)
+        }
     };
     c.expect_sym(':')?;
     let mut actions = vec![action(&mut c)?];

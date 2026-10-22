@@ -112,10 +112,11 @@ scenario "a silent assessor times out after three sends":
 when ⟨event⟩: ⟨action⟩[ and ⟨action⟩…]
 ```
 
-There are two kinds of event:
+There are three kinds of event:
 
 - **an outcome:** `when a Payout is paid: …`, `when an Assessment is timed out: …`;
-- **an admitted event from a caller:** `when a holder cancels a Claim: …` (chapter 10).
+- **an admitted event from a caller:** `when a holder cancels a Claim: …` (chapter 10);
+- **a time passing:** `when a Loan's due passes: …`, below.
 
 In the reaction, the subject is the entity the event happened to. `its Claim` (or `the Claim`) is its owner, and `its offer` is its own attribute.
 
@@ -131,5 +132,20 @@ There are three actions:
 The types must match. A value that is unknown is not set, and the trace says so. A `Count` never becomes negative.
 
 A reaction is a step like any other. If its actions would break a rule, the step is refused: for an answer, the answer is refused as above; for a caller's event, the caller is told which rule refused it. A reaction to a `timed out` is different, because a time-out is a fact: the time-out is always recorded, and only the reaction is held back (`reaction held: rule …`).
+
+### When a time passes
+
+```suture
+kind Member { name: Text }
+kind Loan   { member: Member, due: Time = created + 14 days, returned: Bool = no, overdue: Bool = no }
+
+define: a Loan is late when it is overdue and it is not returned
+
+when a Loan's due passes: it is overdue
+```
+
+`when a ⟨Kind⟩'s ⟨time⟩ passes` reacts when the clock reaches one of the entity's `Time` attributes, given at creation or computed by a formula. The trace shows `L1  its due passes (2026-01-15 00:00)`. A time already past when the entity is created passes as it is created.
+
+The time may be moved by an admitted change (`admit change Hold's until by librarian`), for a renewal. A change to a later time moves the passing, a change to a time already past passes at once, and the old time then does nothing. No reaction, answer or source may set it: the compiler refuses that. The reaction has no condition, so guard what it sets with a definition, as `late` does here. Only an entity that is no part has times that pass, for now.
 
 Reactions only ever change facts. They never start work directly: work follows from needs. To "send a letter when a claim is rejected", declare that a rejected claim needs a Letter, and give Letter an effect.
