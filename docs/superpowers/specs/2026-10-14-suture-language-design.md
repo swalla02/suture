@@ -1901,3 +1901,26 @@ A total across units is kept only when the program reads it (AC.4). The leave ev
 
 - The leave port replaces its two unused definitions with two `keep`s: +2 −2 lines, 16 scenarios passing.
 
+## Appendix AJ. Prototype slice 34: a model picks the model (2026-10-22)
+
+A `decide` names one model for a scope, and a `whose` moves a choice to another model by a fixed condition (J.2). Some routing depends on what only a model can judge: how unusual a photo looks, or how hard a case is. Slice 34 lets a fast System One model, one that only picks, choose which model makes a choice.
+
+### AJ.1 What slice 34 adds
+
+| Added in slice 34 | Still waits |
+|---|---|
+| `decide … with model "a@1" or model "b@1"[ or prefer] [within …], picked by model "r@1" [within …]` | a router that sees the choice's options |
+| the router's pick, journaled under `⟨key⟩?model` | routing among `whose` scopes |
+| `model "r@1" picks "b@1"` and `picks prefer` in scenarios | a router's own `at least … sure` |
+
+### AJ.2 Semantics that slice 34 settles
+
+1. **Candidates.** A routed `decide` names two or more candidates, each once: models, and at most one `prefer`. The first is the default. The first `within` bounds each candidate's answer, and the second bounds the router's. Both default to 1 second, and both are from 1 millisecond to 10 minutes. `or` without `picked by` is an error, and so is `picked by` with one candidate. Ranking and ties are as for any `decide` (J.2.3).
+2. **The router's choice.** When a routed choice has more than one option, the router is asked first. Its choice has the same point, chooser, facts and media as the choice, with `?model` added to its point and key. Its options are the candidates by name, `prefer` for `prefer`, with no attributes. The router never sees the options of the choice itself.
+3. **Then the candidate.** The router's pick is resolved like any model's (K.2.5). Anything other than a candidate's name, including declining, being late or unsure, or failing, gives the first candidate. If the pick is a model, that model is asked as a single `decide` would ask it, and its answer is resolved against the choice's options, best first under `prefer`. If the pick is `prefer`, the first option is picked, `by prefer (as model "r@1" picked)`. The trace shows the router's pick as `model for ⟨key⟩: ⟨candidate⟩ by …`. A routed choice is never worse than an unrouted one, because every pick is still checked by the rules.
+4. **Journal and serving.** Both answers are journaled in order, the router's under `⟨key⟩?model`, so replay asks neither. A served program defers the router like any model (S.2.2). When its answer is logged, the picked model is deferred under the choice's own key and asked in the same pass. A unit's request to a model for a slot or a source names the decision it routes, by index, so the host finds the candidates.
+
+### AJ.3 Acceptance
+
+- Bindings, slots and source choices route. The router's pick, `prefer`, an unoffered name and a late router each behave as AJ.2.3 says. A served route logs two `decided` records and replays without a model. The claims eval passes its 16 scenarios with its assessor routed and the router unscripted.
+

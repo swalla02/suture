@@ -165,6 +165,13 @@ source Claim's amount via model "invoices@1" within 10 seconds
 
 Media is stored once, by its SHA-256, and a unit holds only a reference: `photo (image/png, 48213 bytes, sha256 9f2c41d07a1b)`. Images (PNG, JPEG, GIF, WebP), audio (MP3, WAV, Ogg), video (MP4, WebM), PDF and text come in through `POST /media`, or as `file "dent.png"` in a scenario. No rule or formula can read media, so what the program means never depends on how a model saw a picture. The model still only picks among allowed options, or reads one typed value.
 
+**Models can pick models.** A fast router can choose which model makes a choice, or leave it to `prefer`. The router only picks a name from a list, so it is a decision model too:
+
+```text
+decide Outcome with model "fast@1" or model "careful@1" or prefer,
+  picked by model "router@1" within 100 milliseconds
+```
+
 Every model answer is journaled, so replay never calls a model. With every model switched off, the system still runs. That makes Suture a governed runtime for AI decisions: a model can be wrong, but it can't take you past a limit, skip an approval or pay twice. See [chapter 15](docs/guide/15-decision-models.md) and [chapter 14](docs/guide/14-sourcing.md).
 
 ## What it guarantees

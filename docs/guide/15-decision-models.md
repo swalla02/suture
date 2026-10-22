@@ -240,6 +240,63 @@ host.models.register("dearest@1", Box::new(|c: &Choice| {
 
 Returning `None` declines. A `Choice` also holds the kind of the entity that chooses and its facts. `host.models.register_backend` takes anything that implements `Backend`, which is how the Jev and custom backends below are built.
 
+## A model that picks the model
+
+A `whose` sends a choice to a model by a fixed condition. When the deciding factor is something only a model can judge, such as how unusual a claim's photo looks or how hard a case is, a fast router model can pick which model makes the choice:
+
+```suture
+module shop version 1, currency EUR
+
+role staff
+
+kind Product  { name: Text }
+kind Carrier  { name: Text, zone: Text, fee: Money }
+kind Order    { product: Product, zone: Text }
+kind Shipment { order: Order }
+
+Order    needs Shipment
+Shipment uses  a Carrier where the Carrier's zone is the Order's zone
+
+prefer Carrier: lowest fee
+
+decide Carrier with model "fast@1" or model "careful@1" or prefer within 2 seconds,
+  picked by model "router@1" within 100 milliseconds
+
+admit place a new Order by staff
+```
+
+The router is a decision model like any other. It gets the same facts and media as the choice would, and its options are the candidates by name: `fast@1`, `careful@1` and `prefer`. It picks one, and that one makes the choice. A router never sees the carriers, and the model it picks still only picks among the carriers the rules allow:
+
+```scenario
+scenario "the router sends the order to the careful model":
+  given  a Product Kettle with name Kettle
+  and    a Carrier Cheap with name Cheap, zone EU and fee 5 EUR
+  and    a Carrier Fast with name Fast, zone EU and fee 9 EUR
+  when   model "router@1" picks "careful@1"
+  and    model "careful@1" picks Fast
+  and    staff Sam places a new Order O1 with product Kettle and zone EU
+  expect O1's Shipment's Carrier's name is "Fast"
+
+scenario "the router leaves an easy one to prefer":
+  given  a Product Kettle with name Kettle
+  and    a Carrier Cheap with name Cheap, zone EU and fee 5 EUR
+  and    a Carrier Fast with name Fast, zone EU and fee 9 EUR
+  when   model "router@1" picks prefer
+  and    staff Sam places a new Order O1 with product Kettle and zone EU
+  expect O1's Shipment's Carrier's name is "Cheap"
+```
+
+The trace shows both picks:
+
+```text
+      model for O1/Shipment#1@Carrier: careful@1 by model "router@1" (of fast@1, careful@1, prefer)
+      choice: Fast for O1/Shipment#1@Carrier by model "careful@1" (of Cheap, Fast)
+```
+
+If the router declines, is late, is unsure, fails or picks a name it was not offered, the first candidate makes the choice, here `fast@1`. If that model is no help either, `prefer` picks as usual. Candidates are named once each, and there must be two or more. The first `within` bounds the candidate's answer and the second bounds the router's (1 second each by default). In a scenario, a router picks a model by its quoted name, or `prefer`. Both answers are journaled, the router's under the choice's key with `?model` added, so a replay asks neither. A served program asks the router after the step, then the model it picked. `suture build` lists the route as the choice's handler: `model "fast@1" or model "careful@1" or `prefer` within 2000 ms, picked by model "router@1" within 100 ms`.
+
+A route works for every choice a `decide` covers: a binding, a slot, and the source of a sourced attribute.
+
 ## Slots
 
 A slot's alternative is a choice too (chapter 4). `decide Return …` hands it to a model; an app-level or workflow-level `decide` covers it as well.
