@@ -125,6 +125,7 @@ scenario "⟨title⟩":
 ## The command
 
 ```text
+suture check   ⟨dir⟩ [--json]                      compile and run every scenario beside it; traces only for failures
 suture build   ⟨dir⟩                               compile, write ⟨module⟩-v⟨n⟩.sut and .manifest, print read-backs
 suture run     ⟨dir⟩ --scenario ⟨file⟩             run scenarios and print their traces
 suture serve   ⟨dir⟩ [--state ⟨dir⟩] [--listen ⟨addr⟩] [--pod ⟨name⟩] [--models]
@@ -132,6 +133,9 @@ suture serve   ⟨dir⟩ [--state ⟨dir⟩] [--listen ⟨addr⟩] [--pod ⟨nam
 suture deploy  ⟨dir⟩ [--state ⟨dir⟩]               check a new version against the live state (chapter 18)
 suture explain ⟨dir⟩ --scenario ⟨file⟩ ⟨name⟩      … and explain one entity at the end of each
 suture lsp                                         the language server, over stdin and stdout (chapter 21)
+suture init    ⟨dir⟩                               AGENTS.md, CLAUDE.md, .mcp.json and a starter module, for a coding agent
+suture help    [⟨topic⟩ | all]                     the agent cards: forms, recipes and limits (chapter 12)
+suture mcp                                         the MCP server: suture_help, suture_check, suture_build, suture_explain
 ```
 
-Exit status: 0 success, 1 a scenario failed, 2 the program does not compile or bad arguments.
+Exit status: 0 success, 1 a scenario failed (for `check`, anything failed), 2 the program does not compile or bad arguments.

@@ -33,7 +33,7 @@ impl Found {
         let mut out = String::new();
         for e in &self.errors {
             let at = match e["line"].as_u64() {
-                Some(0) | None => format!("{}", e["file"].as_str().unwrap_or("")),
+                Some(0) | None => e["file"].as_str().unwrap_or("").to_string(),
                 Some(l) => format!("{}:{l}", e["file"].as_str().unwrap_or("")),
             };
             out += &format!("error: {at}: {}\n", e["message"].as_str().unwrap_or(""));

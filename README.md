@@ -242,6 +242,18 @@ It's a good fit for workflows with many steps, outside services, shared resource
 | `decide … with model` | which decision model, if any, makes an open choice |
 | `keep` | a running total kept for dashboards and tests |
 
+## Built for coding agents
+
+An agent has never seen Suture, so it doesn't have to read the guide to write it:
+
+```sh
+suture init billing        # AGENTS.md, CLAUDE.md, .mcp.json and a module that passes
+suture help recipes        # a requirement → the form that writes it; `suture help limits` for what can't be written yet
+suture check billing       # compile and run every scenario; traces only for what failed, --json for tools
+```
+
+`suture mcp` serves the same as MCP tools, and `docs/agents/skill/suture` is a Claude Code skill. Every example in the cards compiles and passes in the test suite, so the help never drifts from the language. In [an eval](eval/agents/RESULTS.md) on a task in no card, a fresh agent with the kit read a third as much documentation and finished in less than half the time, meeting the same requirements. You review what it wrote through `suture build`'s plain-English read-back and the scenarios.
+
 ## Learn it
 
 **[The Suture guide](docs/guide/README.md)** is the place to start: a tutorial, one chapter per construct, modelling patterns, the limits of v0, and a [one-page reference](docs/guide/reference.md). Every program, error and scenario in it is compiled and run by the test suite.

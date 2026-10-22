@@ -23,6 +23,8 @@ Look the requirement up here first. Each line is a form that compiles; the card 
 | a value from a document or photo | `source … via model "…"` (models) |
 | a choice a model makes | `decide … with model "…"` behind `prefer` (models) |
 | a limit per day or month | `rule ⟨n⟩: for each Member and day, the number of their Bookings is at most 2` (time) |
+| a value from a fixed set of numbers (30 or 45) | `define: a Talk is standard when its length is 30 or its length is 45` and `admit submit a new Talk by speaker where the Talk is standard` |
+| an average at least N | compare totals: `rule good: no Talk is accepted unless the total score of its Reviews is at least the number of its Reviews * 3` |
 | a total shown but not limited | `keep the total amount of each Project's Expenses` (rules) |
 
 Before writing, check `suture help limits`: some requirements cannot be written yet, and the card says what to do instead.
@@ -63,6 +65,19 @@ admit reject Expense by manager
 admit borrow a new Loan by employee where the Loan's employee is the caller
 admit return Loan by employee where the Loan's employee is the caller
 admit add a new Employee, Project or Book by manager
+
+kind Talk   { title: Text, length: Count, accepted: Bool = no }
+kind Review { talk: Talk, score: Count }
+
+define: a Talk is standard when its length is 30 or its length is 45
+
+rule good: no Talk is accepted unless the total score of its Reviews is at least the number of its Reviews * 3
+
+when a manager accepts a Talk: the Talk is accepted
+
+admit propose a new Talk by employee where the Talk is standard
+admit score a new Review by manager
+admit accept Talk by manager
 ```
 
 ```scenario
@@ -85,4 +100,18 @@ scenario "a manager cannot approve their own expense, and a book is lent while a
   when   employee Bo returns L1
   expect K is not lent
   expect the total amount of Ann's Expenses is 600 EUR
+
+scenario "a talk of 40 minutes is refused, and a low average cannot be accepted":
+  given  a Employee Ann with name "Ann"
+  and    a Employee Bo with name "Bo"
+  when   employee Ann proposes a new Talk T1 with title "Rust" and length 40
+         is refused at the gate
+  when   employee Ann proposes a new Talk T2 with title "Rust" and length 45
+  and    manager Bo scores a new Review R1 with talk T2 and score 2
+  and    manager Bo scores a new Review R2 with talk T2 and score 3
+  and    manager Bo accepts T2
+         is refused by rule good
+  when   manager Bo scores a new Review R3 with talk T2 and score 5
+  and    manager Bo accepts T2
+  expect T2 is accepted
 ```

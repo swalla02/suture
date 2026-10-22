@@ -1,12 +1,42 @@
 # 12. The `suture` command
 
 ```text
+suture check   ⟨dir⟩ [--json]
 suture build   ⟨dir⟩
 suture run     ⟨dir⟩ --scenario ⟨file⟩ [--models]
 suture explain ⟨dir⟩ --scenario ⟨file⟩ ⟨name⟩
+suture init    ⟨dir⟩
+suture help    [⟨topic⟩ | all]
+suture mcp
 ```
 
-`⟨dir⟩` is the directory that holds the program's `.st` files. The command exits with 0 on success, 1 when a scenario fails, and 2 when the program does not compile or the arguments are wrong.
+`⟨dir⟩` is the directory that holds the program's `.st` files. The command exits with 0 on success, 1 when a scenario fails (or, for `check`, anything fails), and 2 when the program does not compile or the arguments are wrong.
+
+## `suture check`
+
+`check` is the loop to run after every edit. It compiles the module, runs every scenario of every `.scenario` file in the directory, and keeps the output short: every compile error with its file and line, `✓` and the title for each passing scenario, and the whole trace and the failures only for a failing one. The last line counts them:
+
+```text
+✓ rooms.scenario: "a booking that does not fit is refused"
+✗ rooms.scenario: "a cancelled booking frees the room"
+    …the trace…
+  ✗ expected B1 is cancelled
+2 scenarios: 1 passed, 1 failed
+```
+
+`--json` prints the same as one JSON object: `passed`, `errors` (each with `file`, `line` and `message`), `warnings`, and `scenarios` (each with `file`, `title`, `passed`, `failures`, and the `trace` when it failed).
+
+## Working with a coding agent
+
+Most code is now written by agents, and an agent has never seen Suture before. Three commands give it what it needs without reading this guide:
+
+- **`suture help`** lists short cards: `start`, `kinds`, `gate`, `rules`, `parts`, `time`, `recipes`, `scenarios`, `models`, `api` and `limits`. `recipes` maps common requirements to the form that writes them, and `limits` says what cannot be written yet and what to do instead, so an agent stops looking. `suture help all` prints every card, about 450 lines. Every example in the cards compiles and every scenario in them passes; the test suite checks it.
+- **`suture init ⟨dir⟩`** writes an `AGENTS.md` with the loop (help, write, check, build), a `CLAUDE.md` that points to it, a `.mcp.json` that registers `suture mcp`, and, if the directory has no module yet, a small module and scenario that pass. It never overwrites a file.
+- **`suture mcp`** is a Model Context Protocol server over stdin and stdout, with the tools `suture_help`, `suture_check`, `suture_build` and `suture_explain`. Claude Code reads it from the `.mcp.json` that `init` writes; other clients take the command `suture mcp`.
+
+For Claude Code across many modules, copy `docs/agents/skill/suture` to `~/.claude/skills/suture`. The skill says the same as `AGENTS.md`.
+
+The person reviews what the agent wrote through `suture build`'s read-backs and the scenarios, not through the syntax.
 
 ## `suture build`
 
