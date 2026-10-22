@@ -345,6 +345,9 @@ pub struct AdmitDecl {
     pub at: Loc,
 }
 
+/// A decide's router: its model, `within`, `at least … sure` and `otherwise`.
+pub type Router = (String, Option<u64>, Option<u16>, Option<String>);
+
 /// `decide [Carrier] [for Orders [whose …]] with model "carriers@1"` (appendix J).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecideDecl {
@@ -367,7 +370,7 @@ pub struct DecideDecl {
     pub otherwise: Option<String>,
     /// The router, its `within`, its `at least … sure` and its `otherwise`
     /// (a candidate's name, or `prefer`).
-    pub router: Option<(String, Option<u64>, Option<u16>, Option<String>)>,
+    pub router: Option<Router>,
     pub source: String,
     pub at: Loc,
 }
