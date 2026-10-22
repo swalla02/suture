@@ -979,10 +979,13 @@ impl Checker {
         self.admits(src, &mut p);
         self.reactions(src, &mut p);
         self.keeps(src, &p);
-        // What `no two` compares never changes, once every way to change a
-        // value is known (appendix AP.2.4); a time that passes changes only
-        // by an admitted change (appendix AQ.2.3).
-        let changes = changeable(&p);
+        // What `no two` compares changes only by a caller's input, which the
+        // count can refuse, once every way to change a value is known
+        // (appendix AX.2.1); a time that passes changes only by an admitted
+        // change (appendix AQ.2.3).
+        let mut changes: Vec<String> = p.reactions.iter().filter(|r| r.by.is_empty()).flat_map(|r| r.actions.iter().map(|a| a.attr.clone())).collect();
+        changes.extend(p.effects.iter().flat_map(|e| e.data.iter().map(|(n, _)| n.clone())));
+        changes.extend(p.sources.iter().filter(|s| !read_once(&p, &s.kind, &s.attr)).map(|s| s.attr.clone()));
         let inside = set_inside(&p);
         for r in &src.reactions {
             if let Some(attr) = r.outcome.strip_suffix(PASSES)
@@ -995,7 +998,7 @@ impl Checker {
             if let ast::RuleBody::Unique { subject, same } = &r.body
                 && let Some(a) = same.iter().find(|a| changes.contains(a)) {
                 let kind = p.kinds.iter().find(|k| k.plural == subject.kind).map_or(subject.kind.clone(), |k| k.name.clone());
-                self.errors.push(err(&r.at, format!("rule {}: a {kind}'s {a} can change after it is created, and `no two` needs values that never change (appendix AP.2.4)", r.name)));
+                self.errors.push(err(&r.at, format!("rule {}: a {kind}'s {a} is set by an effect's answer, a source or a reaction to an outcome, and `no two` follows a value only when a caller changes it (appendix AX.2.1)", r.name)));
             }
         }
         // Totals across units read outside rules: in formulas, definitions,

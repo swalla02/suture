@@ -71,7 +71,7 @@ Conditions (`⟨cond⟩`), noun phrases, numbers and filters are in `rules`; act
 | Cannot | Instead |
 |---|---|
 | `now`, "past its due date" in a condition | `when a ⟨Kind⟩'s ⟨time⟩ passes` sets a fact the condition reads |
-| `no two` on a value that changes after creation | name only values set once, or say duplicates are not prevented |
+| `no two` on a value an answer or a source sets | compare a value callers set, or say duplicates are not prevented |
 | a reaction setting another entity it only references | a `define` on that entity, from a total of what references it |
 | a negative `Count` (`score - 3` is not −1) | compare totals, or use `Money` |
 | holidays and half days in a day count | take working days as an input, and say so |

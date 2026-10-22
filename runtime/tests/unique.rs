@@ -137,10 +137,63 @@ fn the_checker_names_what_cannot_be_compared() {
     assert!(first("no two Review have the same talk").contains("name the kind in the plural, `no two Reviews`"));
     assert!(first("no two Reviews have the same mood").contains("has no attribute `mood`"));
     assert!(first("no two Reviews have the same talk and talk").contains("`talk` is named twice"));
-    assert!(first("no two Reviews have the same talk and withdrawn").contains("can change after it is created"));
+    // A caller's event sets `withdrawn`, so the count can follow it (appendix AX).
+    assert!(with("no two Reviews have the same talk and withdrawn").is_empty(), "{:?}", with("no two Reviews have the same talk and withdrawn"));
     assert!(first("no two Talks have the same title").contains("end the rule with `, checked globally`"));
     assert!(first("no two Reviews have the same talk, checked globally").contains("drop `, checked globally`"));
     assert!(first("no two Reviews has the same talk").contains("expected `have the same …`"));
     let secret = errors(&CFP.replace("email: Text", "email: Text secret").replace("rule rooms", "rule rooms2: no two Slots have the same hour, checked globally\nrule rooms"));
     assert!(secret.iter().any(|e| e.contains("is secret")), "{secret:?}");
+}
+
+const CHANGES: &str = "admit change Person's email by staff
+admit change Slot's hour by staff
+";
+
+#[test]
+fn a_changed_value_moves_its_count_and_a_clash_is_refused() {
+    // Appendix AX.
+    let r = runs(
+        &format!("{CFP}{CHANGES}"),
+        &format!(
+            "{PEOPLE}  when   staff Sam changes Bo's email to \"ann@x.org\"
+         is refused by rule emails
+  and    staff Sam changes Bo's email to \"bo2@x.org\"
+  and    staff Sam adds a new Person Cy with name \"Cy\" and email \"bo@x.org\"
+  and    staff Sam adds a new Person Di with name \"Di\" and email \"bo2@x.org\"
+         is refused by rule emails
+  expect Bo's email is \"bo2@x.org\"
+  expect Cy's email is \"bo@x.org\"
+"
+        ),
+    );
+    assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
+    assert!(r.host.trace.iter().any(|l| l.contains("moves its count")), "{}", r.host.trace.join("\n"));
+}
+
+#[test]
+fn a_changed_value_in_a_group_moves_within_the_group() {
+    let r = runs(
+        &format!("{CFP}{CHANGES}"),
+        &format!(
+            "{PEOPLE}  and    a Slot S1 with room \"A\", day 2026-03-02 and hour 9
+  and    a Slot S2 with room \"A\", day 2026-03-02 and hour 10
+  when   staff Sam changes S2's hour to 9
+         is refused by rule rooms
+  and    staff Sam changes S2's hour to 11
+  and    staff Sam adds a new Slot S3 with room \"A\", day 2026-03-02 and hour 10
+  and    staff Sam adds a new Slot S4 with room \"A\", day 2026-03-02 and hour 11
+         is refused by rule rooms
+  expect S2's hour is 11
+"
+        ),
+    );
+    assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
+}
+
+#[test]
+fn a_value_an_answer_sets_cannot_be_compared() {
+    let src = format!("{CFP}kind Check {{ person: Person }}\nPerson needs Check\neffect verify Check via checks within 1 hour\n  sends    the person's name\n  reports  verified with badge: Text\nrule badges: no two Checks have the same person and badge\n");
+    let e = errors(&src);
+    assert!(e.iter().any(|e| e.contains("set by an effect's answer")), "{e:?}");
 }

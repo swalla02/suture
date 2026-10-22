@@ -801,6 +801,32 @@ fn held_pass(prog: &Program, u: &mut Unit, at: &[usize], out: &mut Out) -> bool 
     false
 }
 
+/// Moves a `no two` count to its new group when a value it compares
+/// changes: the old take is given back and the new one asked for, and the host refuses the input if
+/// the new one would break the rule (appendix AX.2.2). Makes at most one change.
+fn regroup_pass(prog: &Program, u: &mut Unit, at: &[usize], out: &mut Out) -> bool {
+    for (id, i, _) in bind_slots(prog, &u.root, at) {
+        if !prog.bindings[i].unique {
+            continue;
+        }
+        let Some(Bind::Granted { to, taken: Some((name, amount)) }) = node_at(&u.root, at).binds.get(&id).cloned() else { continue };
+        // A reference never changes by a caller (appendix G.2.5), so the
+        // count stays with the same entity; only its group moves.
+        let Some(d) = decide_for(prog, u, at, &id, vec![]) else { continue };
+        if d.taken.as_ref().is_some_and(|(n, _)| *n == name) {
+            continue;
+        }
+        let key = format!("{}@{id}", request_key(&u.label, &u.root, at));
+        out.sends.push((to.clone(), Msg::Release { from: u.label.clone(), key, taken: Some((name, amount)) }));
+        let kind = node_at(&u.root, at).kind.clone();
+        u.notes.push(format!("{kind} moves its count from {to}"));
+        node_at_mut(&mut u.root, at).binds.insert(id, Bind::Asked { skip: vec![] });
+        out.decides.push(d);
+        return true;
+    }
+    false
+}
+
 /// The choice request for the binding `id` of the part at `at`, if its
 /// amount is known.
 fn decide_for(prog: &Program, u: &Unit, at: &[usize], id: &str, skip: Vec<String>) -> Option<Decide> {
@@ -1191,6 +1217,7 @@ fn settle(prog: &Program, u: &mut Unit, out: &mut Out, now: i64) {
             needs_pass(prog, u, at, now, out)
                 || bind_pass(prog, u, at, out)
                 || held_pass(prog, u, at, out)
+                || regroup_pass(prog, u, at, out)
                 || done_pass(prog, u, at, now, out)
                 || request_pass(prog, u, at, now, out)
                 || sources_pass(prog, u, at, now, out)

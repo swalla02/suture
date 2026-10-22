@@ -137,7 +137,7 @@ rule once: no two Reviews that are not withdrawn have the same talk and reviewer
   cost:            per-group
 ```
 
-An admitted input that would make two alike is refused by the rule. With `that`, an entity counts only while the filter holds, so a withdrawn Review no longer blocks a new one. The attributes named must never change after creation, since a change would move the entity to another group: the compiler refuses a rule that names one a reaction, an answer or an admitted change sets. A secret attribute cannot be named either.
+An admitted input that would make two alike is refused by the rule. With `that`, an entity counts only while the filter holds, so a withdrawn Review no longer blocks a new one. An attribute named may change by a caller: an admitted change (`admit change Person's email by staff`) or the reaction to an admitted event. The entity's count then moves to its new group, and a change that would make two alike is refused, like a new entity. The compiler refuses a rule that names an attribute an effect's answer, a source or a reaction to an outcome sets, since nothing could refuse that change. A reference cannot be changed by a caller, so the entity always counts toward the same one. A secret attribute cannot be named either.
 
 ## How rules are enforced
 

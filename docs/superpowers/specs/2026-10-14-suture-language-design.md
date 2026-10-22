@@ -2244,3 +2244,29 @@ The leave eval needed working days. Holiday lists need dates as data across unit
 ### AW.4 Not in this slice: order within a relation
 
 The returns port's `seq` stands for "the newest Item of its unit". Writing it directly needs a relation filter that compares each sibling with the reader (`… that are created after it`), which is also what holiday lists across units need. That is a larger change than a slice, so it waits for a design decision.
+
+## Appendix AX. Prototype slice 48: `no two` on values that change (2026-10-22)
+
+Slice 40's `no two` (appendix AP.2.4) refused any attribute that could change after creation. Changing an email, or moving a slot to another hour, could not be checked. A count now follows a change made by a caller.
+
+### AX.1 What slice 48 adds
+
+| Added in slice 48 | Still waits |
+|---|---|
+| `no two` over attributes an admitted change or an event's reaction sets | values an effect's answer, a source or an outcome's reaction sets |
+| the count moves to its new group, and a clash is refused | |
+
+### AX.2 Semantics that slice 48 settles
+
+1. **What may change.** An attribute `no two` names may be set by an admitted change or by the reaction to an admitted event. One that an effect's answer, a source read more than once, or a reaction to an outcome, timeout or passing time sets is an error: no input carries that change, so nothing could refuse it.
+2. **The count moves.** When a compared value changes, the entity gives back its old take and asks for one in the new group, in the same step. The host checks that take before the input is admitted (as in appendix AP.2.3), so a change that would make two alike is refused by the rule and nothing changes.
+3. **References** cannot be changed by a caller (appendix G.2.5), so the count always stays with the same entity.
+4. The trace says `⟨Kind⟩ moves its count from ⟨entity⟩`.
+
+### AX.3 Acceptance
+
+- runtime/tests/unique.rs:
+  - changing an email to another person's is refused, and changing it to a new one frees the old;
+  - changing a slot's hour moves it within the room's group;
+  - a value an answer sets is an error;
+  - `withdrawn`, which an event sets, may be compared.

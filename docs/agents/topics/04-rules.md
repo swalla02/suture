@@ -8,7 +8,7 @@ rule ⟨name⟩: no ⟨subject⟩ has a ⟨Kind⟩ [that ⟨cond⟩] [unless ⟨
 rule ⟨name⟩: the number of each ⟨Kind⟩'s ⟨Kinds⟩ [that ⟨cond⟩] ⟨cmp⟩ ⟨num⟩
 rule ⟨name⟩: the total ⟨attr⟩ of each ⟨Kind⟩'s ⟨Kinds⟩ [that ⟨cond⟩] ⟨cmp⟩ ⟨num⟩
 rule ⟨name⟩: the total ⟨attr⟩ taken from each ⟨Kind⟩ ⟨cmp⟩ ⟨num⟩
-rule ⟨name⟩: no two ⟨Kinds⟩ [that ⟨cond⟩] have the same ⟨attr⟩[, ⟨attr⟩] [and ⟨attr⟩]   values never set after creation
+rule ⟨name⟩: no two ⟨Kinds⟩ [that ⟨cond⟩] have the same ⟨attr⟩[, ⟨attr⟩] [and ⟨attr⟩]   values only callers change
 rule ⟨name⟩: for each ⟨Kind⟩ and day|week|month|year [from their ⟨attr⟩ to their ⟨attr⟩], ⟨number rule about their ⟨Kinds⟩⟩
 define: a ⟨Kind⟩ is ⟨state⟩ when ⟨cond⟩
 keep the total ⟨attr⟩ | the number of each ⟨Kind⟩'s ⟨Kinds⟩ [that ⟨cond⟩]  a total for reads and scenarios
@@ -23,4 +23,4 @@ keep the total ⟨attr⟩ | the number of each ⟨Kind⟩'s ⟨Kinds⟩ [that �
 - **Rules** are checked before every change. An input that would break one is refused, naming the rule. The system's own work (a part, a take from a pool) waits until the rule allows it. A rule also refuses the steps that would repair an old wrong state, so put conditions that must stay fixable in an `admit … where`.
 - **Definitions** are always current; a stored status you would keep in sync is a `define` instead.
 - **Totals** across references (`each Class's Bookings`) are kept incrementally; `suture build` shows each rule's cost (local, per group, global).
-- **`no two`** counts per value of its attributes, kept by the first one that refers to another kind, so the rule is per group; with no reference among them, end it with `, checked globally`. The attributes must never change after creation. An input that would make two alike is refused.
+- **`no two`** counts per value of its attributes, kept by the first one that refers to another kind, so the rule is per group; with no reference among them, end it with `, checked globally`. An attribute may change only by a caller (`admit change …`, or an event's reaction), never by an answer or a source. An input, new or a change, that would make two alike is refused.
