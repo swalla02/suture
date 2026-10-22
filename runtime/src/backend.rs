@@ -76,6 +76,8 @@ pub fn fact(v: &Val, currency: &str) -> Value {
         Val::Bool(b) => json!(b),
         Val::Count(n) => json!(n),
         Val::Set(xs) => json!(xs),
+        Val::Time(t) => json!(suture_lang::sentence::rfc3339(*t)),
+        Val::Duration(d) => json!(suture_lang::sentence::iso_duration_text(*d)),
         _ => json!(v.show(currency)),
     }
 }
@@ -175,6 +177,7 @@ pub fn read_value(v: &Value, ty: Ty, currency: &str) -> Result<Val, String> {
             Some(f) if f.is_finite() && (0.0..9e15).contains(&f) => Ok(Val::Duration(f.round() as i64)),
             _ => Err(bad("a duration in seconds")),
         },
+        (Ty::Duration, Value::String(s)) => suture_lang::sentence::iso_duration(s).filter(|d| *d >= 0).map(Val::Duration).ok_or_else(|| bad("a duration in seconds, or as ISO 8601 such as \"PT2H\"")),
         (Ty::Text, _) => Err(bad("text")),
         (Ty::Count, _) => Err(bad("a whole number")),
         (Ty::Money, _) => Err(bad(&format!("an amount of {currency}, as a number"))),

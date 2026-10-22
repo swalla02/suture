@@ -323,7 +323,26 @@ fn values_follow_the_attribute_type() {
     assert_eq!(v(json!(80), Some(Ty::Money)), Err("an amount is text such as \"80 EUR\", not 80".into()));
     assert_eq!(v(json!("1.234 EUR"), Some(Ty::Money)), Err("\"1.234 EUR\" is not an amount such as \"80 EUR\"".into()));
     assert_eq!(v(json!(3), Some(Ty::Count)), Ok(Val::Count(3)));
-    assert_eq!(v(json!(3600), Some(Ty::Duration)), Ok(Val::Duration(3600)));
+    // Times and durations are ISO 8601, as RFC 3339 has it for times (appendix AM).
+    assert_eq!(v(json!("PT1H"), Some(Ty::Duration)), Ok(Val::Duration(3600)));
+    assert_eq!(v(json!("P1W2DT3H4M5S"), Some(Ty::Duration)), Ok(Val::Duration(9 * 86_400 + 3 * 3_600 + 4 * 60 + 5)));
+    assert_eq!(v(json!("-PT45S"), Some(Ty::Duration)), Ok(Val::Duration(-45)));
+    for bad in ["P1M", "P1Y", "PT", "P", "3600", "PT1H1H", "PT1M1H"] {
+        assert!(v(json!(bad), Some(Ty::Duration)).is_err(), "{bad}");
+    }
+    assert_eq!(v(json!(3600), Some(Ty::Duration)), Err("3600 is not an ISO 8601 duration, such as \"PT2H\" or \"P3D\"".into()));
+    assert_eq!(v(json!("2026-01-02"), Some(Ty::Time)), Ok(Val::Time(86_400)));
+    assert_eq!(v(json!("2026-01-02T01:00:00Z"), Some(Ty::Time)), Ok(Val::Time(90_000)));
+    assert_eq!(v(json!("2026-01-02T03:00:00.750+02:00"), Some(Ty::Time)), Ok(Val::Time(90_000)));
+    assert_eq!(v(json!("2026-01-01T19:00:00-06:00"), Some(Ty::Time)), Ok(Val::Time(90_000)));
+    assert!(v(json!("2026-02-30"), Some(Ty::Time)).is_err());
+    assert!(v(json!(90_000), Some(Ty::Time)).is_err());
+    assert_eq!(service::to_json(&Val::Time(90_000), "EUR"), json!("2026-01-02T01:00:00Z"));
+    assert_eq!(service::to_json(&Val::Time(-1), "EUR"), json!("2025-12-31T23:59:59Z"));
+    for (secs, text) in [(0, "PT0S"), (86_400, "P1D"), (9_000, "PT2H30M"), (129_600, "P1DT12H"), (-45, "-PT45S")] {
+        assert_eq!(service::to_json(&Val::Duration(secs), "EUR"), json!(text));
+        assert_eq!(v(json!(text), Some(Ty::Duration)), Ok(Val::Duration(secs)));
+    }
     assert_eq!(v(json!("x"), Some(Ty::Count)), Err("\"x\" is not a whole number".into()));
     assert_eq!(v(json!(["B", "A", "B"]), Some(Ty::Set)), Ok(Val::Set(vec!["A".into(), "B".into()])));
     assert_eq!(v(json!("hello"), None), Ok(Val::Text("hello".into())));

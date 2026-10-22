@@ -111,6 +111,19 @@ fn date(c: &mut Cursor) -> Result<Option<i64>, Error> {
 
 /// `2026-03-01`, or `2026-03-01 14:30` for a time that is not midnight.
 pub fn date_text(t: i64) -> String {
+    let (y, m, d, secs) = civil(t);
+    let day = format!("{y:04}-{m:02}-{d:02}");
+    if secs == 0 { day } else { format!("{day} {}:{:02}", secs / 3_600, secs % 3_600 / 60) }
+}
+
+/// A time as RFC 3339 gives it, in UTC: `2026-03-01T14:30:00Z` (appendix AM).
+pub fn rfc3339(t: i64) -> String {
+    let (y, m, d, secs) = civil(t);
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", secs / 3_600, secs % 3_600 / 60, secs % 60)
+}
+
+/// The civil date of runtime seconds, and the seconds into that day.
+fn civil(t: i64) -> (i64, i64, i64, i64) {
     let z = DAY_ZERO + t.div_euclid(86_400) + 719_468;
     let secs = t.rem_euclid(86_400);
     let era = z.div_euclid(146_097);
@@ -121,26 +134,112 @@ pub fn date_text(t: i64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + i64::from(m <= 2);
-    let day = format!("{y:04}-{m:02}-{d:02}");
-    if secs == 0 { day } else { format!("{day} {}:{:02}", secs / 3_600, secs % 3_600 / 60) }
+    (y, m, d, secs)
 }
 
-/// An ISO date or date and time, `2026-03-01` or `2026-03-01T14:30[:00][Z]`,
-/// as runtime seconds; a model reads times in this form (appendix AF.2.5).
+/// An ISO date or date and time, `2026-03-01` or `2026-03-01T14:30[:00[.250]]`,
+/// with RFC 3339's `Z` or `+02:00` offset or none (UTC), as runtime seconds;
+/// a model and the API give times in this form (appendix AF.2.5, AM.2.1).
+/// A fraction of a second is dropped.
 pub fn iso_time(s: &str) -> Option<i64> {
-    let s = s.trim().trim_end_matches('Z');
-    let (date, time) = s.split_once(['T', ' ']).unwrap_or((s, "00:00"));
+    let s = s.trim();
     let num = |x: &str| if !x.is_empty() && x.chars().all(|c| c.is_ascii_digit()) { x.parse::<i64>().ok() } else { None };
+    let (date, time) = match s.split_once(['T', 't', ' ']) {
+        Some((d, t)) => (d, t),
+        None => (s.strip_suffix(['Z', 'z']).unwrap_or(s), "00:00Z"),
+    };
+    // The offset east of UTC, in seconds.
+    let (time, offset) = if let Some(t) = time.strip_suffix(['Z', 'z']) {
+        (t, 0)
+    } else if let Some(i) = time.rfind(['+', '-']) {
+        let (h, m) = time[i + 1..].split_once(':').unwrap_or((&time[i + 1..], ""));
+        let (h, m) = (num(h).filter(|h| *h <= 23)?, if m.is_empty() { 0 } else { num(m).filter(|m| *m <= 59)? });
+        let sign = if time[i..].starts_with('-') { -1 } else { 1 };
+        (&time[..i], sign * (h * 3_600 + m * 60))
+    } else {
+        (time, 0)
+    };
     let mut d = date.splitn(3, '-').map(num);
     let (y, m, day) = (d.next()??, d.next()??, d.next()??);
-    let mut t = time.splitn(3, ':').map(num);
-    let (h, min, sec) = (t.next()??, t.next()??, t.next().unwrap_or(Some(0))?);
+    let mut t = time.splitn(3, ':');
+    let (h, min) = (num(t.next()?)?, num(t.next()?)?);
+    let sec = match t.next() {
+        None => 0,
+        Some(x) => match x.split_once('.') {
+            Some((s, frac)) if num(frac).is_some() => num(s)?,
+            Some(_) => return None,
+            None => num(x)?,
+        },
+    };
     let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
     let days_in = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     if !(1..=12).contains(&m) || day < 1 || day > days_in[(m - 1) as usize] || h > 23 || min > 59 || sec > 59 {
         return None;
     }
-    Some((days_from_civil(y, m, day) - DAY_ZERO) * 86_400 + h * 3_600 + min * 60 + sec)
+    Some((days_from_civil(y, m, day) - DAY_ZERO) * 86_400 + h * 3_600 + min * 60 + sec - offset)
+}
+
+/// An ISO 8601 duration, `P3D`, `PT2H30M`, `P1W` or `-PT45S`, in seconds
+/// (appendix AM.2.2). Years and months have no fixed length, so they are
+/// not durations here.
+pub fn iso_duration(s: &str) -> Option<i64> {
+    let s = s.trim();
+    let (sign, s) = match s.strip_prefix('-') {
+        Some(rest) => (-1, rest),
+        None => (1, s.strip_prefix('+').unwrap_or(s)),
+    };
+    let s = s.strip_prefix(['P', 'p'])?;
+    let (date, time) = match s.split_once(['T', 't']) {
+        Some((d, t)) if !t.is_empty() => (d, Some(t)),
+        Some(_) => return None,
+        None => (s, None),
+    };
+    let mut total: i64 = 0;
+    let mut any = false;
+    let mut add = |part: &str, units: &[(char, i64)]| -> Option<()> {
+        let mut rest = part;
+        let mut last = 0;
+        while !rest.is_empty() {
+            let i = rest.find(|c: char| !c.is_ascii_digit())?;
+            let n: i64 = rest[..i].parse().ok()?;
+            let u = rest[i..].chars().next()?.to_ascii_uppercase();
+            // Units come in order, each once.
+            let at = units.iter().position(|(c, _)| *c == u).filter(|p| *p + 1 > last)?;
+            last = at + 1;
+            total = total.checked_add(n.checked_mul(units[at].1)?)?;
+            any = true;
+            rest = &rest[i + 1..];
+        }
+        Some(())
+    };
+    add(date, &[('W', 604_800), ('D', 86_400)])?;
+    if let Some(t) = time {
+        add(t, &[('H', 3_600), ('M', 60), ('S', 1)])?;
+    }
+    (any && total <= crate::parse::MAX_DURATION_SECS as i64).then_some(sign * total)
+}
+
+/// Seconds as an ISO 8601 duration: `P3D`, `PT2H30M`, `PT0S`, `-P1DT12H`.
+pub fn iso_duration_text(secs: i64) -> String {
+    let sign = if secs < 0 { "-" } else { "" };
+    let s = secs.unsigned_abs();
+    let (d, h, m, x) = (s / 86_400, s % 86_400 / 3_600, s % 3_600 / 60, s % 60);
+    let mut out = format!("{sign}P");
+    if d > 0 {
+        out += &format!("{d}D");
+    }
+    if h + m + x > 0 || d == 0 {
+        out.push('T');
+        for (n, u) in [(h, 'H'), (m, 'M'), (x, 'S')] {
+            if n > 0 {
+                out += &format!("{n}{u}");
+            }
+        }
+        if h + m + x == 0 {
+            out += "0S";
+        }
+    }
+    out
 }
 
 /// 2026-01-01, the runtime clock's 0, as days since 1970-01-01.

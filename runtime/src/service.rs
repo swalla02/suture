@@ -916,7 +916,8 @@ fn masked(prog: &Program, attr: &str, v: &Val) -> Value {
 /// A value as the API shows it (appendix L.2.7).
 pub fn to_json(v: &Val, currency: &str) -> Value {
     match v {
-        Val::Duration(s) | Val::Time(s) => json!(s),
+        Val::Duration(s) => json!(suture_lang::sentence::iso_duration_text(*s)),
+        Val::Time(t) => json!(suture_lang::sentence::rfc3339(*t)),
         _ => backend::fact(v, currency),
     }
 }
@@ -929,8 +930,9 @@ pub fn from_json(v: &Value, ty: Option<Ty>, currency: &str) -> Result<Val, Strin
         (Some(Ty::Text), Value::String(s)) => Ok(Val::Text(s.clone())),
         (Some(Ty::Bool) | None, Value::Bool(b)) => Ok(Val::Bool(*b)),
         (Some(Ty::Count) | None, Value::Number(n)) => n.as_i64().map(Val::Count).ok_or_else(|| format!("{n} is not a whole number")),
-        (Some(Ty::Duration), Value::Number(n)) => n.as_i64().map(Val::Duration).ok_or_else(|| format!("{n} is not a whole number of seconds")),
-        (Some(Ty::Time), Value::Number(n)) => n.as_i64().map(Val::Time).ok_or_else(|| format!("{n} is not a whole number of seconds")),
+        // ISO 8601, as RFC 3339 has it for times (appendix AM.2.1).
+        (Some(Ty::Duration), Value::String(s)) => suture_lang::sentence::iso_duration(s).map(Val::Duration).ok_or_else(|| format!("{v} is not {}", ty_name(Ty::Duration))),
+        (Some(Ty::Time), Value::String(s)) => suture_lang::sentence::iso_time(s).map(Val::Time).ok_or_else(|| format!("{v} is not {}", ty_name(Ty::Time))),
         (Some(Ty::Money), Value::String(s)) => money(s),
         // A reference is given by name; the host checks the name (appendix F.2.2).
         (Some(Ty::Ref), Value::String(s)) => Ok(Val::Text(s.clone())),
@@ -963,8 +965,8 @@ fn ty_name(t: Ty) -> &'static str {
         Ty::Count => "a whole number",
         Ty::Ref => "a name",
         Ty::Set => "a list of names",
-        Ty::Time => "a time in seconds",
-        Ty::Duration => "a duration in seconds",
+        Ty::Time => "a time as RFC 3339 gives it, such as \"2026-03-01T14:30:00Z\" or \"2026-03-01\"",
+        Ty::Duration => "an ISO 8601 duration, such as \"PT2H\" or \"P3D\"",
         Ty::Media => "media, as POST /media gives it: {\"sha256\", \"mime\", \"bytes\"}",
     }
 }
