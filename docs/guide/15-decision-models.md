@@ -191,7 +191,7 @@ The other errors: naming something that no `uses`, slot or source picks, naming 
 
 ## When the model is no help
 
-`prefer` is always behind the model. It picks when:
+`prefer` is behind the model, unless the `decide` names its own `otherwise` (below). It picks when:
 
 - the model declines (a stand-in with no pick queued declines);
 - the model picks something it was not offered;
