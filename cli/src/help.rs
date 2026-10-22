@@ -48,6 +48,9 @@ pub fn help(name: Option<&str>) -> Result<String, String> {
 /// `suture help --for ⟨dir or file⟩`: the topics whose forms a module, one
 /// of its files or a scenario file uses, in the book's order (appendix AR.2.3).
 pub fn help_for(path: &Path) -> Result<String, String> {
+    if !path.exists() {
+        return Err(format!("{}: no such file or directory", path.display()));
+    }
     let names = used(path)?;
     if names.is_empty() {
         return Ok(format!("{} has no Suture yet; `suture help` lists every form\n", path.display()));
@@ -80,13 +83,13 @@ fn used(path: &Path) -> Result<Vec<&'static str>, String> {
             _ => {}
         }
     }
-    let time = days || src.rules.iter().any(|r| r.period.is_some()) || src.goals.iter().any(|g| g.within_secs.is_some()) || src.reactions.iter().any(|r| r.outcome.ends_with(suture_lang::ir::PASSES));
-    let models = src.decides.iter().any(|d| d.model.is_some()) || src.sources.iter().any(|s| s.model);
+    let time = days || src.rules.iter().any(|r| r.period.is_some()) || !src.goals.is_empty() || src.reactions.iter().any(|r| r.outcome.ends_with(suture_lang::ir::PASSES));
+    let models = src.decides.iter().any(|d| d.model.is_some()) || src.sources.iter().any(|s| s.model) || !src.allows.is_empty();
     let has = [
         ("kinds", src.module.is_some() || !src.kinds.is_empty()),
         ("gate", !src.roles.is_empty() || !src.admits.is_empty()),
         ("parts", !src.needs.is_empty() || !src.slots.is_empty() || !src.uses.is_empty() || !src.effects.is_empty()),
-        ("rules", !src.rules.is_empty() || !src.defines.is_empty() || !src.keeps.is_empty()),
+        ("rules", !src.rules.is_empty() || !src.defines.is_empty() || !src.keeps.is_empty() || !src.applies.is_empty()),
         ("reactions", !src.reactions.is_empty()),
         ("time", time),
         ("scenarios", scenarios),
@@ -97,6 +100,7 @@ fn used(path: &Path) -> Result<Vec<&'static str>, String> {
 
 /// The topic that explains the statement an error is on, by its first
 /// word, for `suture check` (appendix AR.2.4).
+/// A line that names no statement, such as a whole-module error, gets `all`.
 pub fn topic_of_line(line: &str, scenario: bool) -> &'static str {
     if scenario {
         return "scenarios";
@@ -106,6 +110,7 @@ pub fn topic_of_line(line: &str, scenario: bool) -> &'static str {
         "module" | "kind" => "kinds",
         "role" | "admit" => "gate",
         "rule" if line.contains(" for each ") => "time",
+        "rule" if line.contains(" taken from each ") => "parts",
         "rule" | "define" | "keep" | "apply" => "rules",
         "desired" => "time",
         "when" if line.contains(" passes") => "time",
@@ -113,7 +118,7 @@ pub fn topic_of_line(line: &str, scenario: bool) -> &'static str {
         "decide" | "source" | "allow" => "models",
         "effect" | "prefer" | "sends" | "marks" | "reports" => "parts",
         w if w.starts_with(char::is_uppercase) => "parts",
-        _ => "kinds",
+        _ => "all",
     }
 }
 
@@ -161,6 +166,8 @@ mod tests {
         assert_eq!(topic_of_line("when a Loan's due passes: it is overdue", false), "time");
         assert_eq!(topic_of_line("  when a member cancels a Booking: it is cancelled", false), "reactions");
         assert_eq!(topic_of_line("Booking needs Payment", false), "parts");
+        assert_eq!(topic_of_line("rule stock: the total copies taken from each Title is at most its stock", false), "parts");
+        assert_eq!(topic_of_line("", false), "all");
         assert_eq!(topic_of_line("  expect B1 is paid", true), "scenarios");
     }
 }

@@ -41,7 +41,7 @@ impl Found {
                 Some(0) | None => e["file"].as_str().unwrap_or("").to_string(),
                 Some(l) => format!("{}:{l}", e["file"].as_str().unwrap_or("")),
             };
-            out += &format!("error: {at}: {} (suture help {})\n", e["message"].as_str().unwrap_or(""), e["topic"].as_str().unwrap_or("all"));
+            out += &format!("error: {at}: {} (suture help {})\n", e["message"].as_str().unwrap_or(""), e["topic"].as_str().unwrap_or_default());
         }
         for w in &self.warnings {
             out += &format!("warning: {w}\n");
