@@ -94,6 +94,28 @@ fn a_global_uniqueness_compares_texts_and_several_values() {
 }
 
 #[test]
+fn a_uniqueness_that_shares_its_total_still_refuses() {
+    // `no two Reviews have the same talk` is the same count as `the number
+    // of each Talk's Reviews`; whichever is written first, it refuses.
+    for rules in [
+        "rule one: no two Reviews have the same talk\nrule few: the number of each Talk's Reviews is at most 5\n",
+        "rule few: the number of each Talk's Reviews is at most 5\nrule one: no two Reviews have the same talk\n",
+    ] {
+        let src = CFP.replace("rule once:", &format!("{rules}rule once:"));
+        let r = runs(
+            &src,
+            &format!(
+                "{PEOPLE}  when   reviewer Bo scores a new Review R1 with talk T, reviewer Bo and score 4
+  and    reviewer Ann scores a new Review R2 with talk T, reviewer Ann and score 5
+         is refused by rule one
+"
+            ),
+        );
+        assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
+    }
+}
+
+#[test]
 fn the_rule_reads_back_as_written_with_its_groups() {
     let p = compiled(CFP);
     let rule = |n: &str| p.rules.iter().find(|r| r.name == n).unwrap();

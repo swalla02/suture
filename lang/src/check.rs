@@ -2762,7 +2762,10 @@ impl Checker {
     fn add_contribs(&mut self, p: &mut Program) {
         for b in self.contribs.drain(..) {
             match p.bindings.iter_mut().find(|x| x.subject == b.subject && x.id == b.id) {
-                Some(x) => x.shared |= b.shared,
+                Some(x) => {
+                    x.shared |= b.shared;
+                    x.unique |= b.unique;
+                }
                 None => p.bindings.push(b),
             }
         }
