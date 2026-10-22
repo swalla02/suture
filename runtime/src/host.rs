@@ -1442,7 +1442,7 @@ impl Host {
     /// entity whose filter holds when it is made (appendix AD.2.3).
     fn refused_across(&mut self, after: &interp::Outcome, what: &str) -> Result<(), String> {
         for d in &after.decides {
-            let Some(b) = self.prog.bindings.get(d.binding as usize).filter(|b| b.held.is_some()) else { continue };
+            let Some(b) = self.prog.bindings.get(d.binding as usize).filter(|b| b.held.is_some() || b.unique) else { continue };
             let key = self.pool_key(&after.unit, d);
             let Some(target) = self.options(&after.unit, d, &key).into_iter().next() else { continue };
             let take = Msg::Take { from: d.label.clone(), key: d.key(), taken: d.taken.clone() };

@@ -144,7 +144,7 @@ fn num_formula(p: &Program, kind: &str, v: &str, n: &Num) -> String {
         Num::Taken { of, name, kind: owner, run, .. } => match contribution(p, if owner.is_empty() { kind } else { owner }, name) {
             Some(b) if *run => {
                 // Days in a row, through the day, on which the count is above nothing (appendix AH.2.1).
-                let day = Num::Taken { of: of.clone(), name: name.clone(), ty: crate::ir::Ty::Count, period: b.taking.as_ref().and_then(|t| t.period.clone()), kind: owner.clone(), run: false };
+                let day = Num::Taken { of: of.clone(), name: name.clone(), ty: crate::ir::Ty::Count, period: b.taking.as_ref().and_then(|t| t.period.clone()), kind: owner.clone(), run: false, group: false };
                 format!("run({})", num_formula(p, kind, v, &day))
             }
             Some(b) => {
@@ -164,6 +164,23 @@ fn num_formula(p: &Program, kind: &str, v: &str, n: &Num) -> String {
                     None => rel,
                 };
                 let t = b.taking.as_ref().expect("a contribution takes an amount");
+                // One count per group of equal values (appendix AP.2.2).
+                let same: Vec<String> = t
+                    .group
+                    .iter()
+                    .filter_map(|n| match n {
+                        Num::Path(Path { steps }) => match steps.as_slice() {
+                            [Step::Attr(a)] => Some(format!("{e}.{a} = {a}")),
+                            _ => None,
+                        },
+                        _ => None,
+                    })
+                    .collect();
+                let rel = match rel.strip_prefix(&format!("all {}", b.subject)) {
+                    _ if same.is_empty() => rel,
+                    Some(rest) => format!("{} where {}{rest}", b.subject, same.join(" and ")),
+                    None => format!("{rel} and {}", same.join(" and ")),
+                };
                 let per = match (&t.period, &t.span) {
                     (Some(per), Some((start, end))) => format!(", per {per} from {} to {}", num_formula(p, &b.subject, &e, start), num_formula(p, &b.subject, &e, end)),
                     (Some(per), None) => format!(", per {per} of {e}.created"),

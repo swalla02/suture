@@ -39,7 +39,7 @@ One run per cell, so the numbers are indicative, not statistics. In each run of 
 
 ## Next
 
-- A language slice for uniqueness, e.g. `rule once: no two Reviews have the same talk and reviewer`, or a filter that can name the outer entity.
+- Done in slice 40: `rule once: no two Reviews have the same talk and reviewer` (spec appendix AP).
 - A time-driven state (`when a Loan's due passes: …`), so "overdue on its own" needs no reminder part.
 - `suture check` showing the steps around a failure first, not only the whole trace.
 - More tasks and repeated runs before claiming a trend.

@@ -617,6 +617,26 @@ pub fn rule_body(c: &mut Cursor) -> Result<RuleBody, Error> {
     if !c.eat_word("no") {
         return Err(c.error(format!("a rule starts with `every` or `no`, found {}", c.found())));
     }
+    if c.eat_word("two") {
+        // `no two Reviews [that c] have the same talk and reviewer` (appendix AP).
+        let kind = c.kind_name()?;
+        let filter = that(c)?.map(|f| vec![*f]).unwrap_or_default();
+        if !c.eat_word("have") {
+            return Err(c.error(format!("expected `have the same …`, as in `no two Reviews have the same talk and reviewer`, found {}", c.found())));
+        }
+        c.expect_word("the")?;
+        c.expect_word("same")?;
+        let mut same = vec![c.word()?];
+        // A comma before `checked globally` or `with …` ends the sentence.
+        while matches!(c.peek(), Some(Tok::Sym(','))) && !word_at(c, 1, "checked") && !word_at(c, 1, "with") {
+            c.next();
+            same.push(c.word()?);
+        }
+        if c.eat_word("and") {
+            same.push(c.word()?);
+        }
+        return Ok(RuleBody::Unique { subject: Subject { kind, filter }, same });
+    }
     let subject = subject(c)?;
     let pred = predicate(c, Num::Np(it()))?;
     let unless = if c.eat_word("unless") { Some(condition(c)?) } else { None };

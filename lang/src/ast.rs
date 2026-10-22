@@ -130,6 +130,9 @@ pub enum RuleBody {
     Every { subject: Subject, cond: Cond },
     /// `no S has … [unless c]`: the predicate holds for no subject, unless `c` does.
     No { subject: Subject, pred: Cond, unless: Option<Cond> },
+    /// `no two Reviews [that c] have the same talk and reviewer` (appendix AP):
+    /// the subject's kind is the plural as written.
+    Unique { subject: Subject, same: Vec<String> },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

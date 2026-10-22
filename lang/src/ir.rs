@@ -216,6 +216,10 @@ pub struct Binding {
     /// target read the total, so they carry it (appendix AA.2.3).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub shared: bool,
+    /// A `no two … have the same …` count: an admitted input that would
+    /// break it is refused, even with no filter (appendix AP.2.3).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unique: bool,
     /// The sourced attributes its amount reads through formulas, as (kind,
     /// attribute): fetched for it while it cannot be asked (appendix AG.2.2).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -249,6 +253,11 @@ pub struct Taking {
     /// toward every period from the first to the last (appendix AD.2.1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub span: Option<(Num, Num)>,
+    /// `no two Reviews have the same talk and reviewer`: the values, read at
+    /// the entity, that pick its group; one total for each group, named
+    /// `number of Reviews with the same reviewer#Bo` (appendix AP.2.2).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub group: Vec<Num>,
 }
 
 /// The periods of `for each K and ⟨period⟩`, in UTC (appendix F.2.12).
@@ -587,6 +596,10 @@ pub enum Num {
         /// (appendix AH.2.1).
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         run: bool,
+        /// The total of the group a take is checked for, not one total
+        /// (appendix AP.2.2); only while a take is checked.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        group: bool,
     },
 }
 

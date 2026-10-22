@@ -52,6 +52,15 @@ fn a_(k: &str) -> String {
     a(k)
 }
 
+/// `talk`, `talk and reviewer`, `talk, day and reviewer`.
+fn and_list(words: &[&String]) -> String {
+    match words.split_last() {
+        Some((last, [])) => last.to_string(),
+        Some((last, rest)) => format!("{} and {last}", rest.iter().map(|w| w.as_str()).collect::<Vec<_>>().join(", ")),
+        None => String::new(),
+    }
+}
+
 /// `a Payment`, `an Order`.
 fn a(k: &str) -> String {
     let an = k.starts_with(|c: char| "AEIOUaeiou".contains(c));
@@ -970,6 +979,16 @@ impl Checker {
         self.admits(src, &mut p);
         self.reactions(src, &mut p);
         self.keeps(src, &p);
+        // What `no two` compares never changes, once every way to change a
+        // value is known (appendix AP.2.4).
+        let changes = changeable(&p);
+        for r in &src.rules {
+            if let ast::RuleBody::Unique { subject, same } = &r.body
+                && let Some(a) = same.iter().find(|a| changes.contains(a)) {
+                let kind = p.kinds.iter().find(|k| k.plural == subject.kind).map_or(subject.kind.clone(), |k| k.name.clone());
+                self.errors.push(err(&r.at, format!("rule {}: a {kind}'s {a} can change after it is created, and `no two` needs values that never change (appendix AP.2.4)", r.name)));
+            }
+        }
         // Totals across units read outside rules: in formulas, definitions,
         // needs and admits (appendix AA.2.3).
         self.add_contribs(&mut p);
@@ -1546,7 +1565,7 @@ impl Checker {
                     };
                     let t = self.num(p, &u.at, &u.subject, n);
                     match (name, t) {
-                        (Some(name), Some((amount, ty @ (Ty::Money | Ty::Count)))) => Some(Some(Taking { name, amount, ty, period: None, span: None })),
+                        (Some(name), Some((amount, ty @ (Ty::Money | Ty::Count)))) => Some(Some(Taking { name, amount, ty, period: None, span: None, group: vec![] })),
                         (None, Some(_)) => {
                             self.errors.push(err(&u.at, format!("`taking {}`: name the attribute taken, as in `taking the line's quantity`, or take a count, as in `taking 1`", show_num(n))));
                             None
@@ -1590,6 +1609,7 @@ impl Checker {
                 source: u.source.clone(),
                 held: None,
                 shared: false,
+                unique: false,
                 sources: vec![],
             });
         }
@@ -2039,7 +2059,13 @@ impl Checker {
                 self.errors.push(err(&r.at, format!("two rules are called {}", r.name)));
                 continue;
             }
-            let (ast::RuleBody::Every { subject, .. } | ast::RuleBody::No { subject, .. }) = &r.body;
+            let subject = match &r.body {
+                ast::RuleBody::Every { subject, .. } | ast::RuleBody::No { subject, .. } => subject,
+                ast::RuleBody::Unique { subject, same } => {
+                    self.unique(p, r, subject, same);
+                    continue;
+                }
+            };
             let global = subject.kind.strip_prefix("all ").map(str::to_string);
             if let Some(plural) = &global {
                 if !p.kinds.iter().any(|k| k.plural == *plural) {
@@ -2084,6 +2110,7 @@ impl Checker {
                     };
                     Body::No { pred, unless }
                 }
+                ast::RuleBody::Unique { .. } => unreachable!("lowered above"),
             };
             self.period = None;
             self.span = None;
@@ -2121,6 +2148,120 @@ impl Checker {
             rule.paraphrase = readback::paraphrase(p, &rule);
             p.rules.push(rule);
         }
+    }
+
+    /// `no two Reviews [that c] have the same talk and reviewer` (appendix
+    /// AP): each Review counts toward its talk, in the group of its other
+    /// values, and no group's count is more than 1. Without a reference,
+    /// the count is kept at `all Reviews`.
+    fn unique(&mut self, p: &mut Program, r: &ast::RuleDecl, subject: &ast::Subject, same: &[String]) {
+        let plural = &subject.kind;
+        let Some(kind) = p.kinds.iter().find(|k| k.plural == *plural && !p.globals.contains(&k.name)).map(|k| k.name.clone()) else {
+            let msg = match p.kind(plural) {
+                Some(k) => format!("`no two {plural}`: name the kind in the plural, `no two {}`", k.plural),
+                None => format!("`no two {plural}`: no kind is called {plural} in the plural"),
+            };
+            self.errors.push(err(&r.at, msg));
+            return;
+        };
+        let mut by = None;
+        for (i, a) in same.iter().enumerate() {
+            let Some(x) = p.kind(&kind).and_then(|k| k.attr(a)) else {
+                self.errors.push(err(&r.at, format!("rule {}: {} has no attribute `{a}`", r.name, self::a(&kind))));
+                return;
+            };
+            if same[..i].contains(a) {
+                self.errors.push(err(&r.at, format!("rule {}: `{a}` is named twice", r.name)));
+                return;
+            }
+            if matches!(x.ty, Ty::Set | Ty::Media) {
+                self.errors.push(err(&r.at, format!("rule {}: a {kind}'s {a} is a {}, and `no two` compares single values", r.name, if x.ty == Ty::Set { "set" } else { "media" })));
+                return;
+            }
+            if x.mark == Some(Mark::Secret) {
+                self.errors.push(err(&r.at, format!("rule {}: a {kind}'s {a} is secret, and `no two` would keep its value in a total's name", r.name)));
+                return;
+            }
+            if by.is_none() && x.ty == Ty::Ref {
+                by = Some((a.clone(), x.of.clone().expect("a reference names its kind")));
+            }
+        }
+        let target = match &by {
+            Some((_, t)) if r.globally => {
+                self.errors.push(err(&r.at, format!("rule {}: it counts per {t}, so it is not checked globally; drop `, checked globally`", r.name)));
+                return;
+            }
+            Some((_, t)) => t.clone(),
+            None if !r.globally => {
+                self.errors.push(err(
+                    &r.at,
+                    format!("rule {}: no attribute it names refers to another kind, so one count would hold up every {kind}; end the rule with `, checked globally`", r.name),
+                ));
+                return;
+            }
+            None => {
+                let all = format!("all {plural}");
+                if p.kind(&all).is_none() {
+                    p.kinds.push(Kind { name: all.clone(), plural: all.clone(), attrs: vec![], owner: None });
+                    p.globals.push(all.clone());
+                }
+                all
+            }
+        };
+        let filter = match subject.filter.as_slice() {
+            [] => None,
+            [f] => Some(f.clone()),
+            fs => Some(ast::Cond::And(fs.to_vec())),
+        };
+        let key = by.as_ref().map(|(a, _)| a.clone());
+        let before = self.contribs.len();
+        let Some((Num::Taken { name, .. }, _)) = self.contribution(p, &r.at, &target, &kind, key.clone(), None, filter.as_ref()) else {
+            self.contribs.truncate(before);
+            return;
+        };
+        let rest: Vec<&String> = same.iter().filter(|a| key.as_ref() != Some(*a)).collect();
+        let name = if rest.is_empty() {
+            name
+        } else {
+            let name = format!("{name} with the same {}", and_list(&rest));
+            let b = self.contribs.last_mut().expect("just added");
+            b.id = format!("{target}({name})");
+            let t = b.taking.as_mut().expect("a count");
+            t.name = name.clone();
+            t.group = rest.iter().map(|a| Num::Path(Path { steps: vec![Step::Attr((*a).clone())] })).collect();
+            name
+        };
+        self.contribs.last_mut().expect("just added").unique = true;
+        self.add_contribs(p);
+        let total = Num::Taken { of: Path::default(), name, ty: Ty::Count, period: None, kind: String::new(), run: false, group: !rest.is_empty() };
+        let mut rule = Rule {
+            name: r.name.clone(),
+            subject: target,
+            filter: vec![],
+            body: Body::Every(Cond::Cmp { left: total, op: Op::Le, right: Num::Lit(Lit::Count(1)) }),
+            source: r.source.clone(),
+            formula: String::new(),
+            paraphrase: String::new(),
+            tier: if by.is_some() { "per-group" } else { "global (bottleneck)" }.into(),
+            period: None,
+            fixed: false,
+            sources: vec![],
+            fresh: r.fresh.clone(),
+            applies: None,
+        };
+        rule.formula = readback::formula(p, &rule);
+        let values = and_list(&rest);
+        rule.formula = match (&by, rest.is_empty()) {
+            (_, true) => rule.formula,
+            (Some(_), false) => rule.formula.replacen(": ", &format!(" and each {values}: "), 1),
+            (None, false) => format!("for each {values}: {}", rule.formula),
+        };
+        let that = filter.as_ref().map_or_else(String::new, |_| {
+            let held = p.bindings.iter().rev().find(|b| b.subject == kind && b.target == rule.subject).and_then(|b| b.held.as_ref());
+            readback::that_words(p, &kind, held)
+        });
+        rule.paraphrase = format!("no two {plural}{that} have the same {}", and_list(&same.iter().collect::<Vec<_>>()));
+        p.rules.push(rule);
     }
 
     fn goals(&mut self, src: &Source, p: &mut Program) {
@@ -2529,7 +2670,7 @@ impl Checker {
                 };
                 let (num, ty) = self.contribution(p, at, from, &kind, by, None, filter.as_deref())?;
                 let Num::Taken { of, name, period, kind, .. } = num else { unreachable!("a contribution is a running total") };
-                Some((Num::Taken { of, name, ty, period, kind, run: true }, ty))
+                Some((Num::Taken { of, name, ty, period, kind, run: true, group: false }, ty))
             }
             ast::Num::Taken { attr, from: of } => {
                 let (path, end) = self.np(p, at, from, of)?;
@@ -2542,7 +2683,7 @@ impl Checker {
                     self.errors.push(err(at, format!("`{}`: no `uses a {k}` takes {attr}", show_num(n))));
                     return None;
                 };
-                Some((Num::Taken { of: path, name: attr.clone(), ty: t.ty, period: None, kind: String::new(), run: false }, t.ty))
+                Some((Num::Taken { of: path, name: attr.clone(), ty: t.ty, period: None, kind: String::new(), run: false, group: false }, t.ty))
             }
         }
     }
@@ -2605,14 +2746,15 @@ impl Checker {
             key_member: false,
             key,
             filter: vec![],
-            taking: Some(Taking { name: name.clone(), amount, ty, period: self.period.clone(), span }),
+            taking: Some(Taking { name: name.clone(), amount, ty, period: self.period.clone(), span, group: vec![] }),
             prefer: vec![],
             source,
             held,
             shared: false,
+            unique: false,
             sources: vec![],
         });
-        Some((Num::Taken { of: Path::default(), name, ty, period: self.period.clone(), kind: String::new(), run: false }, ty))
+        Some((Num::Taken { of: Path::default(), name, ty, period: self.period.clone(), kind: String::new(), run: false, group: false }, ty))
     }
 
     /// Adds the implicit bindings of the totals across units found so far,
@@ -2674,7 +2816,7 @@ impl Checker {
         if let Some(b) = self.contribs.last_mut() {
             b.shared = true;
         }
-        Some(Some((Num::Taken { of: path, name, ty, period: None, kind: target, run: false }, ty)))
+        Some(Some((Num::Taken { of: path, name, ty, period: None, kind: target, run: false, group: false }, ty)))
     }
 
     /// The calculation inside `the total of … over its lines`, evaluated at

@@ -46,6 +46,7 @@ rule reports:  the number of each Grant's Reports is at most 1
 | `⟨num with each ⟨Kind⟩⟩ ⟨comparison⟩ ⟨num⟩` | a bound for each entity | `the total amount of each Grant's Awards is at most its amount` |
 | `for each ⟨Kind⟩ and ⟨period⟩, ⟨bound⟩` | a bound for each entity and calendar period | below |
 | `⟨num with all ⟨Kinds⟩⟩ ⟨comparison⟩ ⟨num⟩, checked globally` | a bound over the whole system | below |
+| `no two ⟨Kinds⟩ [that …] have the same ⟨attr⟩[, ⟨attr⟩] [and ⟨attr⟩]` | no two entities share all those values | below |
 
 **Rules over a slot.** A rule may name a slot where it would name a kind: `no Claim has an Outcome that is sent unless its score is less than 70` holds back a Repair, a Writeoff and a Cash alike, and an alternative added to `Outcome` later is under it with no change. Every alternative must have the state named. To cover only some, list them: `no Claim has a Writeoff or a Cash that is sent unless …`, where the last `that` is about each. The read-back lists what the slot stands for: `no claim ever has an outcome (a repair, a writeoff or a cash) that is sent unless …`.
 
@@ -114,6 +115,29 @@ rule yearly: for each Donor and year, the total amount of their Donations is at 
 ```
 
 A period rule keeps one running total per entity and calendar `day`, `week` (from Monday), `month` or `year`, in UTC, of each contributing entity's `created`. `their Donations` from a Donor means every Donation whose one attribute of kind Donor points to it.
+
+## No two alike
+
+```suture
+kind Person (plural People) { name: Text, email: Text }
+kind Talk   { title: Text }
+kind Review { talk: Talk, reviewer: Person, score: Count, withdrawn: Bool = no }
+
+rule once:   no two Reviews that are not withdrawn have the same talk and reviewer
+rule emails: no two People have the same email, checked globally
+```
+
+`no two` says a combination of values is never held twice: a reviewer reviews a talk at most once, and an email belongs to one person. Equal means the same referred entity, text, number, amount, time or state.
+
+It is kept as a total across units. The first attribute named that refers to another kind (here `talk`) picks the entity that keeps the count, so `once` is per group: each Talk counts its Reviews per reviewer, and no reviewer's count is more than 1. With no reference among the attributes, the count is kept for the whole system, and the rule ends with `, checked globally`, as any rule about `all` must. The read-back shows the groups:
+
+```text
+rule once: no two Reviews that are not withdrawn have the same talk and reviewer
+  understood as:   for each Talk t and each reviewer: count(r in Review where r.talk = t and r is not withdrawn and r.reviewer = reviewer) ≤ 1
+  cost:            per-group
+```
+
+An admitted input that would make two alike is refused by the rule. With `that`, an entity counts only while the filter holds, so a withdrawn Review no longer blocks a new one. The attributes named must never change after creation, since a change would move the entity to another group: the compiler refuses a rule that names one a reaction, an answer or an admitted change sets. A secret attribute cannot be named either.
 
 ## How rules are enforced
 

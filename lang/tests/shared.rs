@@ -363,7 +363,7 @@ fn a_relation_across_units_can_be_filtered() {
 fn a_unit_reads_the_totals_of_the_unit_it_refers_to() {
     let p = prog(ITEMS);
     let seq = p.kind("Item").unwrap().attr("seq").unwrap().formula.clone().unwrap();
-    assert_eq!(seq, Num::Taken { of: path(&[Step::Ref("unit".into())]), name: "number of Items".into(), ty: Ty::Count, period: None, kind: "Unit".into(), run: false });
+    assert_eq!(seq, Num::Taken { of: path(&[Step::Ref("unit".into())]), name: "number of Items".into(), ty: Ty::Count, period: None, kind: "Unit".into(), run: false, group: false });
     let shared: Vec<&str> = p.bindings.iter().filter(|b| b.shared).map(|b| b.id.as_str()).collect();
     assert_eq!(shared, ["Unit(number of Items)", "Unit(number of Items that are paid)"]);
     let clean = p.defines.iter().find(|d| d.state == "clean").unwrap();

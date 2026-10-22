@@ -86,6 +86,7 @@ the number of each ⟨Kind⟩'s ⟨Kinds⟩ [that ⟨cond⟩] ⟨comparison⟩ �
 the total ⟨attr⟩ taken from each ⟨Kind⟩ ⟨comparison⟩ ⟨num⟩
 for each ⟨Kind⟩ and ⟨day|week|month|year⟩ [from their ⟨attr⟩ to their ⟨attr⟩], the total ⟨attr⟩ of their ⟨Kinds⟩ ⟨comparison⟩ ⟨num⟩
 ⟨num over all ⟨Kinds⟩⟩ ⟨comparison⟩ ⟨num⟩, checked globally
+no two ⟨Kinds⟩ [that ⟨cond⟩] have the same ⟨attr⟩[, ⟨attr⟩…] [and ⟨attr⟩][, checked globally]
 ```
 
 **Comparisons:** `is at most`, `is at least`, `is more than`, `is less than`.

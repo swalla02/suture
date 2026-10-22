@@ -146,6 +146,10 @@ pub fn span_key(period: &str, from: i64, to: i64) -> String {
 /// A take's total as a trace shows it: a span by its dates,
 /// `… per day from its from to its to, 2026-01-05 to 2026-01-08`.
 pub fn take_text(name: &str) -> String {
+    // A group's values, as written (appendix AP.2.2).
+    if let Some((base, group)) = name.split_once('#') {
+        return format!("{base} {}", group.replace("%40", "@").replace("%23", "#").replace("%25", "%"));
+    }
     let Some((base, span)) = name.split_once("@span ") else { return name.to_string() };
     let mut parts = span.split(' ').skip(1).map(str::parse::<i64>);
     match (parts.next(), parts.next()) {

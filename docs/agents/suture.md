@@ -110,6 +110,7 @@ rule ⟨name⟩: no ⟨subject⟩ has a ⟨Kind⟩ [that ⟨cond⟩] [unless ⟨
 rule ⟨name⟩: the number of each ⟨Kind⟩'s ⟨Kinds⟩ [that ⟨cond⟩] ⟨cmp⟩ ⟨num⟩
 rule ⟨name⟩: the total ⟨attr⟩ of each ⟨Kind⟩'s ⟨Kinds⟩ [that ⟨cond⟩] ⟨cmp⟩ ⟨num⟩
 rule ⟨name⟩: the total ⟨attr⟩ taken from each ⟨Kind⟩ ⟨cmp⟩ ⟨num⟩
+rule ⟨name⟩: no two ⟨Kinds⟩ [that ⟨cond⟩] have the same ⟨attr⟩[, ⟨attr⟩] [and ⟨attr⟩]   values never set after creation
 rule ⟨name⟩: for each ⟨Kind⟩ and day|week|month|year [from their ⟨attr⟩ to their ⟨attr⟩], ⟨number rule about their ⟨Kinds⟩⟩
 define: a ⟨Kind⟩ is ⟨state⟩ when ⟨cond⟩
 desired [within ⟨duration⟩]: every ⟨subject⟩ is ⟨state⟩[ and ⟨state⟩]   alert if not met in time
@@ -121,7 +122,7 @@ when a ⟨Kind⟩ is ⟨outcome | timed out⟩: ⟨action⟩[ and ⟨action⟩] 
 - **subject:** `[⟨state⟩] ⟨Kind⟩ [whose ⟨attr⟩ ⟨predicate⟩] [that ⟨cond⟩]`.
 - **np:** `it`, `its ⟨attr⟩`, `their ⟨attr⟩`, `the ⟨Kind⟩`, `⟨np⟩'s ⟨attr⟩`, `⟨np⟩'s ⟨Kind⟩` (its part), `⟨np⟩'s ⟨Kinds⟩` (those referencing it), `the caller`.
 - **cond:** `⟨np⟩ is [not] ⟨state, np or literal⟩`, `⟨num⟩ ⟨cmp⟩ ⟨num⟩`, `⟨np⟩ has [a|no] ⟨Kind⟩ [that ⟨cond⟩]`, `⟨np⟩ contains ⟨np⟩`, joined by `and` or by `or`, never both: name one side with a `define`. After `and`, a bare state shares the subject: `it is cancelled and paid`.
-- **inside a filter** (`that …` or `whose …` after `⟨np⟩'s ⟨Kinds⟩`), `it`, `its` and `the ⟨Kind⟩` all mean the entity being counted. A filter cannot compare it with the outer entity or the caller, which is why pair uniqueness cannot be written (limits).
+- **inside a filter** (`that …` or `whose …` after `⟨np⟩'s ⟨Kinds⟩`), `it`, `its` and `the ⟨Kind⟩` all mean the entity being counted. A filter cannot compare it with the outer entity or the caller; for "at most once per pair", use `no two`.
 - **num:** an np, a literal, `the number of ⟨np⟩'s ⟨Kinds⟩ [that ⟨cond⟩]`, `the total ⟨attr⟩ of ⟨np⟩'s ⟨Kinds⟩ […]`, `+ - * /`, parentheses.
 - **actions:** `⟨np⟩ is ⟨state or Bool⟩`, `⟨np⟩ is not ⟨Bool⟩`, `⟨np⟩'s ⟨attr⟩ becomes ⟨num or np⟩`. Only on the entity the reaction is about, its parts and its owner.
 
@@ -143,6 +144,7 @@ when a ⟨Kind⟩ is ⟨outcome | timed out⟩: ⟨action⟩[ and ⟨action⟩] 
 | status someone sets | state attribute + `when a staff ships an Order: the Order is shipped` + `admit ship Order by staff` |
 | only their own | `admit … by member where the Booking's member is the caller` |
 | not their own | `admit approve Expense by manager where the Expense's employee is not the caller` |
+| at most once per pair, a unique value | `rule once: no two Reviews have the same talk and reviewer`; with no reference among them, end with `, checked globally` |
 | at most N per owner / at most one active | `rule three: the number of each Member's Bookings that are live is at most 3` |
 | sum within a budget | `rule budget: the total amount of each Project's Expenses that are approved is at most its budget` |
 | blocked while something holds | `admit borrow a new Loan by member where the number of the Loan's member's Loans that are late is at most 0` |
@@ -171,7 +173,7 @@ kind Expense  { employee: Employee, project: Project, amount: Money,
 kind Book     { title: Text }
 kind Loan     { book: Book, employee: Employee, returned: Bool = no }
 kind Talk     { title: Text, length: Count, accepted: Bool = no }
-kind Review   { talk: Talk, score: Count }
+kind Review   { talk: Talk, reviewer: Employee, score: Count }
 
 define: a Loan is open when it is not returned
 define: a Book is lent when the number of its Loans that are open is at least 1
@@ -179,6 +181,7 @@ define: a Talk is standard when its length is 30 or its length is 45
 
 rule budget: the total amount of each Project's Expenses that are approved is at most its budget
 rule single: the number of each Book's Loans that are open is at most 1
+rule once:   no two Reviews have the same talk and reviewer
 rule good:   no Talk is accepted unless the total score of its Reviews is at least the number of its Reviews * 3
 
 when a manager approves an Expense: the Expense is approved
@@ -215,10 +218,12 @@ scenario "the recipes hold":
   when   employee Ann proposes a new Talk T1 with title "Rust" and length 40
          is refused at the gate
   when   employee Ann proposes a new Talk T2 with title "Rust" and length 45
-  and    manager Bo scores a new Review R1 with talk T2 and score 2
+  and    manager Bo scores a new Review R1 with talk T2, reviewer Bo and score 2
   and    manager Bo accepts T2
          is refused by rule good
-  when   manager Bo scores a new Review R2 with talk T2 and score 5
+  when   manager Bo scores a new Review R2 with talk T2, reviewer Bo and score 5
+         is refused by rule once
+  when   manager Ann scores a new Review R3 with talk T2, reviewer Ann and score 5
   and    manager Bo accepts T2
   expect T2 is accepted
 ```
@@ -228,7 +233,7 @@ scenario "the recipes hold":
 | Cannot | Instead |
 |---|---|
 | `now`, "past its due date" in a sentence | the reminder part above, or a `desired within` alert |
-| uniqueness of a pair ("reviews a talk at most once") | model the pair as an entity; say duplicates are not prevented |
+| `no two` on a value that changes after creation | name only values set once, or say duplicates are not prevented |
 | a reaction setting another entity it only references | a `define` on that entity, from a total of what references it |
 | a negative `Count` (`score - 3` is not −1) | compare totals, or use `Money` |
 | holidays and half days in a day count | take working days as an input, and say so |

@@ -2042,3 +2042,32 @@ Most code is now written by coding agents, and an agent has never seen Suture in
 
 - runtime/tests/guide.rs: every example in the book holds. cli/src/help.rs: the book stays under 20 KB and every section is reachable. cli/src/init.rs: `init` keeps existing files, and its module passes `check`; the skill matches AGENTS.md.
 - eval/agents/RESULTS.md: on a task the book does not cover, a fresh agent with the book read only the book, and used 43% fewer tokens, 54% fewer tool calls and 72% less time than with the guide, meeting the same requirements.
+
+## Appendix AP. Prototype slice 40: no two alike (2026-10-22)
+
+In the agent eval (appendix AO), every run failed the same requirement: "a reviewer reviews a talk at most once". The only way to write it was to compare each Review with the others, and a filter cannot name the outer entity. Slice 40 adds the sentence that says it.
+
+### AP.1 What slice 40 adds
+
+| Added in slice 40 | Still waits |
+|---|---|
+| `rule ⟨name⟩: no two ⟨Kinds⟩ [that ⟨cond⟩] have the same ⟨attr⟩[, ⟨attr⟩ …] [and ⟨attr⟩]` | the same value in attributes that change after creation |
+| a uniqueness keyed by a reference: one count per referred entity and value | uniqueness inside a list (`no two lines have the same product`) |
+| without a reference: `, checked globally`, one count per value at `all ⟨Kinds⟩` | uniqueness that ignores case or spaces in a text |
+
+### AP.2 Semantics that slice 40 settles
+
+1. **What it means.** No two entities of the kind that both hold the filter have equal values in every named attribute. Equal means equal values: the same referred entity, text, number, amount, time or state.
+2. **How it is kept.** It is a total across units (appendix F.2.11) with a group. The first named attribute that refers to another kind picks the unit that keeps the count, as in `the number of each Talk's Reviews`. The other attributes' values form the group, and the count is per group. The rule, on that kind, is that no group's count is more than 1. Its cost is per group. When no named attribute is a reference, the count is kept at `all ⟨Kinds⟩`, and the rule must end with `, checked globally` as any rule about `all` must (appendix F.2.13).
+3. **When it refuses.** An entity counts when it is created, and while its `that` filter holds, as other totals across units do (appendix AA.2.1). An input that would make two alike is refused by the rule, naming it. An entity that stops holding the filter gives its count back, so a withdrawn Review no longer blocks a new one.
+4. **Attributes that change.** A named attribute must never change after creation: no reaction, effect answer, admitted change or repeated source may set it. A change would move the entity to another group, which the count cannot follow yet, so the checker refuses the rule and says so.
+5. **The read-back** is the sentence: `no two Reviews have the same talk and reviewer`, with its cost.
+
+### AP.3 Acceptance
+
+- runtime/tests/unique.rs:
+  - a second Review of a talk by the same reviewer is refused by the rule, while one by another reviewer, or of another talk, is not;
+  - a Review that stops holding the filter frees the pair;
+  - a global uniqueness on a text refuses a second Member with the same email.
+- lang tests: the checker refuses an unknown or changing attribute, a kind given in the singular, and a uniqueness without a reference that is not `checked globally`.
+- The book's limits no longer list pair uniqueness. Its recipes and the guide's rules chapter show the sentence, tested.

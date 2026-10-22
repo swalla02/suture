@@ -24,6 +24,8 @@ pub struct View<'a> {
     pub elem: Option<&'a [usize]>,
     /// The period a take falls in, for the totals per period (appendix F.2.12).
     pub period: Option<&'a str>,
+    /// The group a take falls in, for `no two … have the same …` (appendix AP.2.2).
+    pub group: Option<&'a str>,
     /// In an `admit` condition: the caller's unit (appendix G.2.3).
     pub caller: Option<&'a str>,
     /// In an `admit` condition or an event's reaction: the data the event
@@ -42,7 +44,7 @@ pub struct View<'a> {
 
 impl<'a> View<'a> {
     pub fn of(u: &'a Unit) -> View<'a> {
-        View { root: &u.root, facts: &u.facts, taken: &u.taken, cand: None, elem: None, period: None, caller: None, data: &[], now: None, bounds: &[], version: Some(u.version) }
+        View { root: &u.root, facts: &u.facts, taken: &u.taken, cand: None, elem: None, period: None, group: None, caller: None, data: &[], now: None, bounds: &[], version: Some(u.version) }
     }
 
     /// The view a step checks its rules with before acting at `now`.
@@ -52,7 +54,7 @@ impl<'a> View<'a> {
 
     /// A tree being built, with its facts and nothing taken yet.
     fn bare(root: &'a Node, facts: &'a Facts) -> View<'a> {
-        View { root, facts, taken: &NO_TOTALS, cand: None, elem: None, period: None, caller: None, data: &[], now: None, bounds: &[], version: None }
+        View { root, facts, taken: &NO_TOTALS, cand: None, elem: None, period: None, group: None, caller: None, data: &[], now: None, bounds: &[], version: None }
     }
 
     fn with(self, root: &'a Node) -> View<'a> {
@@ -496,8 +498,9 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
                     totals.insert(total, after);
                 }
             }
+            let group = taken.as_ref().and_then(|(name, _)| name.split_once('#')).map(|(_, g)| g);
             for period in &periods {
-                if let Some(r) = broken_rule(prog, View { taken: &totals, period: period.as_deref(), ..View::of(&u) }) {
+                if let Some(r) = broken_rule(prog, View { taken: &totals, period: period.as_deref(), group, ..View::of(&u) }) {
                     let on = match (period, taken.as_ref().is_some_and(|(n, _)| n.contains("@span "))) {
                         (Some(p), true) => format!(" on {p}"),
                         _ => String::new(),
@@ -811,6 +814,10 @@ fn decide_for(prog: &Program, u: &Unit, at: &[usize], id: &str, skip: Vec<String
                     format!("{}@{}", t.name, span_key(per, time(start)?, time(end)?))
                 }
                 (Some(per), None) => format!("{}@{}", t.name, period_key(per, node_at(&u.root, at).created)),
+                (None, _) if !t.group.is_empty() => {
+                    let vals = t.group.iter().map(|n| num(prog, v, at, n)).collect::<Option<Vec<_>>>()?;
+                    format!("{}#{}", t.name, group_key(prog, &vals))
+                }
                 (None, _) => t.name.clone(),
             };
             Some((name, num(prog, v, at, &t.amount)?))
@@ -2187,10 +2194,11 @@ fn num(prog: &Program, v: View, at: &[usize], n: &Num) -> Option<Val> {
             Place::Here(p) if p.is_empty() => Some(Val::Count(run_through(v.taken, name, v.period?)?)),
             _ => None,
         },
-        Num::Taken { of, name, ty, period, .. } => match locate(v, at, &of.steps)? {
+        Num::Taken { of, name, ty, period, group, .. } => match locate(v, at, &of.steps)? {
             Place::Here(p) if p.is_empty() => {
                 let name = match period {
                     Some(_) => format!("{name}@{}", v.period?),
+                    None if *group => format!("{name}#{}", v.group?),
                     None => name.clone(),
                 };
                 Some(v.taken.get(&name).cloned().unwrap_or_else(|| zero(*ty)))
@@ -2200,6 +2208,20 @@ fn num(prog: &Program, v: View, at: &[usize], n: &Num) -> Option<Val> {
             _ => None,
         },
     }
+}
+
+/// The group of a take for `no two … have the same …`, from the entity's
+/// values: `"Bo"`, `Ann, 2026-03-01`. It never holds `@` or `#`, which
+/// mark a total's period and group (appendix AP.2.2).
+fn group_key(prog: &Program, vals: &[Val]) -> String {
+    let shown: Vec<String> = vals
+        .iter()
+        .map(|x| match x {
+            Val::Text(s) => format!("{s:?}"),
+            x => x.show(&prog.currency),
+        })
+        .collect();
+    shown.join(", ").replace('%', "%25").replace('@', "%40").replace('#', "%23")
 }
 
 /// How many days in a row, through the day `day` (`2026-01-05`), have a
