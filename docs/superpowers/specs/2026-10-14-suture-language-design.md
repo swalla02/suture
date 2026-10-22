@@ -1948,3 +1948,24 @@ A decision model's minimum confidence lived only in `models.json`, which is per 
 - In runtime/tests/routing.rs, a confident router and candidate decide. An unsure router falls to the first candidate, an unsure candidate falls to `prefer`, and a pick with no confidence is not used. A bounded single model on a slot falls to `prefer`, and `with prefer at least … sure` is an error.
 - In runtime/tests/backends.rs, the stricter of `min_confidence` and the program's bound applies, and a function model under a bound is not used.
 
+## Appendix AL. Prototype slice 36: a decision's own fallback (2026-10-22)
+
+When a model was no help, `prefer`'s first option was taken (K.2.5). Slice 36 lets a `decide` name the option instead, the way a source names `otherwise use …`, so a model that isn't sure enough falls back to what the program chose.
+
+### AL.1 What slice 36 adds
+
+| Added in slice 36 | Still waits |
+|---|---|
+| `decide … with model "m@1" [within …] [at least … sure] otherwise Writeoff` | a fallback for a choice among pooled entities |
+| `…, picked by model "r@1" … otherwise model "careful@1"` | a fallback per candidate in a route |
+
+### AL.2 Semantics that slice 36 settles
+
+1. **What it names.** `otherwise ⟨Option⟩` follows the bound. It names one of the choice's options as the program knows them: a slot's alternative or, for a source chosen among adapters, an adapter. A binding's options are entities that exist only as the program runs, so its fallback can only be `prefer`. The decide must name its choice point. A router's `otherwise` names one of its candidates. `otherwise prefer` is the default, and `with prefer` alone takes no `otherwise`.
+2. **When it is taken.** For every reason a model is no help (K.2.5): it declines, is late, is unsure under either bound, fails, gives no confidence under a program bound, or picks what it was not offered. The trace says `by otherwise (…why…)`. If the fallback is no longer an option when the choice is made, for instance because a rule refused it, `prefer` picks as before.
+3. **Determinism.** The fallback is applied to the journaled answer, as `prefer` is, so replay takes the same option.
+
+### AL.3 Acceptance
+
+- In runtime/tests/routing.rs, an unsure model on a slot falls to its `otherwise`, a sure one is used, and an unsure router falls to its named candidate. An unknown option, `with prefer otherwise …`, a router fallback that is not a candidate, and a fallback on a pooled binding are errors.
+

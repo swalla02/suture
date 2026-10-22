@@ -222,6 +222,16 @@ decide Carrier with model "carriers@1" within 2 seconds at least 0.8 sure
 
 A pick with a confidence below 0.8 is not used, and `prefer` picks. A pick that gives no confidence at all is not used either, because the program can't tell how sure it was: `by prefer (model "carriers@1" failed: it gave no confidence, and the program needs at least 0.8 sure)`. A function registered from Rust gives no confidence, so it can't make a bounded choice. When a backend has its own `min_confidence`, the stricter of the two applies. In a scenario, a scripted pick gives its confidence as a read does: `model "carriers@1" picks Fast at 0.9`.
 
+### What is taken instead
+
+By default, `prefer`'s first option is taken when the model is no help. `otherwise` names the option instead:
+
+```text
+decide Outcome with model "assessor@1" at least 0.8 sure otherwise Writeoff
+```
+
+An unsure, late, declining or failing model leaves the choice to `Writeoff`, and the trace says `by otherwise (model "assessor@1" was unsure, at 0.60)`. If `Writeoff` is no longer an option (a rule refused it), `prefer` picks among the rest. The fallback must be one of the choice's options: a slot's alternative, or a source's adapter. A choice among entities, such as a `Carrier` from a pool, has options that exist only as the program runs, so its fallback stays `prefer`. A router can name its own fallback among its candidates: `…, picked by model "router@1" at least 0.7 sure otherwise model "careful@1"`.
+
 A model cannot break a rule either. Its pick is still asked to grant the take, and a pick that would break a rule is refused. The option is then dropped, and the choice is made again among the rest. A model that picks `Small` (1 unit) for an order of 2 sees `Small` refused; only `Big` is left, so `Big` is taken without asking.
 
 ## Pinned and replayed
