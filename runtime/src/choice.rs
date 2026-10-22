@@ -85,6 +85,8 @@ pub struct Reading {
     pub ty: suture_lang::ir::Ty,
     /// The source's `asking` text.
     pub asking: Option<String>,
+    /// The source's `scored from … to …` (appendix AZ).
+    pub scale: Option<(i64, i64)>,
     pub currency: String,
     /// The content of the media among the facts, by hash.
     pub media: BTreeMap<String, crate::media::Blob>,

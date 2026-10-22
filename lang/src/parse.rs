@@ -452,7 +452,7 @@ fn source(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     let within_secs = duration(&mut c)?;
     c.expect_end()?;
     let (mut sends, mut reports, mut good_for, mut otherwise) = (None, None, None, None);
-    let (mut asking, mut sure) = (None, None);
+    let (mut asking, mut sure, mut scale) = (None, None, None);
     for line in &st.lines[1..] {
         let mut c = Cursor::new(line, &st.file, st.line);
         if c.eat_word("sends") {
@@ -474,6 +474,26 @@ fn source(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
             asking = Some(text.clone());
             c.next();
             c.expect_end()?;
+        } else if model && c.eat_word("scored") {
+            // `scored from 1 to 5` (appendix AZ).
+            c.expect_word("from")?;
+            let whole = |c: &mut Cursor| {
+                let x = match c.peek() {
+                    Some(Tok::Num(n)) => n.parse::<i64>().ok(),
+                    _ => None,
+                };
+                let Some(x) = x else { return Err(c.error(format!("expected a whole number, as in `scored from 1 to 5`, found {}", c.found()))) };
+                c.next();
+                Ok(x)
+            };
+            let from = whole(&mut c)?;
+            c.expect_word("to")?;
+            let to = whole(&mut c)?;
+            c.expect_end()?;
+            if to <= from {
+                return Err(c.error(format!("a scale runs from a lower number to a higher one, so `scored from {from} to {to}` is not one")));
+            }
+            scale = Some((from, to));
         } else if model && c.is_word("at") {
             sure = at_least_sure(&mut c, true)?;
             c.expect_end()?;
@@ -498,7 +518,7 @@ fn source(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
             });
             c.expect_end()?;
         } else {
-            let more = if model { ", `asking`, `at least … sure`" } else { "" };
+            let more = if model { ", `asking`, `scored from … to …`, `at least … sure`" } else { "" };
             return Err(c.error(format!("expected `sends`, `reports`, `good for`{more} or `otherwise`, found {}", c.found())));
         }
     }
@@ -508,7 +528,7 @@ fn source(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
         None if model => (READ.to_string(), vec![], vec![UNREAD.to_string()]),
         None => return Err(st.error("a source needs a `reports` line")),
     };
-    out.sources.push(SourceDecl { kind, attr, adapter, model, asking, sure, within_secs, sends, success, data, failures, good_for, otherwise, at });
+    out.sources.push(SourceDecl { kind, attr, adapter, model, asking, sure, scale, within_secs, sends, success, data, failures, good_for, otherwise, at });
     Ok(())
 }
 

@@ -428,6 +428,9 @@ pub struct Source {
     /// The confidence, in thousandths, that a value the model reads needs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sure: Option<u16>,
+    /// `scored from 1 to 5`: a count the model reads outside it is not used (appendix AZ).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<(i64, i64)>,
     pub within_secs: u64,
     /// What the adapter receives, as for an effect.
     pub sends: Vec<(String, Path)>,

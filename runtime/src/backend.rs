@@ -163,6 +163,10 @@ pub fn read_value(v: &Value, ty: Ty, currency: &str) -> Result<Val, String> {
     let bad = |what: &str| format!("{v} is not {what}");
     match (ty, v) {
         (Ty::Text, Value::String(s)) => Ok(Val::Text(s.clone())),
+        // Yes or no (appendix AZ): a JSON boolean, or the word.
+        (Ty::Bool, Value::Bool(b)) => Ok(Val::Bool(*b)),
+        (Ty::Bool, Value::String(s)) if s == "yes" || s == "no" => Ok(Val::Bool(s == "yes")),
+        (Ty::Bool, _) => Err(bad("yes or no")),
         (Ty::Count, Value::Number(n)) => match (n.as_i64(), n.as_f64()) {
             (Some(i), _) => Ok(Val::Count(i)),
             (None, Some(f)) if f.fract() == 0.0 && f.abs() < 9e15 => Ok(Val::Count(f as i64)),
@@ -272,6 +276,24 @@ impl Jev {
         })
     }
 
+    /// A reading as one `choice` question: `yes` or `no`, or each point of
+    /// its scale. `None` for any other value.
+    pub fn read_request(&self, r: &Reading) -> Option<Value> {
+        let answers: Vec<String> = match (r.ty, r.scale) {
+            (Ty::Bool, _) => vec!["yes".into(), "no".into()],
+            (Ty::Count, Some((a, b))) if b - a < 100 => (a..=b).map(|n| n.to_string()).collect(),
+            _ => return None,
+        };
+        let criteria: Map<String, Value> = answers.iter().map(|a| (a.clone(), Value::Null)).collect();
+        let facts: Map<String, Value> = r.facts.iter().map(|(k, v)| (k.clone(), sent_with(v, &r.currency, &r.media, self.media))).collect();
+        let text = format!("{} for {} ({}). Answer one of: {}.", instructions(r), r.unit, r.kind, answers.join(", "));
+        Some(json!({
+            "model": self.model,
+            "state": { "unit": r.unit, "chooser": r.kind, "facts": facts },
+            "questions": { "pick": { "type": "choice", "instructions": text, "criteria": criteria } },
+        }))
+    }
+
     /// Reads `answers.pick.choice` and `answers.pick.confidence`.
     pub fn read(&self, answer: &Value) -> Answer {
         self.read_bounded(answer, None)
@@ -297,6 +319,32 @@ impl Backend for Jev {
         let body = self.request(c);
         match self.transport.post(&self.url, key.as_deref(), &body, within) {
             Ok(v) => self.read_bounded(&v, c.sure),
+            Err(e) if e == TIMED_OUT => Answer::Late,
+            Err(e) => Answer::Failed(e),
+        }
+    }
+
+    /// A yes or no, or a score, as a `choice` among its answers (appendix
+    /// AZ.2.3). Jev picks, so it reads nothing else.
+    fn extract(&mut self, r: &Reading, within: Duration) -> Answer {
+        let Some(body) = self.read_request(r) else { return Answer::Failed("Jev picks; of the values a model reads, it answers only yes or no and scores of at most 100 points".into()) };
+        if let Some(why) = reading_unsent(r, self.media, self.max_media_bytes) {
+            return Answer::Failed(why);
+        }
+        let key = match key_from(self.key_env.as_deref()) {
+            Ok(k) => k,
+            Err(e) => return Answer::Failed(e),
+        };
+        match self.transport.post(&self.url, key.as_deref(), &body, within) {
+            Ok(v) => {
+                let q = &v["answers"]["pick"];
+                let Some(pick) = q["choice"].as_str() else { return Answer::Failed("no answers.pick.choice in the answer".into()) };
+                let value = match r.ty {
+                    Ty::Bool => json!(pick),
+                    _ => pick.parse::<i64>().map_or(json!(pick), |n| json!(n)),
+                };
+                read_answer(Some(&value), q["confidence"].as_f64(), r, self.min_confidence)
+            }
             Err(e) if e == TIMED_OUT => Answer::Late,
             Err(e) => Answer::Failed(e),
         }
@@ -333,7 +381,10 @@ impl Custom {
     /// A reading: the same state, and the field to read.
     pub fn read_request(&self, r: &Reading) -> Value {
         let facts: Map<String, Value> = r.facts.iter().map(|(k, v)| (k.clone(), sent_with(v, &r.currency, &r.media, self.media))).collect();
-        let field = json!({ "name": r.attr, "type": type_name(r.ty), "instructions": instructions(r) });
+        let mut field = json!({ "name": r.attr, "type": type_name(r.ty), "instructions": instructions(r) });
+        if let Some((a, b)) = r.scale {
+            field["scale"] = json!({ "from": a, "to": b });
+        }
         json!({ "point": "read", "state": { "unit": r.unit, "kind": r.kind, "facts": facts }, "field": field })
     }
 
@@ -401,13 +452,20 @@ fn type_name(t: Ty) -> &'static str {
         Ty::Money => "money",
         Ty::Time => "time",
         Ty::Duration => "duration",
+        Ty::Bool => "yes or no",
         _ => "other",
     }
 }
 
-/// What the model is asked: the source's `asking`, or the attribute's name.
+/// What the model is asked: the source's `asking`, or the attribute's name,
+/// with the answer's form for a yes or no and a score (appendix AZ).
 fn instructions(r: &Reading) -> String {
-    r.asking.clone().unwrap_or_else(|| format!("the {}'s {}", r.kind, r.attr))
+    let what = r.asking.clone().unwrap_or_else(|| format!("the {}'s {}", r.kind, r.attr));
+    match (r.ty, r.scale) {
+        (Ty::Bool, _) => format!("{what}: yes or no"),
+        (_, Some((a, b))) => format!("{what}: a score from {a} to {b}"),
+        _ => what,
+    }
 }
 
 /// Cloudflare Workers AI's extraction model, Clairic (appendix AF.2.5): the
@@ -448,6 +506,7 @@ impl WorkersAi {
         let mut field = json!({ "instructions": instructions(r) });
         match r.ty {
             Ty::Text => field["type"] = json!("text"),
+            Ty::Bool => field["type"] = json!("boolean"),
             Ty::Count => {
                 field["type"] = json!("number");
                 field["integer"] = json!(true);

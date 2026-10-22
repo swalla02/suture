@@ -30,6 +30,7 @@ source ⟨Kind⟩'s ⟨attr⟩ via ⟨adapter⟩ within ⟨duration⟩
 source ⟨Kind⟩'s ⟨attr⟩ via model "⟨name⟩@⟨version⟩" within ⟨duration⟩
   sends      ⟨np⟩[, ⟨np⟩…]                       (media allowed)
   [asking    "⟨instructions⟩"]
+  [scored    from ⟨n⟩ to ⟨n⟩]                     (a Count: a score; a Bool is a yes or no)
   [at least ⟨0…1⟩ sure]
   [good for  ⟨duration⟩]
   [otherwise …]

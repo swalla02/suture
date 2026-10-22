@@ -2297,3 +2297,34 @@ Slice 34's router (appendix AJ) got the chooser's facts and the candidate models
 ### AY.4 Not in this slice: a reaction that sets another entity
 
 A reaction can set only its own unit's entities. Setting a referenced shared entity would be a write from one unit into another, and the runtime is built on each unit owning its state. The way around it (a `define` on that entity, from a total of what refers to it) stays the recipe until that is decided.
+
+## Appendix AZ. Prototype slice 50: yes or no, and scores, from a model (2026-10-22)
+
+Slice 30's model sources (appendix AF) read a typed value, and Jev could not read at all. Slice 22 left "scores or yes/no questions about media, beside picks" for later (appendix V). Both are still decisions: the model picks yes or no, or one point of a scale.
+
+### AZ.1 What slice 50 adds
+
+| Added in slice 50 | Still waits |
+|---|---|
+| `source ⟨Kind⟩'s ⟨state⟩ via model …`: a yes or no sets a Bool | a state an adapter sources |
+| `scored from ⟨n⟩ to ⟨n⟩` on a Count a model reads | scores that are not whole |
+| Jev reads a yes or no and a score, as a `choice` question | Jev reading any other value |
+
+### AZ.2 Semantics that slice 50 settles
+
+1. **Yes or no.** A model source may set a Bool. The value read is a JSON boolean, or `"yes"` or `"no"`. An adapter source of a Bool is still an error.
+2. **Scores.** `scored from a to b` (whole numbers, a < b) is allowed on a Count a model reads. A value off the scale is not used, and the fetch fails with `it scored n, outside the scale from a to b`. The host checks it, so it holds for every backend.
+3. **Backends.**
+   - Jev: one `choice` question named `pick`, with criteria `yes` and `no`, or each point of a scale of at most 100 points. The instructions end with `Answer one of: …`.
+   - Custom: `"type": "yes or no"`, and `"scale": {"from", "to"}`.
+   - Workers AI: a `boolean` field; a scale is named in the instructions.
+4. Nothing new is journaled: the answer is the source's `read` or `unread`, as before.
+
+### AZ.3 Acceptance
+
+- runtime/tests/judged.rs:
+  - a yes and a score let a payout go ahead, and a no holds it;
+  - a score off the scale is not used;
+  - an adapter state, a scale on a non-Count, and a reversed scale are errors;
+  - Jev's request and answers, for yes or no and for a scale;
+  - a custom backend's field and its boolean answer.

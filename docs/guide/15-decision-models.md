@@ -623,6 +623,26 @@ In a scenario, `model "reader@1" reads 1200 EUR [at 0.9][, then …]`, `… read
 
 Secret and personal attributes are not sent to a model.
 
+### Yes or no, and scores
+
+A model can also answer yes or no, or give a score, about what it is sent. A yes or no sets a state (a `Bool`), and a score is a Count on a scale that `scored from … to …` names:
+
+```suture
+kind Claim  { photo: Media, note: Text, damaged: Bool, severity: Count }
+
+source Claim's damaged via model "inspector@1" within 5 seconds
+  sends      its photo
+  asking     "does the photo show damage to the car"
+
+source Claim's severity via model "grader@1" within 5 seconds
+  sends      its photo, its note
+  scored     from 1 to 5
+
+rule covered: no Claim has a Payout that is sent unless it is damaged and its severity is at most 4
+```
+
+The model is still a decision model: it picks yes or no, or one point of the scale, and writes nothing. A score off the scale is not used, and the fetch fails as for an unsure reading: `it scored 7, outside the scale from 1 to 5`. In a scenario, `model "inspector@1" reads yes [at 0.9]` and `model "grader@1" reads 3` script them. Only a model sources a state: an adapter's answer is a value, so source a Text or a Count from it and compare that.
+
 ### Formulas over a read value
 
 A formula may read a value that a source reads once, with no `good for`. The formula is worked out when the value comes in. Here the holder gives no amount: a model reads it off the invoice, and the payout and the yearly total follow from it:
@@ -695,6 +715,6 @@ The facts are sent as the state's text, with up to four images inline as data UR
   "fields": { "estimate": { "type": "number", "decimals": 2, "unit": "EUR", "instructions": "the repair cost the garage's estimate shows" } } }
 ```
 
-A fact that is a time or a duration goes to a model as the API gives it: RFC 3339 or ISO 8601. Text is a `text` field, Count a `number` with `integer`, Money a `number` with two decimals in the module's currency, Time a `datetime`, and Duration a `duration` in seconds. The value is read at `answers.estimate.value`, or at `result.answers.estimate.value` as the REST API wraps it, with its `confidence`. A `p_null` of 0.5 or more means the value is not in the input, so nothing is read. Cloudflare's post documents the field types, but not the name of the images field, so `images` may change.
+A fact that is a time or a duration goes to a model as the API gives it: RFC 3339 or ISO 8601. Text is a `text` field, a state a `boolean`, Count a `number` with `integer` (a scale goes in the instructions, as `: a score from 1 to 5`), Money a `number` with two decimals in the module's currency, Time a `datetime`, and Duration a `duration` in seconds. The value is read at `answers.estimate.value`, or at `result.answers.estimate.value` as the REST API wraps it, with its `confidence`. A `p_null` of 0.5 or more means the value is not in the input, so nothing is read. Cloudflare's post documents the field types, but not the name of the images field, so `images` may change.
 
-A custom backend reads too when it has a `value` pointer. It posts `{ "point": "read", "state": { "unit", "kind", "facts" }, "field": { "name", "type", "instructions" } }` and reads the value at `value` and the confidence at `confidence`. Jev picks, and does not read.
+A custom backend reads too when it has a `value` pointer. It posts `{ "point": "read", "state": { "unit", "kind", "facts" }, "field": { "name", "type", "instructions" } }`, with `"type": "yes or no"` for a state and `"scale": { "from": 1, "to": 5 }` for a score, and reads the value at `value` (a yes or no as `true`, `false`, `"yes"` or `"no"`) and the confidence at `confidence`. Jev picks, so it reads only a yes or no and a score of at most 100 points: each is one `choice` question named `pick`, whose criteria are `yes` and `no`, or each point of the scale. It reads no other value.

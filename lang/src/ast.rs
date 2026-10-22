@@ -245,6 +245,8 @@ pub struct SourceDecl {
     /// What the model is asked, and the confidence a value it reads needs, in thousandths.
     pub asking: Option<String>,
     pub sure: Option<u16>,
+    /// `scored from 1 to 5`: the scale a count the model reads keeps to (appendix AZ).
+    pub scale: Option<(i64, i64)>,
     pub within_secs: u64,
     pub sends: Vec<NounPhrase>,
     pub success: String,

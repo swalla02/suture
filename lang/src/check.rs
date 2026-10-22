@@ -1912,8 +1912,12 @@ impl Checker {
                 self.errors.push(err(&s.at, format!("{}.{} is media; a model reads values out of media, it does not make it", s.kind, s.attr)));
                 continue;
             }
-            if attr.ty == Ty::Bool {
-                self.errors.push(err(&s.at, format!("{}.{} is a state; v0 sources values, not states: source a Text or Count and compare it", s.kind, s.attr)));
+            if attr.ty == Ty::Bool && !s.model {
+                self.errors.push(err(&s.at, format!("{}.{} is a state; an adapter sources values, not states: source a Text or Count and compare it, or ask a model yes or no (appendix AZ)", s.kind, s.attr)));
+                continue;
+            }
+            if s.scale.is_some() && attr.ty != Ty::Count {
+                self.errors.push(err(&s.at, format!("{}.{} is not a Count; only a count a model reads is scored", s.kind, s.attr)));
                 continue;
             }
             if p.sources_of(&s.kind, &s.attr).into_iter().any(|x| x.adapter == s.adapter) {
@@ -1997,6 +2001,7 @@ impl Checker {
                 model: s.model,
                 asking: s.asking.clone(),
                 sure: s.sure,
+                scale: s.scale,
                 within_secs: s.within_secs,
                 sends,
                 success: s.success.clone(),

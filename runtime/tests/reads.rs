@@ -160,6 +160,7 @@ fn reading(ty: suture_lang::ir::Ty) -> suture_runtime::choice::Reading {
         attr: "estimate".into(),
         ty,
         asking: Some("the repair cost".into()),
+        scale: None,
         currency: "EUR".into(),
         media,
     }
