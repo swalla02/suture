@@ -88,6 +88,27 @@ fn a_change_moves_the_time_and_the_old_one_does_nothing() {
 }
 
 #[test]
+fn a_passing_that_would_break_a_rule_is_held_and_happens_once() {
+    let src = LIBRARY.replace("admit lend", "rule kept: no Hold is expired unless its member is the Hold's member and 1 is 2\nadmit lend")
+        .replace("kind Hold { member: Member, until: Time, expired: Bool = no }", "kind Hold { member: Member, until: Time, expired: Bool = no, count: Count = 0 }")
+        .replace("when a Hold's until passes: it is expired", "when a Hold's until passes: it is expired\nwhen a Hold's until passes: its count becomes its count + 1");
+    let r = runs(
+        &src,
+        "  when   librarian Lu places a new Hold H1 with member Ann and until 2025-12-01
+  and    librarian Lu places a new Hold H2 with member Ann and until 2026-01-05
+  and    10 days pass
+  and    librarian Lu changes H1's until to 2025-12-01
+  expect H1 is not expired
+  expect H2 is not expired
+  expect H1's count is 1
+  expect H2's count is 1
+",
+    );
+    assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
+    assert!(r.host.trace.iter().any(|l| l.starts_with("H2  reaction held: rule kept")), "{}", r.host.trace.join("\n"));
+}
+
+#[test]
 fn a_replay_passes_at_the_same_times() {
     let p = compiled(LIBRARY);
     let r = runs(

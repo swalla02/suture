@@ -2086,9 +2086,9 @@ The agent eval's task A (appendix AO) needed a loan that becomes overdue on its 
 
 ### AQ.2 Semantics that slice 41 settles
 
-1. **What passes.** The time is a `Time` attribute of a kind that is no part: given at creation, or a formula such as `due: Time = created + 14 days`. It passes when the clock reaches it. The reaction's actions then apply to the entity, as an effect's reaction does (appendix C), and the step settles.
+1. **What passes.** The time is a `Time` attribute of a kind that is no part: given at creation, or a formula such as `due: Time = created + 14 days`. It passes when the clock reaches it. The reaction's actions then apply to the entity, and the step settles. A passing is a fact, as a time-out is (appendix C.3.3): it is always recorded, and a reaction whose actions would break a rule is held back (`reaction held: rule …`), whether it passes on a timer, at creation or on a change.
 2. **A time already past** when the entity is created passes in the step that creates it.
-3. **It passes once per value.** Only an admitted change (`admit change Loan's due by librarian`) may set the attribute after creation. A change to a later time moves the passing there, and one to a time already past passes at once. A passing that was scheduled for an old value does nothing. The checker refuses a passing on an attribute that a reaction, an effect's answer or a source sets.
+3. **It passes once per value.** Only an admitted change (`admit change Loan's due by librarian`) may set the attribute after creation. A change to a later time moves the passing there, and one to a time already past passes at once. A change to the value it already holds does nothing. A passing that was scheduled for an old value does nothing. The checker refuses a passing on an attribute that a reaction, an effect's answer or a source sets.
 4. **How it is kept.** The unit asks the host for a timer `⟨label⟩!passes:⟨attr⟩@⟨time⟩`, as sources and slots do (appendix I.2.5). The firing is a journaled step, so a replay passes at the same times.
 5. **What it does not do.** It has no condition of its own: guard what it sets with a definition, such as `define: a Loan is late when it is overdue and it is not returned`.
 

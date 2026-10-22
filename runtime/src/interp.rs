@@ -540,8 +540,10 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
         Msg::Granted { key, by, taken, facts } => granted(prog, &mut u, key, by, taken, facts, &mut out),
         Msg::Change { attr, value, by } => {
             u.notes.push(format!("{by} changes {attr} to {}", shown(prog, attr, value)));
-            u.root.attrs.insert(attr.clone(), value.clone());
-            passing(prog, &mut u, Some(attr), now);
+            // The same value again moves nothing, so it passes nothing again.
+            if u.root.attrs.insert(attr.clone(), value.clone()).as_ref() != Some(value) {
+                passing(prog, &mut u, Some(attr), now);
+            }
         }
         Msg::Refresh { facts } => {
             // Only the facts it carries. A refresh is a fact and is never
@@ -1948,7 +1950,7 @@ fn passing(prog: &Program, u: &mut Unit, only: Option<&str>, now: i64) {
         let Some(Val::Time(t)) = u.root.attrs.get(attr).cloned() else { continue };
         if t <= now {
             u.notes.push(format!("its {attr} has passed ({})", time_text(t)));
-            apply(prog, &mut u.root, &u.facts, &[], &r.actions, None, &mut u.notes);
+            pass(prog, u, &r.actions);
         } else {
             let id = format!("{}{PASS_MARK}{attr}@{t}", u.label);
             if !u.timers.iter().any(|(x, _)| *x == id) {
@@ -1974,7 +1976,22 @@ fn passed(prog: &Program, u: &mut Unit, id: &str) {
     let outcome = format!("{attr}{PASSES}");
     let kind = u.root.kind.clone();
     for r in prog.reactions.iter().filter(|r| r.kind == kind && r.outcome == outcome) {
-        apply(prog, &mut u.root, &u.facts, &[], &r.actions, None, &mut u.notes);
+        pass(prog, u, &r.actions);
+    }
+}
+
+/// A time passing is a fact, as a time-out is: it is always recorded, and a
+/// reaction that would break a rule is held back (appendix AQ.2.1).
+fn pass(prog: &Program, u: &mut Unit, actions: &[Action]) {
+    let mut t = u.root.clone();
+    let mut notes = vec![];
+    apply(prog, &mut t, &u.facts, &[], actions, None, &mut notes);
+    match newly_broken(prog, View::of(u), &t) {
+        Some(r) => u.notes.push(format!("reaction held: rule {}: {}", r.name, r.paraphrase)),
+        None => {
+            u.root = t;
+            u.notes.extend(notes);
+        }
     }
 }
 
