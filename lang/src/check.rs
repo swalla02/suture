@@ -1976,6 +1976,8 @@ impl Checker {
     /// Totals kept for readers and scenarios: each is the running total a
     /// rule over it would read, kept with no rule (appendix AI).
     fn keeps(&mut self, src: &Source, p: &Program) {
+        // A rule that failed to compile may have left its period set.
+        (self.period, self.span) = (None, None);
         for k in &src.keeps {
             if p.kind(&k.kind).is_none() {
                 self.errors.push(err(&k.at, format!("unknown kind {}", k.kind)));
