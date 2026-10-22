@@ -336,6 +336,7 @@ fn values_follow_the_attribute_type() {
     assert_eq!(v(json!("2026-01-02T03:00:00.750+02:00"), Some(Ty::Time)), Ok(Val::Time(90_000)));
     assert_eq!(v(json!("2026-01-01T19:00:00-06:00"), Some(Ty::Time)), Ok(Val::Time(90_000)));
     assert!(v(json!("2026-02-30"), Some(Ty::Time)).is_err());
+    assert!(v(json!("300000000000-01-01"), Some(Ty::Time)).is_err(), "a year past 9999 is not RFC 3339, and would overflow");
     assert!(v(json!(90_000), Some(Ty::Time)).is_err());
     assert_eq!(service::to_json(&Val::Time(90_000), "EUR"), json!("2026-01-02T01:00:00Z"));
     assert_eq!(service::to_json(&Val::Time(-1), "EUR"), json!("2025-12-31T23:59:59Z"));

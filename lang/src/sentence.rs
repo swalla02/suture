@@ -173,7 +173,8 @@ pub fn iso_time(s: &str) -> Option<i64> {
     };
     let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
     let days_in = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    if !(1..=12).contains(&m) || day < 1 || day > days_in[(m - 1) as usize] || h > 23 || min > 59 || sec > 59 {
+    // RFC 3339 has four-digit years, which also keeps the seconds in range.
+    if !(0..=9999).contains(&y) || !(1..=12).contains(&m) || day < 1 || day > days_in[(m - 1) as usize] || h > 23 || min > 59 || sec > 59 {
         return None;
     }
     Some((days_from_civil(y, m, day) - DAY_ZERO) * 86_400 + h * 3_600 + min * 60 + sec - offset)

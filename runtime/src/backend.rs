@@ -172,7 +172,7 @@ pub fn read_value(v: &Value, ty: Ty, currency: &str) -> Result<Val, String> {
             Some(f) if f.is_finite() && f.abs() < 9e13 => Ok(Val::Money((f * 100.0).round() as i64)),
             _ => Err(bad(&format!("an amount of {currency}"))),
         },
-        (Ty::Time, Value::String(s)) => suture_lang::sentence::iso_time(s).map(Val::Time).ok_or_else(|| bad("a date, as in \"2026-03-01\"")),
+        (Ty::Time, Value::String(s)) => suture_lang::sentence::iso_time(s).map(Val::Time).ok_or_else(|| bad("a date or an RFC 3339 time, as in \"2026-03-01\"")),
         (Ty::Duration, Value::Number(n)) => match n.as_f64() {
             Some(f) if f.is_finite() && (0.0..9e15).contains(&f) => Ok(Val::Duration(f.round() as i64)),
             _ => Err(bad("a duration in seconds")),
@@ -181,8 +181,8 @@ pub fn read_value(v: &Value, ty: Ty, currency: &str) -> Result<Val, String> {
         (Ty::Text, _) => Err(bad("text")),
         (Ty::Count, _) => Err(bad("a whole number")),
         (Ty::Money, _) => Err(bad(&format!("an amount of {currency}, as a number"))),
-        (Ty::Time, _) => Err(bad("a date, as in \"2026-03-01\"")),
-        (Ty::Duration, _) => Err(bad("a duration in seconds")),
+        (Ty::Time, _) => Err(bad("a date or an RFC 3339 time, as in \"2026-03-01\"")),
+        (Ty::Duration, _) => Err(bad("a duration in seconds, or as ISO 8601 such as \"PT2H\"")),
         (t, _) => Err(format!("a model does not read a {t:?}")),
     }
 }
