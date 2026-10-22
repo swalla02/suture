@@ -13,7 +13,7 @@ suture help    [⟨topic⟩ | all | --for ⟨dir or file⟩]
 
 ## `suture check`
 
-`check` is the loop to run after every edit. It compiles the module, runs every scenario of every `.scenario` file in the directory, and keeps the output short: every compile error with its file and line, `✓` and the title for each passing scenario, and the whole trace and the failures only for a failing one. The last line counts them:
+`check` is the loop to run after every edit. It compiles the module, runs every scenario of every `.scenario` file in the directory, and keeps the output short: every compile error with its file and line, `✓` and the title for each passing scenario, and for a failing one, the trace around each failure and then the failures. Around a failure means the lines of the failing step, the six before it, and the latest refusal, wait or alert before those, preferring one about the entity that failed; `…` marks what is left out. `suture run` prints the whole trace. The last line counts them:
 
 ```text
 ✓ rooms.scenario: "a booking that does not fit is refused"
@@ -23,7 +23,7 @@ suture help    [⟨topic⟩ | all | --for ⟨dir or file⟩]
 2 scenarios: 1 passed, 1 failed
 ```
 
-`--json` prints the same as one JSON object: `passed`, `errors` (each with `file`, `line` and `message`), `warnings`, and `scenarios` (each with `file`, `title`, `passed`, `failures`, and the `trace` when it failed).
+`--json` prints the same as one JSON object: `passed`, `errors` (each with `file`, `line`, `message` and `topic`), `warnings`, and `scenarios` (each with `file`, `title`, `passed`, `failures`, and, when it failed, the whole `trace` and the `excerpt` that the text shows).
 
 ## Working with a coding agent
 

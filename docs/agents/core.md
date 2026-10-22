@@ -5,7 +5,7 @@ Suture is a declarative backend language in controlled English: you state facts,
 ## loop: how to work
 
 1. A module is the `.st` files of one directory; scenarios (tests) are `.scenario` files beside them. Before you edit an existing module, run `suture help --for <dir>`.
-2. After every edit run `suture check <dir>`: it compiles, runs every scenario, and prints errors (`file:line: message (suture help ⟨topic⟩)`) and the traces of failing scenarios. Exit 0 = all good; `--json` for tools.
+2. After every edit run `suture check <dir>`: it compiles, runs every scenario, and prints errors (`file:line: message (suture help ⟨topic⟩)`) and the trace around each failing expect. Exit 0 = all good; `--json` for tools.
 3. Fix the first error first; read the topic it names when the message is not enough.
 4. Cover each requirement with a scenario, and each limit or permission with a refused input.
 5. When it passes, `suture build <dir>` prints every rule in plain English with its cost. Give that to the person: they review the read-back and the scenarios, not the syntax.

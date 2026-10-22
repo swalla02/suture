@@ -1,6 +1,7 @@
 //! `suture check`: the loop a coding agent runs after each edit (appendix AO).
 //! It compiles the module, runs every scenario file beside it, and shows the
-//! trace of a scenario only when it fails, so the output stays short.
+//! trace around each failure of a scenario only when it fails, so the
+//! output stays short (appendix AT).
 
 use std::path::{Path, PathBuf};
 
@@ -33,7 +34,7 @@ impl Found {
     }
 
     /// The short form: an error per line, a line per passing scenario, and the
-    /// trace and failures of each failing one.
+    /// trace around each failure of a failing one, then its failures.
     pub fn text(&self) -> String {
         let mut out = String::new();
         for e in &self.errors {
@@ -53,7 +54,7 @@ impl Found {
                 continue;
             }
             out += &format!("✗ {name}\n");
-            for l in s["trace"].as_array().into_iter().flatten() {
+            for l in s["excerpt"].as_array().into_iter().flatten() {
                 out += &format!("    {}\n", l.as_str().unwrap_or(""));
             }
             for f in s["failures"].as_array().into_iter().flatten() {
@@ -63,6 +64,7 @@ impl Found {
         let failed = self.scenarios.iter().filter(|s| s["passed"] != true).count();
         out += &match (self.errors.len(), self.scenarios.len()) {
             (0, 0) => "compiles; no scenarios beside it: write a ⟨name⟩.scenario (`suture help scenarios`)\n".to_string(),
+            (0, n) if failed > 0 => format!("{n} scenario{}: {} passed, {failed} failed; `suture run ⟨dir⟩ --scenario ⟨file⟩` prints a whole trace\n", plural(n), n - failed),
             (0, n) => format!("{n} scenario{}: {} passed, {failed} failed\n", plural(n), n - failed),
             (e, _) => format!("{e} error{}; fix the first and check again (`suture help` lists every form)\n", plural(e)),
         };
@@ -109,7 +111,7 @@ pub fn check(dir: &Path) -> Found {
         for sc in &list {
             let r = suture_runtime::scenario::run(&prog, sc);
             let trace: Vec<&String> = if r.passed() { vec![] } else { r.host.trace.iter().collect() };
-            found.scenarios.push(json!({ "file": name, "title": r.title, "passed": r.passed(), "failures": r.failures, "trace": trace }));
+            found.scenarios.push(json!({ "file": name, "title": r.title, "passed": r.passed(), "failures": r.failures, "trace": trace, "excerpt": r.excerpt() }));
         }
     }
     found

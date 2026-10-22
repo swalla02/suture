@@ -17,11 +17,53 @@ pub struct Report {
     pub title: String,
     pub host: Host,
     pub failures: Vec<String>,
+    /// For each failure, how long the trace was when its step ended.
+    pub failed_at: Vec<usize>,
 }
 
 impl Report {
     pub fn passed(&self) -> bool {
         self.failures.is_empty()
+    }
+
+    /// The trace around each failure (appendix AT): the lines of its step
+    /// and the few before it, and the latest refusal or wait before them,
+    /// which is usually why. `…` marks what is left out.
+    pub fn excerpt(&self) -> Vec<String> {
+        const BEFORE: usize = 6;
+        let trace = &self.host.trace;
+        let why = |l: &str| {
+            let l = l.trim_start();
+            !l.starts_with('✓') && !l.starts_with('✗') && (l.contains("refused") || l.contains(" waits") || l.contains("alert:"))
+        };
+        let (mut out, mut shown) = (vec![], 0);
+        for (&end, failure) in self.failed_at.iter().zip(&self.failures) {
+            let end = end.min(trace.len());
+            if end < shown {
+                continue;
+            }
+            let start = end.saturating_sub(BEFORE).max(shown);
+            // The names the failure is about, such as `T2`.
+            let names: Vec<&str> = failure.split(|c: char| !c.is_alphanumeric()).filter(|w| w.starts_with(char::is_uppercase) && w.chars().any(|c| c.is_ascii_digit())).collect();
+            let about = |l: &str| names.iter().any(|n| l.split(|c: char| !c.is_alphanumeric()).any(|w| w == *n));
+            let w = (shown..start).rev().find(|&i| why(&trace[i]) && about(&trace[i])).or_else(|| (shown..start).rev().find(|&i| why(&trace[i])));
+            if let Some(w) = w {
+                if w > shown {
+                    out.push("…".to_string());
+                }
+                out.push(trace[w].clone());
+                shown = w + 1;
+            }
+            if start > shown {
+                out.push("…".to_string());
+            }
+            out.extend(trace[start..end].iter().cloned());
+            shown = end;
+        }
+        if shown < trace.len() && !out.is_empty() {
+            out.push("…".to_string());
+        }
+        out
     }
 }
 
@@ -36,7 +78,7 @@ pub fn run(prog: &Program, sc: &Scenario) -> Report {
 pub fn run_with(prog: &Program, sc: &Scenario, setup: impl FnOnce(&mut Host)) -> Report {
     let mut host = Host::new(prog.clone());
     setup(&mut host);
-    let mut failures = vec![];
+    let (mut failures, mut failed_at) = (vec![], vec![]);
     // `file "…"` is read beside the scenario's file (appendix V.2.4).
     let base = Path::new(&sc.file).parent().map(Path::to_path_buf).unwrap_or_default();
     for (i, step) in sc.steps.iter().enumerate() {
@@ -129,9 +171,10 @@ pub fn run_with(prog: &Program, sc: &Scenario, setup: impl FnOnce(&mut Host)) ->
         };
         if let Err(e) = result {
             failures.push(format!("step {}: {e}", i + 1));
+            failed_at.push(host.trace.len());
         }
     }
-    Report { title: sc.title.clone(), host, failures }
+    Report { title: sc.title.clone(), host, failures, failed_at }
 }
 
 /// Whether a step was refused as the scenario says it must be.

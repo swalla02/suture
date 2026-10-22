@@ -45,6 +45,6 @@ One run per cell, so the numbers are indicative, not statistics. In each run of 
 - Done in slice 40: `rule once: no two Reviews have the same talk and reviewer` (spec appendix AP).
 - Done in slice 41: `when a Loan's due passes: it is overdue` (spec appendix AQ).
 - Done in slice 42: the core and topics, `help --for`, errors that name their topic, and the scenario line fixes (spec appendix AR).
-- Generating many entities in a scenario (task B's 600-minute limit needed 14 hand-written talks).
-- `suture check` showing the steps around a failure first, not only the whole trace.
+- Done in slice 43: `given 14 Talks T1 to T14 with …` (spec appendix AS).
+- Done in slice 44: `suture check` shows the trace around each failure, with the refusal behind it (spec appendix AT).
 - More tasks and repeated runs before claiming a trend.

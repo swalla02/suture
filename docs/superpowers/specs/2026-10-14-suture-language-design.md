@@ -2156,3 +2156,25 @@ The agent eval's task B needed 14 talks to pass a 600-minute limit. The agent wr
 
 - lang/tests/scenario_lines.rs: a range expands into its names, keeps `given`, has its caller, and leaves `and 3 days pass` alone; a miscount is an error.
 - runtime/tests/ranges.rs: 13 accepted talks of 45 minutes and two admitted ones fill a program; the next accepted talk is refused by the rule.
+
+## Appendix AT. Prototype slice 44: the trace around a failure (2026-10-22)
+
+A failing scenario's whole trace is long, and in the agent eval the agent filtered it with grep. `suture check` now shows only what explains each failure.
+
+### AT.1 What slice 44 adds
+
+| Added in slice 44 | Still waits |
+|---|---|
+| `check` prints an excerpt per failing scenario; `--json` adds `excerpt` beside the whole `trace` | an excerpt that follows the cause across units |
+| `Report::excerpt` and `Report::failed_at` in the runtime | |
+
+### AT.2 Semantics that slice 44 settles
+
+1. **Around a failure:** the trace lines of the failing step and the six before it.
+2. **The reason:** before those, the latest line that refuses, waits or alerts, other than a scenario's own `✓`/`✗` checks. A line naming an entity the failure names (such as `T2`) is preferred.
+3. **`…`** marks each left-out stretch. Excerpts of successive failures never repeat a line.
+4. The summary line says that `suture run` prints a whole trace. A passing scenario shows no trace, as before.
+
+### AT.3 Acceptance
+
+- runtime/tests/excerpt.rs: a failure after 12 creations keeps the failed expect, its steps and the refusal of the entity it names, in fewer than half the trace's lines.
