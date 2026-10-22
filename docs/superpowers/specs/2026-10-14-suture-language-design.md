@@ -2214,7 +2214,7 @@ The returns eval's second round found that a condition shared by several events 
 
 ### AV.2 Semantics that slice 46 settles
 
-1. **One admit per verb.** The parser expands the statement into one admit per verb, with the same kind or kinds, roles, data and condition. Everything that holds for an admit holds for each: each event needs its reaction, and each read-back line names its verb.
+1. **One admit per verb.** The parser expands the statement into one admit per verb, with the same kind or kinds, roles, data and condition. Everything that holds for an admit holds for each: each event needs its reaction. The build's `admitted:` list shows the statement once, as written.
 2. **Verbs** are lowercase words joined by `,` and `or` before the kind or before `a new`.
 3. **`change`** keeps its own admit: naming it among other verbs is an error.
 
