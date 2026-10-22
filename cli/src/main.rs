@@ -25,7 +25,7 @@ macro_rules! outln {
 }
 
 const USAGE: &str =
-    "usage:\n  suture init <dir>\n  suture help [<topic> | all]\n  suture check <dir> [--json]\n  suture build <dir>\n  suture run <dir> --scenario <file> [--models]\n  suture explain <dir> --scenario <file> <name>\n  suture serve <dir> [--state <dir>] [--listen <addr>] [--pod <name>] [--models]\n  suture deploy <dir> [--state <dir>]\n  suture lsp";
+    "usage:\n  suture init <dir>\n  suture help [<topic> | all | --for <dir or file>]\n  suture check <dir> [--json]\n  suture build <dir>\n  suture run <dir> --scenario <file> [--models]\n  suture explain <dir> --scenario <file> <name>\n  suture serve <dir> [--state <dir>] [--listen <addr>] [--pod <name>] [--models]\n  suture deploy <dir> [--state <dir>]\n  suture lsp";
 
 /// Where `suture serve` listens unless told otherwise.
 const LISTEN: &str = "127.0.0.1:7878";
@@ -35,6 +35,7 @@ fn main() -> ExitCode {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let result = match args.as_slice() {
         ["help"] | ["--help"] | ["-h"] => help::help(None).map(|t| print_ok(&t)),
+        ["help", "--for", path] => help::help_for(std::path::Path::new(path)).map(|t| print_ok(&t)),
         ["help", topic] => help::help(Some(topic)).map(|t| print_ok(&t)),
         ["init", dir] => init::init(Path::new(dir)).map(|t| print_ok(&t)),
         ["check", dir] => Ok(print_check(Path::new(dir), false)),

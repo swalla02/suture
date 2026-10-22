@@ -114,10 +114,20 @@ fn every_example_in_the_guide_holds() {
 
 #[test]
 fn every_example_in_the_agent_book_holds() {
-    // `suture help` prints the book, so it is checked as the guide is (appendix AO).
-    let md = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/agents/suture.md")).unwrap();
-    assert!(blocks(&md).iter().filter(|b| b.info == "scenario").count() >= 3);
-    let problems = check("suture.md", &md);
+    // `suture help` prints the core and its topics, so they are checked as
+    // the guide is (appendices AO, AR).
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/agents");
+    let mut files = vec![std::path::PathBuf::from(format!("{root}/core.md"))];
+    let mut topics: Vec<_> = std::fs::read_dir(format!("{root}/topics")).unwrap().flatten().map(|e| e.path()).collect();
+    topics.sort();
+    files.extend(topics);
+    let (mut problems, mut scenarios) = (vec![], 0);
+    for f in &files {
+        let md = std::fs::read_to_string(f).unwrap();
+        scenarios += blocks(&md).iter().filter(|b| b.info == "scenario").count();
+        problems.extend(check(&f.file_name().unwrap().to_string_lossy(), &md));
+    }
+    assert!(files.len() >= 11 && scenarios >= 3, "{files:?}");
     assert!(problems.is_empty(), "{}", problems.join("\n\n"));
 }
 

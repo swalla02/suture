@@ -15,8 +15,13 @@ pub struct Found {
 }
 
 impl Found {
-    fn error(&mut self, file: &str, line: usize, message: &str) {
-        self.errors.push(json!({ "file": file, "line": line, "message": message }));
+    /// An error, with the topic of the book that explains its statement
+    /// (appendix AR.2.4).
+    fn error(&mut self, dir: &Path, file: &str, line: usize, message: &str) {
+        let text = std::fs::read_to_string(dir.join(file)).unwrap_or_default();
+        let at = text.lines().nth(line.saturating_sub(1)).filter(|_| line > 0).unwrap_or("");
+        let topic = crate::help::topic_of_line(at, file.ends_with(".scenario"));
+        self.errors.push(json!({ "file": file, "line": line, "message": message, "topic": topic }));
     }
 
     pub fn passed(&self) -> bool {
@@ -36,7 +41,7 @@ impl Found {
                 Some(0) | None => e["file"].as_str().unwrap_or("").to_string(),
                 Some(l) => format!("{}:{l}", e["file"].as_str().unwrap_or("")),
             };
-            out += &format!("error: {at}: {}\n", e["message"].as_str().unwrap_or(""));
+            out += &format!("error: {at}: {} (suture help {})\n", e["message"].as_str().unwrap_or(""), e["topic"].as_str().unwrap_or("all"));
         }
         for w in &self.warnings {
             out += &format!("warning: {w}\n");
@@ -59,7 +64,7 @@ impl Found {
         out += &match (self.errors.len(), self.scenarios.len()) {
             (0, 0) => "compiles; no scenarios beside it: write a ⟨name⟩.scenario (`suture help scenarios`)\n".to_string(),
             (0, n) => format!("{n} scenario{}: {} passed, {failed} failed\n", plural(n), n - failed),
-            (e, _) => format!("{e} error{}; fix the first and check again (`suture help` lists the forms)\n", plural(e)),
+            (e, _) => format!("{e} error{}; fix the first and check again (`suture help` lists every form)\n", plural(e)),
         };
         out
     }
@@ -77,7 +82,7 @@ pub fn check(dir: &Path) -> Found {
         Ok(p) => p,
         Err(errors) => {
             for e in errors {
-                found.error(&e.file, e.line, &e.msg);
+                found.error(dir, &e.file, e.line, &e.msg);
             }
             return found;
         }
@@ -90,14 +95,14 @@ pub fn check(dir: &Path) -> Found {
         let src = match std::fs::read_to_string(&path) {
             Ok(s) => s,
             Err(e) => {
-                found.error(&name, 0, &e.to_string());
+                found.error(dir, &name, 0, &e.to_string());
                 continue;
             }
         };
         let list = match suture_lang::scenario::parse_scenarios(&name, &src) {
             Ok(l) => l,
             Err(e) => {
-                found.error(&e.file, e.line, &e.msg);
+                found.error(dir, &e.file, e.line, &e.msg);
                 continue;
             }
         };
