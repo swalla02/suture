@@ -124,9 +124,9 @@ pub fn confident(pick: String, confidence: Option<f64>, min: Option<f64>, sure: 
         (Some(m), Some(s)) => Some(m.max(s)),
         (m, s) => m.or(s),
     };
-    match (confidence, bound) {
-        (None, _) if let Some(s) = sure => Answer::Failed(format!("it gave no confidence, and the program needs at least {s} sure")),
-        (Some(c), Some(b)) if c < b => Answer::Unsure(c),
+    match (confidence, bound, sure) {
+        (None, _, Some(s)) => Answer::Failed(format!("it gave no confidence, and the program needs at least {s} sure")),
+        (Some(c), Some(b), _) if c < b => Answer::Unsure(c),
         _ => Answer::Picked(pick),
     }
 }
