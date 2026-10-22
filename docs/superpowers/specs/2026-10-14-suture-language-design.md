@@ -2017,29 +2017,28 @@ A program could subtract two times, giving a Duration, but it could not count da
 
 ## Appendix AO. Prototype slice 39: a way in for coding agents (2026-10-22)
 
-Most code is now written by coding agents, and an agent has never seen Suture in training. A language only a person who read 22 chapters can write is not usable. Slice 39 gives an agent what it needs on demand, in a loop with short output, and measures the difference (eval/agents/RESULTS.md).
+Most code is now written by coding agents, and an agent has never seen Suture in training. Suture's case for agents is that it is compact (a port is 7 to 12 times shorter than the code it replaces, so a whole system fits in context) and understandable (every rule reads back in plain words, so a person can check an agent's work). Slice 39 makes the language itself fit in context too, gives the agent a short loop, and measures it (eval/agents/RESULTS.md).
 
 ### AO.1 What slice 39 adds
 
 | Added in slice 39 | Still waits |
 |---|---|
-| `suture help [topic | all]`: eleven cards of forms, recipes and limits, built into the binary | cards generated from the grammar |
-| `suture check <dir> [--json]`: compile and run every scenario beside the module; traces only for failures | a fix suggested with each error |
-| `suture init <dir>`: AGENTS.md, CLAUDE.md, .mcp.json and a starter module | an editor extension that runs `init` |
-| `suture mcp`: the tools suture_help, suture_check, suture_build and suture_explain | MCP resources and prompts |
+| the agent book, docs/agents/suture.md: the language in about 4.5k tokens, printed by `suture help all` | the book generated from the grammar |
+| `suture help [section | all]`, the book built into the binary | |
+| `suture check <dir> [--json]`: compile and run every scenario beside the module; traces only for failures | the steps around a failure shown first; a fix with each error |
+| `suture init <dir>`: AGENTS.md, CLAUDE.md and a starter module | |
 | a Claude Code skill, docs/agents/skill/suture | |
 | the agent eval, eval/agents | more tasks and repeated runs |
 
 ### AO.2 Semantics that slice 39 settles
 
-1. **Cards are tested.** The cards live in docs/agents/cards and are compiled into the binary. Each card's code blocks follow the guide's rules (§7.5): every `suture` block compiles and every `scenario` block passes, checked by runtime/tests/guide.rs. A card's first line is `# ⟨topic⟩: ⟨what it covers⟩`, which `suture help` lists.
-2. **What a card holds.** Forms with an example that runs; `recipes` maps a requirement to a form; `limits` says what cannot be written yet and what to write instead, so an agent stops searching. A limit an agent hits in an eval goes into `limits` until a slice removes it.
+1. **One book, read whole.** The book is meant to be loaded once and kept in context: the loop, one module that uses most of the language, every declaration and sentence form, what the runtime does, recipes (a requirement to a form), limits (what cannot be written yet, and what to write instead), scenarios, models, and serving. A test fails if it grows past 20 KB. Its sections are its `## ⟨topic⟩: ⟨what it covers⟩` headings, which `suture help` lists.
+2. **The book is tested.** It is compiled into the binary, and its code blocks follow the guide's rules (§7.5): every `suture` block compiles and every `scenario` block passes, checked by runtime/tests/guide.rs. A limit an agent hits in the eval goes into `limits` until a slice removes it.
 3. **`check`.** It compiles the module, then parses and runs each `.scenario` file in the directory, sorted by name. The text output has one line per error (`error: file:line: message`), one `✓` line per passing scenario, the whole trace and the failures for each failing one, and a count. `--json` gives `{passed, errors: [{file, line, message}], warnings, scenarios: [{file, title, passed, failures, trace}]}`, with the trace only for a failing scenario. The exit status is 0 when everything compiles and passes, and 1 otherwise. A scenario file that does not parse is an error, and the other files still run.
-4. **`mcp`.** JSON-RPC 2.0 over stdin and stdout, one message per line: `initialize` (with instructions that say to start with `suture_help`), `ping`, `tools/list` and `tools/call`. A tool's failure is a result with `isError`, not a protocol error. The tools call the same code as the commands, and `suture_build` writes the program file as `suture build` does.
-5. **`init`.** It writes only files that are missing, and the starter module only if the directory has no `.st` file. The module is named after the directory if that is a lower-case word, else `app`. The skill's text is AGENTS.md's, checked by a test.
+4. **No MCP server.** An agent with a shell needs none, and tool descriptions cost context on every turn. The commands are the interface.
+5. **`init`.** It writes only files that are missing, never through an existing link, and the starter module only if the directory has no `.st` file. The module is named after the directory if that is a lower-case word, else `app`. The skill's text is AGENTS.md's, checked by a test.
 
 ### AO.3 Acceptance
 
-- runtime/tests/guide.rs: every card example holds. cli/src/mcp.rs: an agent initialises, lists the tools, reads a card and checks a module over MCP. cli/src/init.rs: `init` keeps existing files, and its module passes `check`; the skill matches AGENTS.md.
-- eval/agents/RESULTS.md: on a task in no card, the kit cut the documentation read from about 1,600 lines to 550, the agent's tokens by 34% and its time by 55%, with the same requirements met.
-
+- runtime/tests/guide.rs: every example in the book holds. cli/src/help.rs: the book stays under 20 KB and every section is reachable. cli/src/init.rs: `init` keeps existing files, and its module passes `check`; the skill matches AGENTS.md.
+- eval/agents/RESULTS.md: on a task the book does not cover, a fresh agent with the book read only the book, and used 43% fewer tokens, 54% fewer tool calls and 72% less time than with the guide, meeting the same requirements.

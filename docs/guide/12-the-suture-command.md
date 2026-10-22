@@ -7,7 +7,6 @@ suture run     ⟨dir⟩ --scenario ⟨file⟩ [--models]
 suture explain ⟨dir⟩ --scenario ⟨file⟩ ⟨name⟩
 suture init    ⟨dir⟩
 suture help    [⟨topic⟩ | all]
-suture mcp
 ```
 
 `⟨dir⟩` is the directory that holds the program's `.st` files. The command exits with 0 on success, 1 when a scenario fails (or, for `check`, anything fails), and 2 when the program does not compile or the arguments are wrong.
@@ -28,11 +27,13 @@ suture mcp
 
 ## Working with a coding agent
 
-Most code is now written by agents, and an agent has never seen Suture before. Three commands give it what it needs without reading this guide:
+Most code is now written by agents, and an agent has never seen Suture before. It doesn't need this guide:
 
-- **`suture help`** lists short cards: `start`, `kinds`, `gate`, `rules`, `parts`, `time`, `recipes`, `scenarios`, `models`, `api` and `limits`. `recipes` maps common requirements to the form that writes them, and `limits` says what cannot be written yet and what to do instead, so an agent stops looking. `suture help all` prints every card, about 450 lines. Every example in the cards compiles and every scenario in them passes; the test suite checks it.
-- **`suture init ⟨dir⟩`** writes an `AGENTS.md` with the loop (help, write, check, build), a `CLAUDE.md` that points to it, a `.mcp.json` that registers `suture mcp`, and, if the directory has no module yet, a small module and scenario that pass. It never overwrites a file.
-- **`suture mcp`** is a Model Context Protocol server over stdin and stdout, with the tools `suture_help`, `suture_check`, `suture_build` and `suture_explain`. Claude Code reads it from the `.mcp.json` that `init` writes; other clients take the command `suture mcp`.
+- **`suture help all`** prints the agent book, docs/agents/suture.md: the whole language in about 4k tokens, meant to be read once and kept in context. It has the loop, one module that uses most of the language, every declaration and sentence form, what the runtime does, a table from requirements to forms (`recipes`), and what cannot be written yet with what to write instead (`limits`). `suture help` lists its sections, and `suture help ⟨section⟩` prints one. Every example in it compiles and every scenario passes; the test suite checks it, and fails if the book grows past 20 KB.
+- **`suture init ⟨dir⟩`** writes an `AGENTS.md` with the loop (read the book, write, check, build), a `CLAUDE.md` that points to it, and, if the directory has no module yet, a small module and scenario that pass. It never overwrites a file.
+- **`suture check ⟨dir⟩`**, above, keeps the agent's loop short.
+
+There is no MCP server: an agent with a shell needs none, and tool descriptions would cost context on every turn.
 
 For Claude Code across many modules, copy `docs/agents/skill/suture` to `~/.claude/skills/suture`. The skill says the same as `AGENTS.md`.
 

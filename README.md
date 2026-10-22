@@ -244,15 +244,18 @@ It's a good fit for workflows with many steps, outside services, shared resource
 
 ## Built for coding agents
 
-An agent has never seen Suture, so it doesn't have to read the guide to write it:
+Agents write most code now. Suture suits them for two reasons:
+
+- **It's compact.** The ports above are 7 to 12 times shorter than the code they replace, so a whole system fits in an agent's context at once, and so does the language: `suture help all` prints the agent book, every form with recipes and limits, in about 4k tokens. An agent reads it once instead of searching a guide.
+- **It's understandable.** What the agent writes is English with one meaning per sentence, and `suture build` reads every rule back in plain words. You review the read-back and the scenarios, not the syntax, so you can check an agent's work without learning the language first.
 
 ```sh
-suture init billing        # AGENTS.md, CLAUDE.md, .mcp.json and a module that passes
-suture help recipes        # a requirement → the form that writes it; `suture help limits` for what can't be written yet
+suture init billing        # AGENTS.md, CLAUDE.md, and a module that passes
+suture help all            # the whole language, about 4k tokens
 suture check billing       # compile and run every scenario; traces only for what failed, --json for tools
 ```
 
-`suture mcp` serves the same as MCP tools, and `docs/agents/skill/suture` is a Claude Code skill. Every example in the cards compiles and passes in the test suite, so the help never drifts from the language. In [an eval](eval/agents/RESULTS.md) on a task in no card, a fresh agent with the kit read a third as much documentation and finished in less than half the time, meeting the same requirements. You review what it wrote through `suture build`'s plain-English read-back and the scenarios.
+Every example in the book compiles and passes in the test suite, so it never drifts from the language. In [the agent eval](eval/agents/RESULTS.md), a fresh agent given a plain-English spec read only the book, and finished with 43% fewer tokens and in a quarter of the time it took with the guide, meeting the same requirements.
 
 ## Learn it
 

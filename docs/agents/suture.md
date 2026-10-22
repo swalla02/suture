@@ -121,6 +121,7 @@ when a ⟨Kind⟩ is ⟨outcome | timed out⟩: ⟨action⟩[ and ⟨action⟩] 
 - **subject:** `[⟨state⟩] ⟨Kind⟩ [whose ⟨attr⟩ ⟨predicate⟩] [that ⟨cond⟩]`.
 - **np:** `it`, `its ⟨attr⟩`, `their ⟨attr⟩`, `the ⟨Kind⟩`, `⟨np⟩'s ⟨attr⟩`, `⟨np⟩'s ⟨Kind⟩` (its part), `⟨np⟩'s ⟨Kinds⟩` (those referencing it), `the caller`.
 - **cond:** `⟨np⟩ is [not] ⟨state, np or literal⟩`, `⟨num⟩ ⟨cmp⟩ ⟨num⟩`, `⟨np⟩ has [a|no] ⟨Kind⟩ [that ⟨cond⟩]`, `⟨np⟩ contains ⟨np⟩`, joined by `and` or by `or`, never both: name one side with a `define`. After `and`, a bare state shares the subject: `it is cancelled and paid`.
+- **inside a filter** (`that …` or `whose …` after `⟨np⟩'s ⟨Kinds⟩`), `it`, `its` and `the ⟨Kind⟩` all mean the entity being counted. A filter cannot compare it with the outer entity or the caller, which is why pair uniqueness cannot be written (limits).
 - **num:** an np, a literal, `the number of ⟨np⟩'s ⟨Kinds⟩ [that ⟨cond⟩]`, `the total ⟨attr⟩ of ⟨np⟩'s ⟨Kinds⟩ […]`, `+ - * /`, parentheses.
 - **actions:** `⟨np⟩ is ⟨state or Bool⟩`, `⟨np⟩ is not ⟨Bool⟩`, `⟨np⟩'s ⟨attr⟩ becomes ⟨num or np⟩`. Only on the entity the reaction is about, its parts and its owner.
 
