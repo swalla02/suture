@@ -155,7 +155,7 @@ A reaction can only set attributes. It never creates a part or sends a request. 
 
 ## Name every combined condition
 
-One sentence cannot mix `and` with `or`, and a `that` filter takes one condition. When you need either, define the part:
+A sentence mixes `and` with `or` only with parentheses, and a `that` filter takes one condition. When a group would have a name the business uses, define it instead:
 
 ```text
 define: a Case is important when it is escalated and it is vip

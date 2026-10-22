@@ -206,7 +206,7 @@ rule mix: no Order has a Refund unless its total is at least 10 EUR and it is do
 ```
 
 ```errors
-main.st:6: rule mix: one sentence cannot mix `and` with `or`; name a part with `define`
+main.st:6: rule mix: one sentence cannot mix `and` with `or` without parentheses; group one side, as in `it is open and (it is paid or it is free)`, or name it with `define`
   closest pattern:  no ⟨Kind⟩ has a ⟨Kind⟩ unless ⟨cond⟩
 ```
 

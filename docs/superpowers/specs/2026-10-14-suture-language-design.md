@@ -2178,3 +2178,25 @@ A failing scenario's whole trace is long, and in the agent eval the agent filter
 ### AT.3 Acceptance
 
 - runtime/tests/excerpt.rs: a failure after 12 creations keeps the failed expect, its steps and the refusal of the entity it names, in fewer than half the trace's lines.
+
+## Appendix AU. Prototype slice 45: `and` with `or`, grouped (2026-10-22)
+
+Until now, one sentence could not mix `and` with `or`, so a mixed condition needed a `define` even when its parts had no business name. The Solidus port and the core's limits named this. Parentheses now group a condition.
+
+### AU.1 What slice 45 adds
+
+| Added in slice 45 | Still waits |
+|---|---|
+| `(⟨cond⟩)` wherever a condition joins others: `it is not cancelled and (it is paid or it is free)` | precedence without parentheses (never: readers disagree) |
+| read-backs keep the group in both the formula and the paraphrase | |
+
+### AU.2 Semantics that slice 45 settles
+
+1. **A group is one condition.** Inside it, `and` or `or` joins as anywhere else, and a group may hold a group.
+2. **Parentheses that open a calculation** (`(a + b) * 2 is at most 9`) stay a calculation: a `(` is read as a group only when what is inside is a whole condition and what follows the `)` is not `is`, `are` or an operator.
+3. **Mixing without parentheses is still an error**, which now shows the grouped form.
+4. **Read-backs** wrap a group of the other joiner in parentheses: `o is not cancelled and (o is paid or o is free)`.
+
+### AU.3 Acceptance
+
+- runtime/tests/groups.rs: a rule, a definition and a calculation with parentheses compile and hold in a scenario; the paraphrase keeps the group; the ungrouped sentence is an error.

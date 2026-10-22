@@ -66,8 +66,13 @@ fn cond_formula(p: &Program, kind: &str, v: &str, c: &Cond) -> String {
             format!("{} {} {}", num_formula(p, kind, v, item), if *negated { "∉" } else { "∈" }, num_formula(p, kind, v, set))
         }
         Cond::And(cs) => cs.iter().map(|c| cond_formula(p, kind, v, c)).collect::<Vec<_>>().join(" and "),
-        Cond::Or(cs) => format!("({})", cs.iter().map(|c| cond_formula(p, kind, v, c)).collect::<Vec<_>>().join(" or ")),
+        Cond::Or(cs) => format!("({})", cs.iter().map(|c| grouped(matches!(c, Cond::And(_)), cond_formula(p, kind, v, c))).collect::<Vec<_>>().join(" or ")),
     }
+}
+
+/// `words` in parentheses when `group` holds and they are not already in them.
+fn grouped(group: bool, words: String) -> String {
+    if group && !words.starts_with('(') { format!("({words})") } else { words }
 }
 
 fn cond_words(p: &Program, kind: &str, c: &Cond) -> String {
@@ -87,10 +92,11 @@ fn cond_words(p: &Program, kind: &str, c: &Cond) -> String {
         Cond::Contains { set, item, negated } => {
             format!("{} {} {}", num_words(p, kind, set), if *negated { "does not contain" } else { "contains" }, num_words(p, kind, item))
         }
-        Cond::And(cs) => cs.iter().map(|c| cond_words(p, kind, c)).collect::<Vec<_>>().join(" and "),
+        // A group of the other joiner keeps its parentheses (appendix AU).
+        Cond::And(cs) => cs.iter().map(|c| grouped(matches!(c, Cond::Or(_)), cond_words(p, kind, c))).collect::<Vec<_>>().join(" and "),
         Cond::Or(cs) => match has_any(p, kind, cs) {
             Some(words) => words,
-            None => cs.iter().map(|c| cond_words(p, kind, c)).collect::<Vec<_>>().join(" or "),
+            None => cs.iter().map(|c| grouped(matches!(c, Cond::And(_)), cond_words(p, kind, c))).collect::<Vec<_>>().join(" or "),
         },
     }
 }
@@ -341,8 +347,8 @@ pub(crate) fn that_words(p: &Program, k: &str, f: Option<&Cond>) -> String {
         }
     };
     let words = match f {
-        Cond::And(cs) => cs.iter().map(one).collect::<Vec<_>>().join(" and "),
-        Cond::Or(cs) => cs.iter().map(one).collect::<Vec<_>>().join(" or "),
+        Cond::And(cs) => cs.iter().map(|c| grouped(matches!(c, Cond::Or(_)), one(c))).collect::<Vec<_>>().join(" and "),
+        Cond::Or(cs) => cs.iter().map(|c| grouped(matches!(c, Cond::And(_)), one(c))).collect::<Vec<_>>().join(" or "),
         c => one(c),
     };
     format!(" that {words}")

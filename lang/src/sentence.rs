@@ -538,19 +538,37 @@ fn simple(c: &mut Cursor) -> Result<Cond, Error> {
     predicate(c, left)
 }
 
-/// Conditions joined by `and` or by `or`; one sentence cannot mix the two.
+/// One condition, or a group in parentheses: `(it is paid or it is free)`
+/// (appendix AU). A `(` that opens a calculation, as in `(a + b) * 2 is at
+/// most 9`, is read as one.
+fn part(c: &mut Cursor) -> Result<Cond, Error> {
+    if c.peek() == Some(&Tok::Sym('(')) {
+        let mut g = c.clone();
+        g.next();
+        if let Ok(inner) = condition(&mut g)
+            && g.eat_sym(')')
+            && !(g.is_word("is") || g.is_word("are") || matches!(g.peek(), Some(Tok::Sym('+' | '-' | '*' | '/')))) {
+            *c = g;
+            return Ok(inner);
+        }
+    }
+    simple(c)
+}
+
+/// Conditions joined by `and` or by `or`. One sentence mixes the two only
+/// with parentheses, as in `it is open and (it is paid or it is free)`.
 /// After a joiner, a bare state shares the previous condition's left side:
 /// `it is cancelled and paid and not refunded`.
 pub fn condition(c: &mut Cursor) -> Result<Cond, Error> {
-    let first = simple(c)?;
+    let first = part(c)?;
     let joiner = match c.peek() {
         Some(Tok::Word(w)) if w == "and" || w == "or" => w.clone(),
         _ => return Ok(first),
     };
     let mut parts = vec![first];
     while c.eat_word(&joiner) {
-        let next = if ["is", "are", "has", "have"].iter().any(|w| c.is_word(w)) || starts_calc(c) {
-            simple(c)?
+        let next = if ["is", "are", "has", "have"].iter().any(|w| c.is_word(w)) || starts_calc(c) || c.peek() == Some(&Tok::Sym('(')) {
+            part(c)?
         } else {
             let Some(Cond::Is { left, .. }) = parts.last() else {
                 return Err(c.error(format!(
@@ -565,7 +583,7 @@ pub fn condition(c: &mut Cursor) -> Result<Cond, Error> {
         parts.push(next);
     }
     if c.is_word("and") || c.is_word("or") {
-        return Err(c.error("one sentence cannot mix `and` with `or`; name a part with `define`"));
+        return Err(c.error("one sentence cannot mix `and` with `or` without parentheses; group one side, as in `it is open and (it is paid or it is free)`, or name it with `define`"));
     }
     Ok(if joiner == "and" { Cond::And(parts) } else { Cond::Or(parts) })
 }

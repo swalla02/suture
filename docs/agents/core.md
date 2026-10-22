@@ -75,7 +75,6 @@ Conditions (`⟨cond⟩`), noun phrases, numbers and filters are in `rules`; act
 | a reaction setting another entity it only references | a `define` on that entity, from a total of what references it |
 | a negative `Count` (`score - 3` is not −1) | compare totals, or use `Money` |
 | holidays and half days in a day count | take working days as an input, and say so |
-| `and` with `or` in one sentence | name one side with a `define` |
 | taking back a request already sent | guard the state it sets with the fact that ends it |
 | loops, functions, generated text or code | none, by design |
 

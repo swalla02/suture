@@ -83,7 +83,7 @@ A relation such as `its Callbacks` includes **every entity that counts**: from i
 
 **Text or state?** In `⟨np⟩ is ⟨word⟩`, a bare word is a text value when `⟨np⟩` is a `Text` attribute (`its customer's region is north`), and a state otherwise (`it is urgent`). Quoting always means text: `is "north"`.
 
-**`and` with `or`.** One sentence cannot mix `and` and `or`, because readers disagree about how they group. Name one part with `define` instead:
+**`and` with `or`.** One sentence mixes `and` and `or` only with parentheses, because readers disagree about how they group otherwise. Group one side, `unless (it is escalated and it is vip) or its severity is at least 4`, or name it with `define`:
 
 ```suture fails
 module desk version 1, currency EUR
@@ -94,7 +94,7 @@ rule mix: no Case has a Reply unless it is escalated and it is vip or its severi
 ```
 
 ```errors
-main.st:5: rule mix: one sentence cannot mix `and` with `or`; name a part with `define`
+main.st:5: rule mix: one sentence cannot mix `and` with `or` without parentheses; group one side, as in `it is open and (it is paid or it is free)`, or name it with `define`
   closest pattern:  no ⟨Kind⟩ has a ⟨Kind⟩ unless ⟨cond⟩
 ```
 

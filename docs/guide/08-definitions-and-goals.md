@@ -39,7 +39,7 @@ define: a ⟨Kind⟩ is ⟨state⟩ when ⟨condition⟩
 
 - The state holds exactly when the condition holds. It is never stored, and it cannot be set: it is always computed from the facts.
 - A defined state is used anywhere a state is: in rules (`no equipped Hire …`), goals, `while` conditions, other definitions, and scenarios (`expect H1 is equipped`).
-- A definition is how to name a mixed condition, since one sentence cannot mix `and` and `or` (chapter 6). `admitted` above is an `or`, used inside the goal's `and`.
+- A definition names a mixed condition, where parentheses would only group it (chapter 6). `admitted` above is an `or`, used inside the goal's `and`.
 - Each state name has one meaning per kind: a definition cannot reuse the name of an attribute, a mark or an outcome of the same kind.
 
 A definition is the honest version of a status column. A column says what someone last wrote; a definition says what is true now.
