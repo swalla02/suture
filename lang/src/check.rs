@@ -1772,7 +1772,6 @@ impl Checker {
                 let whose = d.source.split_once(" whose ").and_then(|(_, r)| r.rsplit_once(" with ")).map(|(c, _)| format!(" whose {c}"));
                 format!("{w}{}", whose.unwrap_or_default())
             });
-            kept.push((p.decisions.len(), d));
             let within_ms = d.within_ms.unwrap_or(1000);
             if !(1..=MAX_WITHIN_MS).contains(&within_ms) {
                 self.errors.push(err(&d.at, format!("a model's `within` is from 1 millisecond to {} minutes", MAX_WITHIN_MS / 60_000)));
@@ -1789,6 +1788,8 @@ impl Checker {
                 }
                 None => None,
             };
+            // Only a decision that compiled is compared for ties below.
+            kept.push((p.decisions.len(), d));
             p.decisions.push(Decision { point: d.point.clone(), scope, cond, model: d.model.clone(), scope_text, within_ms, route, source: d.source.clone() });
         }
         // Two that can both decide one choice, at the same rank (J.2.3).

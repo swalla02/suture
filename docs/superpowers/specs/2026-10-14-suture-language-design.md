@@ -1922,5 +1922,5 @@ A `decide` names one model for a scope, and a `whose` moves a choice to another 
 
 ### AJ.3 Acceptance
 
-- Bindings, slots and source choices route. The router's pick, `prefer`, an unoffered name and a late router each behave as AJ.2.3 says. A served route logs two `decided` records and replays without a model. The claims eval passes its 16 scenarios with its assessor routed and the router unscripted.
+- Bindings and slots route (runtime/tests/routing.rs), and source choices take the same path. The router's pick, `prefer`, an unoffered name and a late router each behave as AJ.2.3 says. A served route logs two `decided` records and replays without a model. A copy of the claims eval with its assessor routed and the router unscripted passes all 16 scenarios.
 

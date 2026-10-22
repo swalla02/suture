@@ -199,4 +199,10 @@ fn a_routed_decide_names_two_or_more_models_once_and_ends_with_its_router() {
         errors(&line("decide Outcome with model \"fast@1\" or model \"careful@1\", picked by model \"router\"")),
         ["t.st:9: a model is named `name@version`, as in \"router@1\""]
     );
+    // A later `decide` with a bad router deadline is an error, not a crash.
+    let two = CLAIM.replace(
+        "admit file",
+        "decide Outcome for Claims with model \"fast@1\" or model \"careful@1\", picked by model \"router@1\" within 0 milliseconds\nadmit file",
+    );
+    assert_eq!(errors(&two), ["t.st:10: a model's `within` is from 1 millisecond to 10 minutes"]);
 }
