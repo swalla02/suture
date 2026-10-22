@@ -357,6 +357,11 @@ pub struct DecideDecl {
     pub model: Option<String>,
     /// `within 300 milliseconds`.
     pub within_ms: Option<u64>,
+    /// `… or model "careful@1" or prefer, picked by model "router@1"
+    /// [within …]`: the other candidates, `None` for `prefer`, and the
+    /// model that picks among them (appendix AJ).
+    pub or: Vec<Option<String>>,
+    pub router: Option<(String, Option<u64>)>,
     pub source: String,
     pub at: Loc,
 }

@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
 use suture::{HoleId, Injection, Machine, NetBuilder, Value};
-use suture_lang::ir::{third_person, Admit, Admitted, Program, Ty, READ, TIMED_OUT, UNREAD};
+use suture_lang::ir::{candidate, third_person, Admit, Admitted, Program, Route, Ty, READ, TIMED_OUT, UNREAD};
 use suture_lang::scenario::Caller;
 
 use crate::interp::{self, duration};
@@ -79,6 +79,9 @@ struct Asking {
     /// The number of its deadline's timer, so an older ask's timer does
     /// not answer this one.
     timer: u64,
+    /// When this asks a router which model makes the choice: the route, and
+    /// the choice and deadline the picked model gets (appendix AJ.2.3).
+    routing: Option<(Route, Choice, u64)>,
 }
 
 /// Where a deferred model's answer goes.
@@ -121,6 +124,17 @@ fn resolve(model: &str, names: &[&str], answer: &Answer, within: u64) -> (String
         Answer::Failed(e) => format!("model \"{model}\" failed: {e}"),
     };
     (names[0].to_string(), format!(" by prefer ({how})"))
+}
+
+/// The choice a router gets: the same facts and media, with the candidates
+/// as its options, and its own key, `…?model` (appendix AJ.2.2).
+fn routing_choice(c: &Choice, r: &Route) -> Choice {
+    Choice {
+        point: format!("{}?model", c.point),
+        key: format!("{}?model", c.key),
+        options: r.among.iter().map(|m| Option_ { label: candidate(m), attrs: vec![] }).collect(),
+        ..c.clone()
+    }
 }
 
 /// A pool key as the host indexes it.
@@ -484,8 +498,8 @@ impl Host {
         let options = self.options(u, d, key);
         let first = options.first()?.label.clone();
         // With one option there is no choice, and no model is asked (appendix K.2.2).
-        let model = interp::handler(&prog, u, d).and_then(|h| Some((h.model.clone()?, h.within_ms))).filter(|_| options.len() > 1);
-        let Some((model, within)) = model else { return Some(Gathered::Pick(first, String::new())) };
+        let model = interp::handler(&prog, u, d).and_then(|h| Some((h.asked()?.to_string(), h.within_ms, h.route.clone()))).filter(|_| options.len() > 1);
+        let Some((model, within, route)) = model else { return Some(Gathered::Pick(first, String::new())) };
         let (chooser, facts) = interp::chooser(&prog, u, d).unwrap_or_default();
         let choice = Choice {
             point: b.target.clone(),
@@ -498,10 +512,10 @@ impl Host {
             media: BTreeMap::new(),
         };
         if self.defer_models {
-            self.defer(model, choice, within, Chooses::Bind { hole, decide: d.clone(), pool: key.to_string() });
+            self.defer_routed(model, route, choice, within, Chooses::Bind { hole, decide: d.clone(), pool: key.to_string() });
             return Some(Gathered::Asked);
         }
-        let (pick, how) = self.consult(&model, &choice, within);
+        let (pick, how) = self.consult_routed(&model, route.as_ref(), &choice, within);
         Some(Gathered::Pick(pick, how))
     }
 
@@ -523,7 +537,15 @@ impl Host {
         let timer = self.started + 1;
         self.schedule(self.now.saturating_add(secs), Timer::Model(choice.key.clone(), timer));
         self.asking.retain(|a| a.choice.key != choice.key);
-        self.asking.push(Asking { model, choice, within, to, timer });
+        self.asking.push(Asking { model, choice, within, to, timer, routing: None });
+    }
+
+    /// [`Host::defer`], asking a routed choice's router first (appendix AJ.2.3).
+    fn defer_routed(&mut self, model: String, route: Option<Route>, choice: Choice, within: u64, to: Chooses) {
+        let Some(r) = route else { return self.defer(model, choice, within, to) };
+        let rc = routing_choice(&choice, &r);
+        self.defer(r.router.clone(), rc, r.within_ms, to);
+        self.asking.last_mut().expect("just deferred").routing = Some((r, choice, within));
     }
 
     /// The choices waiting for a model, as (key, unit), in the order asked.
@@ -557,7 +579,27 @@ impl Host {
             return Ok(());
         };
         let a = self.asking.remove(i);
-        match a.to {
+        if let Some((r, choice, within)) = a.routing {
+            // The router has picked the model; now that model is asked (appendix AJ.2.3).
+            let names: Vec<String> = r.among.iter().map(candidate).collect();
+            let (m, how) = resolve(&r.router, &names.iter().map(String::as_str).collect::<Vec<_>>(), answer, r.within_ms);
+            self.trace.push(format!("      model for {}: {m}{how}", choice.key));
+            if m != "prefer" {
+                self.defer(m, choice, within, a.to);
+                return self.pump();
+            }
+            // `prefer` makes the choice, as the router picked.
+            let how = format!(" by prefer (as model \"{}\" picked)", r.router);
+            return self.settle(a.to, &|names: &[&str]| (names[0].to_string(), how.clone()));
+        }
+        let (model, within) = (a.model.clone(), a.within);
+        self.settle(a.to, &|names: &[&str]| resolve(&model, names, answer, within))
+    }
+
+    /// Applies a deferred choice, picked among its options as gathered now by
+    /// `decide`, which gets them best first.
+    fn settle(&mut self, to: Chooses, choose: &dyn Fn(&[&str]) -> (String, String)) -> Result<(), String> {
+        match to {
             Chooses::Bind { hole, decide, pool } => {
                 let Some(u) = self.unit(&decide.label) else { return Ok(()) };
                 let options = self.options(&u, &decide, &pool);
@@ -567,7 +609,7 @@ impl Host {
                     self.waiters.push(Waiter { hole, decide: decide.clone(), kind, key: pool });
                     self.post(&decide.label, &Msg::Waiting { key: decide.key() })?;
                 } else {
-                    let (pick, how) = resolve(&a.model, &names, answer, a.within);
+                    let (pick, how) = choose(&names);
                     self.pick(hole, &pick, &decide, &how)?;
                 }
             }
@@ -577,7 +619,7 @@ impl Host {
                     None => self.answer_model(hole, &[])?,
                     Some(options) => {
                         let names: Vec<&str> = options.iter().map(String::as_str).collect();
-                        let (pick, how) = resolve(&a.model, &names, answer, a.within);
+                        let (pick, how) = choose(&names);
                         self.answer_model(hole, &[("pick".into(), Val::Text(pick.clone()))])?;
                         self.trace.push(format!("      choice: {pick} for {}{how}", ask.key));
                     }
@@ -603,6 +645,18 @@ impl Host {
         resolve(model, &names, &answer, within)
     }
 
+    /// [`Host::consult`], asking a routed choice's router first which
+    /// candidate makes it (appendix AJ.2.3). `model` is the router then.
+    fn consult_routed(&mut self, model: &str, route: Option<&Route>, c: &Choice, within: u64) -> (String, String) {
+        let Some(r) = route else { return self.consult(model, c, within) };
+        let (m, how) = self.consult(&r.router, &routing_choice(c, r), r.within_ms);
+        self.trace.push(format!("      model for {}: {m}{how}", c.key));
+        if m == "prefer" {
+            return (c.options[0].label.clone(), format!(" by prefer (as model \"{}\" picked)", r.router));
+        }
+        self.consult(&m, c, within)
+    }
+
     /// A slot's or a source's choice put to a model (appendix K.2.3–K.2.4):
     /// asked at once, and its pick, or `prefer`'s, injected as the answer, so
     /// the journal holds it.
@@ -612,10 +666,9 @@ impl Host {
             // Nothing is being chosen any more: an empty answer, which the unit ignores.
             return self.answer_model(hole, &[]);
         };
-        let within = match ask.sends.as_slice() {
-            [(_, Val::Count(ms))] => u64::try_from(*ms).unwrap_or(0),
-            _ => 0,
-        };
+        let sent = |name: &str| ask.sends.iter().find(|(n, _)| n == name).and_then(|(_, v)| if let Val::Count(x) = v { usize::try_from(*x).ok() } else { None });
+        let within = sent("within").unwrap_or(0) as u64;
+        let route = sent("decision").and_then(|i| self.prog.decisions.get(i)).and_then(|d| d.route.clone());
         let c = Choice {
             point: ask.kind.clone(),
             unit: ask.label.clone(),
@@ -627,10 +680,10 @@ impl Host {
             media: BTreeMap::new(),
         };
         if self.defer_models {
-            self.defer(ask.adapter.clone(), c, within, Chooses::Ask { hole, ask: ask.clone() });
+            self.defer_routed(ask.adapter.clone(), route, c, within, Chooses::Ask { hole, ask: ask.clone() });
             return Ok(());
         }
-        let (pick, how) = self.consult(&ask.adapter, &c, within);
+        let (pick, how) = self.consult_routed(&ask.adapter, route.as_ref(), &c, within);
         self.answer_model(hole, &[("pick".into(), Val::Text(pick.clone()))])?;
         self.trace.push(format!("      choice: {pick} for {}{how}", ask.key));
         Ok(())

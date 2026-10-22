@@ -1395,16 +1395,16 @@ fn move_slot(prog: &Program, u: &mut Unit, at: &[usize], slot: &str, why: &str, 
     if options.is_empty() {
         return false;
     }
-    let model = handler_at(prog, u, at, slot).and_then(|h| Some((h.model.clone()?, h.within_ms)));
+    let model = handler_at(prog, u, at, slot).and_then(|h| asked_by(prog, h));
     match model {
-        Some((model, within)) if options.len() > 1 => {
+        Some((model, within, route)) if options.len() > 1 => {
             let key = node_key(&u.label, &u.root, at);
             let n = node_at_mut(&mut u.root, at);
             let ask_key = format!("{key}?{slot}#{}", n.tried.get(slot).map_or(0, Vec::len) + 1);
             n.slots.remove(slot);
             n.choosing.insert(ask_key.clone(), options);
             u.notes.push(format!("{slot}: {why}asking model \"{model}\""));
-            out.asks.push(model_ask(&u.label, &model, slot, ask_key, within));
+            out.asks.push(model_ask(&u.label, &model, slot, ask_key, within, route));
         }
         _ => fill(prog, u, at, slot, &options[0], why),
     }
@@ -1420,17 +1420,23 @@ fn fill(prog: &Program, u: &mut Unit, at: &[usize], slot: &str, alt: &str, why: 
     ask_patience(prog, u, &key, slot, alt);
 }
 
+/// The model a choice `h` handles is put to first, its deadline, and, for a
+/// routed choice, the decision's index, by which the host finds its candidates
+/// (appendix AJ.2.2). `None` for `prefer`.
+fn asked_by(prog: &Program, h: &suture_lang::ir::Decision) -> Option<(String, u64, Option<usize>)> {
+    let route = h.route.as_ref().and_then(|_| prog.decisions.iter().position(|d| std::ptr::eq(d, h)));
+    Some((h.asked()?.to_string(), h.within_ms, route))
+}
+
 /// A choice put to a model (appendix K.2.3): the host asks it at once, within
-/// its deadline, and answers with the pick, or with `prefer`'s.
-fn model_ask(label: &str, model: &str, point: &str, key: String, within_ms: u64) -> Ask {
-    Ask {
-        adapter: model.to_string(),
-        verb: MODEL_VERB.into(),
-        kind: point.to_string(),
-        label: label.to_string(),
-        key,
-        sends: vec![("within".into(), Val::Count(within_ms as i64))],
+/// its deadline, and answers with the pick, or with `prefer`'s. A routed one
+/// names its decision (appendix AJ.2.2).
+fn model_ask(label: &str, model: &str, point: &str, key: String, within_ms: u64, route: Option<usize>) -> Ask {
+    let mut sends = vec![("within".into(), Val::Count(within_ms as i64))];
+    if let Some(i) = route {
+        sends.push(("decision".into(), Val::Count(i as i64)));
     }
+    Ask { adapter: model.to_string(), verb: MODEL_VERB.into(), kind: point.to_string(), label: label.to_string(), key, sends }
 }
 
 /// The verb of a request to a model.
@@ -1608,13 +1614,13 @@ fn pick_source(prog: &Program, u: &mut Unit, at: &[usize], attr: &str, why: &str
         return false;
     }
     let point = format!("{kind}'s {attr}");
-    let model = handler_at(prog, u, at, &point).and_then(|h| Some((h.model.clone()?, h.within_ms)));
+    let model = handler_at(prog, u, at, &point).and_then(|h| asked_by(prog, h));
     match model {
-        Some((model, within)) if options.len() > 1 => {
+        Some((model, within, route)) if options.len() > 1 => {
             let key = format!("{}?source", fetch_key(&u.label, &u.root, at, attr, f.n));
             node_at_mut(&mut u.root, at).choosing.insert(key.clone(), options);
             u.notes.push(format!("{attr}: {why}asking model \"{model}\" for a source"));
-            out.asks.push(model_ask(&u.label, &model, &point, key, within));
+            out.asks.push(model_ask(&u.label, &model, &point, key, within, route));
         }
         _ => ask_source(prog, u, at, attr, &options[0], why, out),
     }

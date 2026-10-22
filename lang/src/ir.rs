@@ -116,17 +116,53 @@ pub struct Decision {
     pub scope_text: Option<String>,
     /// How long its model may take to answer (appendix K.2.5).
     pub within_ms: u64,
+    /// With a router, `model` is the first candidate (appendix AJ).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<Route>,
     pub source: String,
+}
+
+/// `with model "fast@1" or model "careful@1" or prefer, picked by model
+/// "router@1"`: a model picks which candidate makes the choice (appendix AJ.2).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Route {
+    pub router: String,
+    /// How long the router may take to answer.
+    pub within_ms: u64,
+    /// Every candidate, first first; `None` is `prefer`.
+    pub among: Vec<Option<String>>,
+}
+
+/// A router's name for a candidate: the model's, or `prefer`.
+pub fn candidate(m: &Option<String>) -> String {
+    m.clone().unwrap_or_else(|| "prefer".to_string())
 }
 
 impl Decision {
     /// How it reads in `suture build`: `for Orders whose …: model "careful@1"`.
     pub fn handler(&self) -> String {
-        match &self.model {
-            Some(m) if self.within_ms != 1000 => format!("model \"{m}\" within {} ms", self.within_ms),
+        let one = |m: &Option<String>| match m {
             Some(m) => format!("model \"{m}\""),
             None => "`prefer`".to_string(),
+        };
+        let within = |ms: u64| if ms != 1000 { format!(" within {ms} ms") } else { String::new() };
+        match (&self.route, &self.model) {
+            (Some(r), _) => format!(
+                "{}{}, picked by model \"{}\"{}",
+                r.among.iter().map(one).collect::<Vec<_>>().join(" or "),
+                within(self.within_ms),
+                r.router,
+                within(r.within_ms)
+            ),
+            (None, Some(_)) => format!("{}{}", one(&self.model), within(self.within_ms)),
+            (None, None) => one(&None),
         }
+    }
+
+    /// The model a choice it handles is put to first: its router, or its
+    /// model; `None` for `prefer`.
+    pub fn asked(&self) -> Option<&str> {
+        self.route.as_ref().map(|r| r.router.as_str()).or(self.model.as_deref())
     }
 }
 

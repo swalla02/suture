@@ -719,38 +719,72 @@ fn decide(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
         (None, None)
     };
     c.expect_word("with")?;
-    let model = if c.eat_word("prefer") {
-        None
-    } else {
+    let model = handler_model(&mut c)?;
+    let mut or = vec![];
+    while c.eat_word("or") {
+        or.push(handler_model(&mut c)?);
+    }
+    let within_ms = within(&mut c, model.is_some() || or.iter().any(Option::is_some))?;
+    // `, picked by model "router@1"`: a model picks the model (appendix AJ).
+    let router = if c.eat_sym(',') {
+        c.expect_word("picked")?;
+        c.expect_word("by")?;
         c.expect_word("model")?;
-        let Some(Tok::Str(m)) = c.peek() else {
-            return Err(c.error(format!("expected the model's name in quotes, as in \"carriers@1\", found {}", c.found())));
-        };
-        let m = m.clone();
-        c.next();
-        Some(m)
-    };
-    let within_ms = if c.eat_word("within") {
-        if model.is_none() {
-            return Err(c.error("`with prefer` answers at once; `within` bounds a model's answer"));
-        }
-        let n = match c.peek() {
-            Some(Tok::Num(n)) => n.clone(),
-            _ => return Err(c.error(format!("expected a duration, as in `within 300 milliseconds`, found {}", c.found()))),
-        };
-        if c.peek_at(1).is_some_and(|t| matches!(t, Tok::Word(w) if w == "millisecond" || w == "milliseconds")) {
-            c.next();
-            c.next();
-            Some(n.parse::<u64>().map_err(|_| c.error(format!("`{n}` is not a whole number")))?)
-        } else {
-            Some(duration(&mut c)? * 1000)
-        }
+        let r = quoted_model(&mut c)?;
+        Some((r, within(&mut c, true)?))
     } else {
         None
     };
     c.expect_end()?;
-    out.decides.push(DecideDecl { point, scope, cond, model, within_ms, source: text(&toks), at });
+    if !or.is_empty() && router.is_none() {
+        return Err(c.error("a choice among models ends with the model that picks one: `, picked by model \"router@1\"`"));
+    }
+    if or.is_empty() && router.is_some() {
+        return Err(c.error("`picked by` picks among models: name two or more, as in `with model \"fast@1\" or model \"careful@1\", picked by model \"router@1\"`"));
+    }
+    out.decides.push(DecideDecl { point, scope, cond, model, within_ms, or, router, source: text(&toks), at });
     Ok(())
+}
+
+/// `model "carriers@1"`, or `prefer`: `None`.
+fn handler_model(c: &mut Cursor) -> Result<Option<String>, Error> {
+    if c.eat_word("prefer") {
+        return Ok(None);
+    }
+    c.expect_word("model")?;
+    quoted_model(c).map(Some)
+}
+
+/// `"carriers@1"`
+fn quoted_model(c: &mut Cursor) -> Result<String, Error> {
+    let Some(Tok::Str(m)) = c.peek() else {
+        return Err(c.error(format!("expected the model's name in quotes, as in \"carriers@1\", found {}", c.found())));
+    };
+    let m = m.clone();
+    c.next();
+    Ok(m)
+}
+
+/// `within 300 milliseconds`, `within 2 seconds`, in milliseconds; a model's
+/// deadline, so only after one (`asks`).
+fn within(c: &mut Cursor, asks: bool) -> Result<Option<u64>, Error> {
+    if !c.eat_word("within") {
+        return Ok(None);
+    }
+    if !asks {
+        return Err(c.error("`with prefer` answers at once; `within` bounds a model's answer"));
+    }
+    let n = match c.peek() {
+        Some(Tok::Num(n)) => n.clone(),
+        _ => return Err(c.error(format!("expected a duration, as in `within 300 milliseconds`, found {}", c.found()))),
+    };
+    if c.peek_at(1).is_some_and(|t| matches!(t, Tok::Word(w) if w == "millisecond" || w == "milliseconds")) {
+        c.next();
+        c.next();
+        Ok(Some(n.parse::<u64>().map_err(|_| c.error(format!("`{n}` is not a whole number")))?))
+    } else {
+        Ok(Some(duration(c)? * 1000))
+    }
 }
 
 /// `allow payments to receive Order's card, Order's address` (appendix N.2.3).

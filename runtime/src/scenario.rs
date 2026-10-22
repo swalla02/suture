@@ -54,7 +54,8 @@ pub fn run_with(prog: &Program, sc: &Scenario, setup: impl FnOnce(&mut Host)) ->
                 refusal(&mut host, target, refused.as_ref(), r, "it was changed")
             }
             ScenarioStep::Model { model, .. }
-                if !prog.decisions.iter().any(|d| d.model.as_ref() == Some(model)) && !prog.sources.iter().any(|s| s.model && s.adapter == *model) =>
+                if !prog.decisions.iter().any(|d| d.model.as_ref() == Some(model) || d.route.as_ref().is_some_and(|r| r.router == *model || r.among.contains(&Some(model.clone()))))
+                    && !prog.sources.iter().any(|s| s.model && s.adapter == *model) =>
             {
                 Err(format!("no `decide` or source names model \"{model}\""))
             }

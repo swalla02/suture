@@ -1749,12 +1749,16 @@ impl Checker {
                     continue;
                 }
             }
-            if let Some(m) = &d.model {
-                let ok = m.split_once('@').is_some_and(|(n, v)| !n.is_empty() && !v.is_empty() && !v.contains('@'));
-                if !ok {
-                    self.errors.push(err(&d.at, format!("a model is named `name@version`, as in \"{m}@1\"")));
-                    continue;
-                }
+            let named = d.model.iter().chain(d.or.iter().flatten()).chain(d.router.iter().map(|(r, _)| r));
+            if let Some(m) = named.clone().find(|m| !m.split_once('@').is_some_and(|(n, v)| !n.is_empty() && !v.is_empty() && !v.contains('@'))) {
+                self.errors.push(err(&d.at, format!("a model is named `name@version`, as in \"{m}@1\"")));
+                continue;
+            }
+            // Each candidate once, so the router's pick names one (appendix AJ.2.1).
+            let among: Vec<Option<String>> = std::iter::once(d.model.clone()).chain(d.or.iter().cloned()).collect();
+            if let Some((_, m)) = among.iter().enumerate().find(|(i, m)| among[..*i].contains(m)) {
+                self.errors.push(err(&d.at, format!("`decide`: {} is named twice among the models to pick from", ir::candidate(m))));
+                continue;
             }
             let cond = match (&d.cond, &scope) {
                 (Some(c), Some(k)) => match self.cond(p, &d.at, k, c) {
@@ -1774,7 +1778,18 @@ impl Checker {
                 self.errors.push(err(&d.at, format!("a model's `within` is from 1 millisecond to {} minutes", MAX_WITHIN_MS / 60_000)));
                 continue;
             }
-            p.decisions.push(Decision { point: d.point.clone(), scope, cond, model: d.model.clone(), scope_text, within_ms, source: d.source.clone() });
+            let route = match &d.router {
+                Some((router, within)) => {
+                    let within = within.unwrap_or(1000);
+                    if !(1..=MAX_WITHIN_MS).contains(&within) {
+                        self.errors.push(err(&d.at, format!("a model's `within` is from 1 millisecond to {} minutes", MAX_WITHIN_MS / 60_000)));
+                        continue;
+                    }
+                    Some(ir::Route { router: router.clone(), within_ms: within, among })
+                }
+                None => None,
+            };
+            p.decisions.push(Decision { point: d.point.clone(), scope, cond, model: d.model.clone(), scope_text, within_ms, route, source: d.source.clone() });
         }
         // Two that can both decide one choice, at the same rank (J.2.3).
         let mut seen = vec![];

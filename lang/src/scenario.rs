@@ -188,10 +188,19 @@ fn step(c: &mut Cursor, given: &mut bool) -> Result<ScenarioStep, Error> {
             vec![ModelAnswer::Late]
         } else {
             c.expect_word("picks")?;
-            let mut picks = vec![ModelAnswer::Pick(c.word()?)];
+            // A router picks a model by its quoted name (appendix AJ.2.4).
+            let pick = |c: &mut Cursor| match c.peek() {
+                Some(Tok::Str(m)) => {
+                    let m = m.clone();
+                    c.next();
+                    Ok(m)
+                }
+                _ => c.word(),
+            };
+            let mut picks = vec![ModelAnswer::Pick(pick(c)?)];
             while c.eat_sym(',') {
                 c.expect_word("then")?;
-                picks.push(ModelAnswer::Pick(c.word()?));
+                picks.push(ModelAnswer::Pick(pick(c)?));
             }
             picks
         };
