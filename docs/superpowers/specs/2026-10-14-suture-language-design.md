@@ -1911,7 +1911,7 @@ A `decide` names one model for a scope, and a `whose` moves a choice to another 
 |---|---|
 | `decide … with model "a@1" or model "b@1"[ or prefer] [within …], picked by model "r@1" [within …]` | a router that sees the choice's options |
 | the router's pick, journaled under `⟨key⟩?model` | routing among `whose` scopes |
-| `model "r@1" picks "b@1"` and `picks prefer` in scenarios | a router's own `at least … sure` |
+| `model "r@1" picks "b@1"` and `picks prefer` in scenarios | a router's own `at least … sure` (slice 35, AK) |
 
 ### AJ.2 Semantics that slice 34 settles
 
@@ -1923,4 +1923,28 @@ A `decide` names one model for a scope, and a `whose` moves a choice to another 
 ### AJ.3 Acceptance
 
 - Bindings and slots route (runtime/tests/routing.rs), and source choices take the same path. The router's pick, `prefer`, an unoffered name and a late router each behave as AJ.2.3 says. A served route logs two `decided` records and replays without a model. A copy of the claims eval with its assessor routed and the router unscripted passes all 16 scenarios.
+
+## Appendix AK. Prototype slice 35: how sure a decision model must be (2026-10-22)
+
+A decision model's minimum confidence lived only in `models.json`, which is per deployment (K.2.7). A source states its own in the program, `at least 0.8 sure` (AF.2.1). Slice 35 gives a `decide` and its router the same bound, so how sure a model must be is part of the program, shown in `suture build` and the same in every deployment.
+
+### AK.1 What slice 35 adds
+
+| Added in slice 35 | Still waits |
+|---|---|
+| `decide … with model "m@1" [within …] at least 0.8 sure` | a confidence from a function model registered in Rust |
+| `…, picked by model "r@1" [within …] at least 0.7 sure` | per-candidate bounds in a route |
+| `model "m@1" picks Fast at 0.9` in scenarios | |
+
+### AK.2 Semantics that slice 35 settles
+
+1. **Where it goes.** `at least ⟨0…1⟩ sure` follows a decide's `within`, and the router's after the router's `within`. In a route, the first bound is for every candidate and the second is for the router. It is stored in thousandths, as a source's is. `with prefer` alone takes no bound, the same as `within`.
+2. **How it applies.** The bound goes with the choice to the model. A backend holds a pick to the stricter of its `min_confidence` and the program's bound. A pick below it is `unsure` and leaves the choice to the fallback, `prefer` or, for a router, the first candidate (AJ.2.3). Under a program bound, a pick that gives no confidence is not used: `it gave no confidence, and the program needs at least 0.8 sure`. This matches a source, whose bound also refuses a value with no confidence. A function model registered in Rust gives none, so it cannot make a bounded choice.
+3. **Scripts and the journal.** A scripted pick takes `at ⟨0…1⟩`, as a scripted read does. The answer is journaled after the bound is applied, as `unsure` or a pick, so replay does not depend on the bound.
+4. **Requests.** A unit's request to a model for a slot or a source names its decision, by index, when the decision is routed or bounded (AJ.2.4).
+
+### AK.3 Acceptance
+
+- In runtime/tests/routing.rs, a confident router and candidate decide. An unsure router falls to the first candidate, an unsure candidate falls to `prefer`, and a pick with no confidence is not used. A bounded single model on a slot falls to `prefer`, and `with prefer at least … sure` is an error.
+- In runtime/tests/backends.rs, the stricter of `min_confidence` and the program's bound applies, and a function model under a bound is not used.
 

@@ -35,9 +35,9 @@ source ⟨Kind⟩'s ⟨attr⟩ via model "⟨name⟩@⟨version⟩" within ⟨du
   [otherwise …]
 
 decide [⟨Kind⟩ | ⟨Slot⟩ | ⟨Kind⟩'s ⟨attr⟩] [for ⟨Kinds⟩ [whose ⟨cond⟩]]
-       with model "⟨name⟩@⟨version⟩" [within ⟨n⟩ milliseconds | within ⟨duration⟩] | with prefer
-decide … with model "⟨a⟩@⟨v⟩" or model "⟨b⟩@⟨v⟩"[ or prefer…] [within …],
-       picked by model "⟨router⟩@⟨v⟩" [within …]          (a model picks the model)
+       with model "⟨name⟩@⟨version⟩" [within ⟨n⟩ milliseconds | within ⟨duration⟩] [at least ⟨0…1⟩ sure] | with prefer
+decide … with model "⟨a⟩@⟨v⟩" or model "⟨b⟩@⟨v⟩"[ or prefer…] [within …] [at least … sure],
+       picked by model "⟨router⟩@⟨v⟩" [within …] [at least … sure]   (a model picks the model)
 
 prefer ⟨Slot⟩: ⟨Kind⟩[, then ⟨Kind⟩ [after ⟨duration⟩]]…
 prefer ⟨Kind⟩ [for a ⟨element⟩]: ⟨criterion⟩[, then ⟨criterion⟩]…
@@ -112,7 +112,7 @@ scenario "⟨title⟩":
   when   ⟨role⟩ ⟨Name⟩ changes ⟨Name⟩'s ⟨attr⟩ to ⟨value⟩
            is refused at the gate | is refused by rule ⟨name⟩
   when   ⟨adapter⟩ answers ⟨outcome⟩ [with ⟨attr⟩ ⟨value⟩, …] [for ⟨Name⟩]
-  when   model "⟨name⟩@⟨version⟩" picks ⟨Name⟩ | "⟨model⟩@⟨v⟩" | prefer[, then …] | declines | is late
+  when   model "⟨name⟩@⟨version⟩" picks ⟨Name⟩ | "⟨model⟩@⟨v⟩" | prefer [at ⟨0…1⟩][, then …] | declines | is late
   when   model "⟨name⟩@⟨version⟩" reads ⟨value⟩ [at ⟨0…1⟩] | nothing[, then …]
   when   ⟨n⟩ ⟨seconds|minutes|hours|days|weeks⟩ pass
   when   it is ⟨YYYY-MM-DD⟩ [⟨H:MM⟩]

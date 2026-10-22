@@ -197,7 +197,7 @@ The other errors: naming something that no `uses`, slot or source picks, naming 
 - the model picks something it was not offered;
 - no model of that name is available;
 - the model does not answer within its deadline;
-- a backend is unsure (its confidence is below its `min_confidence`), or fails.
+- a backend is unsure (its confidence is below its `min_confidence`, or below the program's `at least … sure`), or fails.
 
 The trace says which:
 
@@ -211,6 +211,16 @@ The trace says which:
 ```
 
 A model is asked only when there is a choice. With one option, that option is taken, and the trace shows no model.
+
+### How sure a model must be
+
+A `min_confidence` in `models.json` belongs to one deployment. A bound the program itself states holds in every deployment, and `suture build` shows it:
+
+```text
+decide Carrier with model "carriers@1" within 2 seconds at least 0.8 sure
+```
+
+A pick with a confidence below 0.8 is not used, and `prefer` picks. A pick that gives no confidence at all is not used either, because the program can't tell how sure it was: `by prefer (model "carriers@1" failed: it gave no confidence, and the program needs at least 0.8 sure)`. A function registered from Rust gives no confidence, so it can't make a bounded choice. When a backend has its own `min_confidence`, the stricter of the two applies. In a scenario, a scripted pick gives its confidence as a read does: `model "carriers@1" picks Fast at 0.9`.
 
 A model cannot break a rule either. Its pick is still asked to grant the take, and a pick that would break a rule is refused. The option is then dropped, and the choice is made again among the rest. A model that picks `Small` (1 unit) for an order of 2 sees `Small` refused; only `Big` is left, so `Big` is taken without asking.
 
@@ -293,7 +303,7 @@ The trace shows both picks:
       choice: Fast for O1/Shipment#1@Carrier by model "careful@1" (of Cheap, Fast)
 ```
 
-If the router declines, is late, is unsure, fails or picks a name it was not offered, the first candidate makes the choice, here `fast@1`. If that model is no help either, `prefer` picks as usual. Candidates are named once each, and there must be two or more. The first `within` bounds the candidate's answer and the second bounds the router's (1 second each by default). In a scenario, a router picks a model by its quoted name, or `prefer`. Both answers are journaled, the router's under the choice's key with `?model` added, so a replay asks neither. A served program asks the router after the step, then the model it picked. `suture build` lists the route as the choice's handler: `model "fast@1" or model "careful@1" or `prefer` within 2000 ms, picked by model "router@1" within 100 ms`.
+Each side can state how sure it must be: `… or prefer within 2 seconds at least 0.8 sure, picked by model "router@1" within 100 milliseconds at least 0.7 sure`. The first bound is for the candidates and the second for the router. If the router declines, is late, is unsure, fails or picks a name it was not offered, the first candidate makes the choice, here `fast@1`. If that model is no help either, `prefer` picks as usual. Candidates are named once each, and there must be two or more. The first `within` bounds the candidate's answer and the second bounds the router's (1 second each by default). In a scenario, a router picks a model by its quoted name, or `prefer`. Both answers are journaled, the router's under the choice's key with `?model` added, so a replay asks neither. A served program asks the router after the step, then the model it picked. `suture build` lists the route as the choice's handler: `model "fast@1" or model "careful@1" or `prefer` within 2000 ms, picked by model "router@1" within 100 ms`.
 
 A route works for every choice a `decide` covers: a binding, a slot, and the source of a sourced attribute.
 
