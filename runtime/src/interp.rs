@@ -2262,8 +2262,11 @@ fn arith(x: Val, op: Arith, y: Val) -> Option<Val> {
         Arith::Sub => a.checked_sub(b),
         Arith::Mul => a.checked_mul(b),
         Arith::Div => a.checked_div(b),
+        Arith::Days => None,
     };
     match (x, y) {
+        // Calendar days in UTC, both counted: none or fewer when `b` is before `a` (appendix AN.2.2).
+        (Val::Time(a), Val::Time(b)) if op == Arith::Days => Some(Val::Count(b.div_euclid(86_400) - a.div_euclid(86_400) + 1)),
         (Val::Money(a), Val::Money(b)) if matches!(op, Arith::Add | Arith::Sub) => f(a, b).map(Val::Money),
         (Val::Money(a), Val::Count(b)) if matches!(op, Arith::Mul | Arith::Div) => f(a, b).map(Val::Money),
         (Val::Count(a), Val::Money(b)) if op == Arith::Mul => f(a, b).map(Val::Money),

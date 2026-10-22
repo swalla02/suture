@@ -42,7 +42,7 @@ hrms's count drops, by pattern, its lines about holidays and half days, attendan
 
 **What Suture could not express.**
 - **Overlap, the biggest gap (ported since slice 28, below).** "No two open or approved leaves of one employee overlap" compares a sibling with the reader: `the number of its employee's Applications that are approved and whose to is at least its from and whose from is at most its to`. A `that` filter on a relation reads only the sibling, so it cannot be written. The same gap blocks consecutive leave across applications. Six tests need it. Booking, scheduling and rostering have the same shape.
-- **Counting days.** Days between two dates, holidays and half days. Suture has no Duration ÷ Duration and no fractional counts, so the port takes `days` as given, and two tests cannot be written.
+- **Counting days.** Days between two dates, holidays and half days. Suture had no Duration ÷ Duration and no fractional counts, so the port took `days` as given, and two tests cannot be written. Days between dates came in slice 38 (below); holidays and half days still wait.
 - **Finding the allocation.** hrms finds the allocation whose period holds the dates. The port has the caller name it, and checks that it fits. A `uses` could choose it, but `uses` belongs on a part, and an application is a root.
 
 **Smaller frictions.**
@@ -78,4 +78,16 @@ The two `define`s that kept the dashboard's totals are now `keep the total days 
 Slices from these gaps, most valuable first:
 1. ~~runs across entities (consecutive leave)~~ slice 32;
 2. ~~a way to keep a total that only a reader or an `expect` uses~~ slice 33;
-3. days between dates.
+3. ~~days between dates~~ slice 38;
+4. holiday lists, so a leave counts working days;
+5. half days.
+
+## After slice 38: days between dates
+
+The application's `days` is now computed from its dates, so a caller can no longer give `from 2027-01-05, to 2027-01-08 and days 10`:
+
+```text
+kind Application { …, from: Time, to: Time, days: Count = the days from its from to its to, … }
+```
+
+Both ends are counted, by calendar date. No line is added: the attribute's line only gets longer. The scenarios no longer give `days`, and all 16 still pass. Of the 33 applications in them, 31 had given the calendar count. The other two, in `test_validate_application_across_allocations`, gave 6 days for 2025-12-26 to 2026-01-05, which hrms counts less holidays; the port counts 11. Both are refused at the gate either way. The two tests that count days (`half_day_date_cannot_be_holiday`, `leave_days_across_two_holiday_lists`) still need holiday lists. hrms's own count is not added to its side, because the port does not do what that function does with holidays.

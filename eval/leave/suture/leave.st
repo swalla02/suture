@@ -14,7 +14,7 @@ kind Employee { user: Text, company: Company, joined: Time, approver: Approver }
 kind Type     { name: Text, negative: Bool = no, longest: Count = 0, after: Duration = 0 days }
 kind Allocation { employee: Employee, type: Type, from: Time, to: Time, leaves: Count }
 kind Application { employee: Employee, type: Type, allocation: Allocation, approver: Approver,
-                   from: Time, to: Time, days: Count,
+                   from: Time, to: Time, days: Count = the days from its from to its to,
                    status: open | approved | rejected | cancelled }
 
 define: an Application is held when it is open or it is approved

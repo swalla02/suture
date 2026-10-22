@@ -386,6 +386,17 @@ fn atom(c: &mut Cursor, bare: bool) -> Result<Num, Error> {
         let of = noun_phrase(c)?;
         return Ok(Num::Run { of, filter: that(c)? });
     }
+    // `the days from a to b`: calendar days, both counted (appendix AN.2.1).
+    // Each end is one value, so `the days from its from to its to - 1` takes
+    // one off the count; a calculated end is put in brackets.
+    if word_at(c, 0, "the") && word_at(c, 1, "days") && word_at(c, 2, "from") {
+        for w in ["the", "days", "from"] {
+            c.expect_word(w)?;
+        }
+        let from = Box::new(atom(c, bare)?);
+        c.expect_word("to")?;
+        return Ok(Num::Days { from, to: Box::new(atom(c, bare)?) });
+    }
     if word_at(c, 0, "the") && word_at(c, 1, "number") && word_at(c, 2, "of") {
         c.expect_word("the")?;
         c.expect_word("number")?;
@@ -632,7 +643,7 @@ fn each_in_cond(c: &Cond) -> Option<String> {
         };
         match n {
             Num::Np(x) | Num::Total { of: x, .. } | Num::Number { of: x, .. } | Num::Taken { from: x, .. } | Num::Run { of: x, .. } => np(x),
-            Num::Bin(a, _, b) => num(a).or_else(|| num(b)),
+            Num::Bin(a, _, b) | Num::Days { from: a, to: b } => num(a).or_else(|| num(b)),
             Num::Over { list, .. } => np(list),
             Num::Lit(_) => None,
         }

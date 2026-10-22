@@ -252,7 +252,19 @@ fn element_words(p: &Program, owner: &str, element: &str, one: &str, n: &Num) ->
 
 /// `x op y`, with parentheses where the reading needs them.
 fn bin(op: Arith, x: &Num, y: &Num, show: impl Fn(&Num) -> String) -> String {
-    let prec = |a: Arith| if matches!(a, Arith::Add | Arith::Sub) { 1 } else { 2 };
+    if op == Arith::Days {
+        let end = |m: &Num| match m {
+            Num::Bin(_, inner, _) if *inner != Arith::Days => format!("({})", show(m)),
+            _ => show(m),
+        };
+        return format!("the days from {} to {}", end(x), end(y));
+    }
+    // `the days from … to …` reads as one value, so it is never bracketed.
+    let prec = |a: Arith| match a {
+        Arith::Add | Arith::Sub => 1,
+        Arith::Mul | Arith::Div => 2,
+        Arith::Days => 3,
+    };
     let side = |m: &Num, right: bool| match m {
         // A right operand of the same precedence is bracketed too: with whole
         // numbers, `10 × (n / k)` is not `10 × n / k`.
@@ -266,6 +278,7 @@ fn bin(op: Arith, x: &Num, y: &Num, show: impl Fn(&Num) -> String) -> String {
         Arith::Sub => "−",
         Arith::Mul => "×",
         Arith::Div => "/",
+        Arith::Days => unreachable!("read above"),
     };
     format!("{} {sym} {}", side(x, false), side(y, true))
 }
