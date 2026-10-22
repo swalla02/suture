@@ -103,7 +103,16 @@ Moving the clock fires every timer that falls due, in order: deadlines (re-sends
 | `expect an alert for ⟨Name⟩`, `expect no alert for ⟨Name⟩` | whether a goal raised an alert |
 | `expect the total ⟨attr⟩ taken from ⟨Name⟩ is ⟨num⟩` | a running total (chapter 9) |
 
-A total across units, such as `the total days of AT's Applications that are approved`, is kept only when a rule, need, admit, definition or formula of the program reads it. An `expect` about one the program does not keep fails the step with `the program keeps no total … of each Allocation`, instead of reading 0.
+A total across units, such as `the total days of AT's Applications that are approved`, is kept only when a rule, need, admit, definition or formula of the program reads it, or a `keep` names it. An `expect` about one the program does not keep fails the step with `the program keeps no total … of each Allocation`, instead of reading 0.
+
+`keep` keeps a total that no rule bounds, for scenarios and readers:
+
+```suture
+keep the total guests of each Client's Events
+keep the number of each Client's Events
+```
+
+The client keeps the totals as its events change, as it would for a rule over them, and `expect the total guests of C1's Events is 120` reads them. `suture explain` and `GET /units/⟨label⟩` show each one: `its total guests of Events: 120`. A `keep` names a total of each entity across units. Anything else is an error, such as `keep the total guests of all Events`.
 
 A failed `expect` does not stop the scenario: every later step still runs, and the report lists every failure.
 

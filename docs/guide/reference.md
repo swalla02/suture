@@ -46,6 +46,7 @@ admit ⟨verb⟩ ⟨Kind⟩ by ⟨role⟩[, ⟨role⟩] [with ⟨name⟩: ⟨Typ
 admit change ⟨Kind⟩'s ⟨attr⟩ by ⟨role⟩[, ⟨role⟩] [where ⟨cond⟩]
 apply rule ⟨name⟩ to ⟨Kinds⟩ created from version ⟨n⟩
 allow ⟨adapter⟩ to receive ⟨Kind⟩'s ⟨attr⟩[, ⟨Kind⟩'s ⟨attr⟩…]
+keep the total ⟨attr⟩ of each ⟨Kind⟩'s ⟨Kinds⟩ [that ⟨cond⟩] | keep the number of each ⟨Kind⟩'s ⟨Kinds⟩ [that ⟨cond⟩]
 ```
 
 **Types:** `Text`, `Bool`, `Count`, `Money`, `Duration`, `Time`, `Media`, `⟨Kind⟩`, `list of ⟨Kind⟩`, `set of ⟨Kind⟩`. Built-in: `created: Time`. A state attribute: `⟨attr⟩: ⟨state⟩ | ⟨state⟩… [= ⟨state⟩]`.

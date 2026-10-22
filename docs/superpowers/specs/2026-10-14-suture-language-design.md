@@ -1879,3 +1879,25 @@ The leave eval (appendix AC) could not port hrms's consecutive leave. A leave ty
 - hrms counts a run per employee and leave type. The port counts it per allocation, which is per employee and type for a period, so a run across two allocations is not joined. hrms counts the run's leave days less holidays. The port counts calendar days.
 - A refusal names the total behind the run, `E would break rule run with its total number of Leaves that are held per day from its from to its to: …`. The paraphrase after it says "days in a row".
 
+## Appendix AI. Prototype slice 33: kept totals (2026-10-22)
+
+A total across units is kept only when the program reads it (AC.4). The leave eval's dashboard totals were kept by two definitions that nothing used. Slice 33 lets a program say what it keeps.
+
+### AI.1 What slice 33 adds
+
+| Added in slice 33 | Still waits |
+|---|---|
+| `keep the total ⟨attr⟩ of each ⟨Kind⟩'s ⟨Kinds⟩ [that …]`, `keep the number of each …` | kept totals per period |
+| `suture explain` and `GET /units/…` show a unit's running totals | a total of `all ⟨Kinds⟩` with no rule |
+| a `keep` editor template | |
+
+### AI.2 Semantics that slice 33 settles
+
+1. **Keeping.** `keep ⟨total⟩` compiles the total as a rule's bound over each entity would (F.2.8, AA.2.1), and keeps its implicit binding. It adds no rule and no state. Entities count toward it, are held while its filter holds, and give back as they would for a rule. No bound refuses them. A `keep` of a total that a rule or definition already reads adds nothing.
+2. **Readers.** For each running total of a unit's kind outside periods, explain shows a line under the unit: `its total days of Applications that are approved: 4`, or `its number of Applications that are open: 1`. A total nothing has added to shows nothing, as `0`. Totals per period are not shown.
+3. **Errors.** A `keep` names a total of each entity, `the total … of each K's Ks` or `the number of each K's Ks`. Anything else is a parse error that shows both forms. A total that is not across units, such as one over a unit's own parts, is an error: `` `keep …`: it is not a total across units, which K keeps as it changes ``. An `expect` about a total that is not kept now ends `…, and no `keep` keeps it`.
+
+### AI.3 Acceptance
+
+- The leave port replaces its two unused definitions with two `keep`s: +2 −2 lines, 16 scenarios passing.
+
