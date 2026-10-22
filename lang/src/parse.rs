@@ -874,6 +874,20 @@ fn admit(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     let mut c = Cursor::new(&toks, &st.file, st.line);
     c.expect_word("admit")?;
     let verb = c.word()?;
+    // `admit cancel or return Booking …`: one admit per verb, alike in all
+    // else (appendix AV).
+    let mut verbs = vec![verb.clone()];
+    while verb != "change"
+        && (matches!(c.peek(), Some(Tok::Sym(','))) || c.is_word("or"))
+        && matches!(c.peek_at(1), Some(Tok::Word(w)) if !w.starts_with(char::is_uppercase) && w != "a" && w != "an")
+    {
+        c.next();
+        let v = c.word()?;
+        if v == "change" {
+            return Err(c.error("`change` takes its own admit, as in `admit change Stock's units by staff`"));
+        }
+        verbs.push(v);
+    }
     let what = if c.eat_word("a") || c.eat_word("an") {
         c.expect_word("new")?;
         let mut kinds = vec![c.kind_name()?];
@@ -911,7 +925,14 @@ fn admit(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     }
     let cond = if c.eat_word("where") { Some(condition(&mut c)?) } else { None };
     c.expect_end()?;
-    out.admits.push(AdmitDecl { what, roles, data, cond, source: text(&toks[1..]), at });
+    for v in verbs {
+        let what = match &what {
+            Admitted::New { kinds, .. } => Admitted::New { verb: v, kinds: kinds.clone() },
+            Admitted::Event { kind, .. } => Admitted::Event { verb: v, kind: kind.clone() },
+            Admitted::Change { .. } => what.clone(),
+        };
+        out.admits.push(AdmitDecl { what, roles: roles.clone(), data: data.clone(), cond: cond.clone(), source: text(&toks[1..]), at: at.clone() });
+    }
     Ok(())
 }
 

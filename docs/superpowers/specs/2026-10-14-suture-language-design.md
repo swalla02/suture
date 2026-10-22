@@ -2200,3 +2200,24 @@ Until now, one sentence could not mix `and` with `or`, so a mixed condition need
 ### AU.3 Acceptance
 
 - runtime/tests/groups.rs: a rule, a definition and a calculation with parentheses compile and hold in a scenario; the paraphrase keeps the group; the ungrouped sentence is an error.
+
+## Appendix AV. Prototype slice 46: one admit for several verbs (2026-10-22)
+
+The returns eval's second round found that a condition shared by several events had to be written once per event. One admit can now name several verbs.
+
+### AV.1 What slice 46 adds
+
+| Added in slice 46 | Still waits |
+|---|---|
+| `admit return, renew or lose Loan by member[, staff] [with …] [where …]` | one statement for an admit and its reaction |
+| `admit place or import a new Order by staff` | |
+
+### AV.2 Semantics that slice 46 settles
+
+1. **One admit per verb.** The parser expands the statement into one admit per verb, with the same kind or kinds, roles, data and condition. Everything that holds for an admit holds for each: each event needs its reaction, and each read-back line names its verb.
+2. **Verbs** are lowercase words joined by `,` and `or` before the kind or before `a new`.
+3. **`change`** keeps its own admit: naming it among other verbs is an error.
+
+### AV.3 Acceptance
+
+- runtime/tests/verbs.rs: one admit for three events gives four admits, admits two of the events and refuses the third at the gate by its shared condition; `change` among verbs is an error.

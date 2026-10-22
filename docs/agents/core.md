@@ -17,7 +17,7 @@ module ⟨name⟩ version ⟨n⟩, currency ⟨EUR|USD|…⟩[, attempts ⟨n⟩
 kind ⟨Kind⟩ [(plural ⟨Plural⟩)] { ⟨attr⟩: ⟨Type⟩ [= ⟨default or formula⟩], … }        kinds
 role ⟨role⟩ [is a ⟨Kind⟩]                                                         gate
 admit ⟨verb⟩ a new ⟨Kind⟩[, ⟨Kind⟩ or ⟨Kind⟩] by ⟨role⟩[, ⟨role⟩] [where ⟨cond⟩]     gate
-admit ⟨verb⟩ ⟨Kind⟩ by ⟨role⟩ [where ⟨cond⟩]                                      gate
+admit ⟨verb⟩[, ⟨verb⟩ or ⟨verb⟩] ⟨Kind⟩ by ⟨role⟩ [where ⟨cond⟩]                   gate
 admit change ⟨Kind⟩'s ⟨attr⟩ by ⟨role⟩ [where ⟨cond⟩]                             gate
 ⟨Kind⟩ needs ⟨Kind or Slot⟩[, …] [while ⟨cond⟩]                                  parts
 ⟨Slot⟩ is ⟨Kind⟩ or ⟨Kind⟩ · prefer ⟨Slot⟩: ⟨Kind⟩, then ⟨Kind⟩ [after ⟨duration⟩]    parts

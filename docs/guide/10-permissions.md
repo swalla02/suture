@@ -89,6 +89,7 @@ when a member or librarian returns a Loan: the Loan is returned
 
 `admit return Loan` admits the event `returns` on a Loan: the verb takes `-s` (or `-es` after s, sh, ch, x or z). A reaction `when a ⟨role⟩ [or ⟨role⟩] ⟨verb⟩s a ⟨Kind⟩` handles it, and `the Loan` is the target.
 
+- One admit can name several verbs: `admit return, renew or lose Loan by member where the Loan is not returned` is three admits with the same roles, data and condition. So is `admit place or import a new Order by staff`. `change` takes an admit of its own.
 - Only the reactions that name the caller's role run.
 - An admitted event with no reaction, a reaction to an event that is not admitted, and a reaction naming a role the admits do not, are compile errors.
 - The reaction is a step like any other: if it would break a rule, it is refused, and the caller is told which rule. Renewing a returned loan is refused by rule `once`.

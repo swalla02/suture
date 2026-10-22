@@ -3,7 +3,7 @@
 ```text
 role ⟨role⟩ [is a ⟨Kind⟩]                                                callers; `is a` ties them to entities
 admit ⟨verb⟩ a new ⟨Kind⟩[, ⟨Kind⟩ or ⟨Kind⟩] by ⟨role⟩[, ⟨role⟩] [where ⟨cond⟩]
-admit ⟨verb⟩ ⟨Kind⟩ by ⟨role⟩ [where ⟨cond⟩]                             an event on an existing one
+admit ⟨verb⟩[, ⟨verb⟩ or ⟨verb⟩] ⟨Kind⟩ by ⟨role⟩ [where ⟨cond⟩]          events on an existing one, one per verb
 admit change ⟨Kind⟩'s ⟨attr⟩ by ⟨role⟩ [where ⟨cond⟩]
 ```
 
