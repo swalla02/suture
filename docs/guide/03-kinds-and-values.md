@@ -99,12 +99,21 @@ Calculations use `+`, `-`, `*`, `/` (or `−`, `×`) and parentheses. `*` and `/
 | `Time - Time` | Duration |
 | `Time + Duration`, `Time - Duration` | Time |
 | `Duration ± Duration`, `Duration * Count`, `Duration / Count` | Duration |
+| `the days from Time to Time` | Count: calendar days, both ends counted |
 
 Anything else is a compile error: you cannot add a Count to Money. Division rounds toward zero (to the cent for Money). An overflow or a division by zero makes the result unknown.
 
 A **share** of an amount multiplies two amounts and divides by a third at once: `price * order's adjustments / order's items` is this unit's part of the order's adjustments, weighted by its price. It is rounded to the cent, half away from zero, so a 10 EUR unit of a 30 EUR order with a -10 EUR promotion gets -3.33 EUR. A share of nothing is 0, even of a zero total. Otherwise dividing by zero leaves it unknown. Only this order is a share: `a * b` alone, or `a * (b / c)`, is still an error, because an amount times an amount means nothing on its own.
 
 A `-` directly before an amount makes it negative, `-2.50 EUR`. Only amounts can be negative.
+
+**Days between two dates.** `the days from its from to its to` counts the calendar days from one time to another, counting both ends. From 2027-01-05 to 2027-01-08 is 4 days, and from a day to the same day is 1. Days are counted by date in UTC, so a time of day doesn't matter: 18:00 on 1 March to 09:00 on 2 March is 2 days. When the second time is before the first, the count is 0 or less, so state what you allow with a rule, such as `every Leave's days is more than 0`. As a formula, it computes a count once, when the entity is created, so callers no longer give it:
+
+```text
+kind Leave { employee: Employee, from: Time, to: Time, days: Count = the days from its from to its to }
+```
+
+Each end is one value. `the days from its from to its to - 1` is one day fewer than the count. To count to a calculated time, put it in brackets: `the days from its from to (its to + 1 day)`. Holidays and half days are not counted yet.
 
 ## References
 

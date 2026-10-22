@@ -1992,3 +1992,26 @@ Programs and scenarios already wrote dates as ISO 8601 (`2026-03-01`). The API d
 
 - In runtime/tests/service.rs, times with `Z`, an offset, a fraction or none, and dates, read to the same seconds, and impossible dates and numbers are errors. Durations round-trip through `PT0S`, `P1D`, `PT2H30M`, `P1DT12H` and `-PT45S`, and `P1M`, `P1Y`, `PT`, out-of-order or repeated units and numbers are errors.
 
+## Appendix AN. Prototype slice 38: days between dates (2026-10-22)
+
+A program could subtract two times, giving a Duration, but it could not count days. A Duration cannot be divided by a Duration, and a count of seconds is not a count of calendar days anyway. The leave port therefore took an application's `days` as given, next to its `from` and `to`, and nothing tied them together (eval/leave/RESULTS.md). Slice 38 counts days from two times.
+
+### AN.1 What slice 38 adds
+
+| Added in slice 38 | Still waits |
+|---|---|
+| `the days from ⟨Time⟩ to ⟨Time⟩`, a Count, anywhere a calculation goes | holiday lists, and counting working days |
+| as a formula: `days: Count = the days from its from to its to` | half days, and fractional counts |
+| | time zones: days are counted in UTC |
+
+### AN.2 Semantics that slice 38 settles
+
+1. **The form.** `the days from a to b` is a calculation of type Count. Both `a` and `b` must be Times; anything else is an error that names the end that is not. Each end is one value (an atom, E.2.3), so `the days from its from to its to - 1` subtracts 1 from the count; a calculated end is put in brackets, `the days from its from to (its to + 1 day)`, and reads back the same way. In the IR it is `Bin(a, Days, b)`, so it is read and watched like any other calculation.
+2. **The count.** It counts calendar dates in UTC, both ends included: the date of `b` minus the date of `a`, plus 1. From a day to the same day is 1, and a time of day does not matter. When `b` is before `a`, the count is 0 or negative; that is not unknown and not refused by itself, so a program states what it allows with a rule (`every Leave's days is more than 0`). Unknown when either time is.
+3. **As a formula.** In a kind, `days: Count = the days from its from to its to` is computed once at creation (E.2.5), so a caller no longer gives it, and totals and rules over `days` read the computed count.
+
+### AN.3 Acceptance
+
+- In runtime/tests/days.rs, the count is inclusive across a month, a year and a leap day, and ignores the time of day. A total of computed days is held to a rule, and a `to` before the `from` is refused by a rule. The form reads back as written, with brackets around a calculated end, and an end that is not a Time is an error.
+- eval/leave computes `days`, its scenarios no longer give it, and all 16 still pass.
+

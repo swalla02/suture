@@ -96,7 +96,7 @@ for each ⟨Kind⟩ and ⟨day|week|month|year⟩ [from their ⟨attr⟩ to thei
 
 **Conditions:** `⟨np⟩ is [not] ⟨np, literal or state⟩` · `⟨num⟩ ⟨comparison⟩ ⟨num⟩` · `⟨np⟩ contains ⟨np⟩` · `⟨np⟩ does not contain ⟨np⟩` · `⟨np⟩ has a ⟨Kind⟩ [that ⟨cond⟩]` · `⟨np⟩ has a ⟨Kind⟩ or a ⟨Kind⟩` · `⟨np⟩ has no ⟨Kind⟩ [that ⟨cond⟩]` · `⟨cond⟩ and ⟨cond⟩` · `⟨cond⟩ or ⟨cond⟩` (never both in one sentence)
 
-**Numbers:** `⟨np⟩` · `the total ⟨attr⟩ of ⟨np⟩'s ⟨Kinds⟩ [that ⟨cond⟩]` · `the number of ⟨np⟩'s ⟨Kinds⟩ [that ⟨cond⟩]` (also across units, and through a reference: `its unit's Items`) · `the days in a row of their ⟨Kinds⟩ [that ⟨cond⟩]` (in `for each ⟨Kind⟩ and day from … to …`) · `the total ⟨attr⟩ taken from ⟨np⟩` · `the total of ⟨calc⟩ over ⟨list⟩` · `+ - * /` and parentheses · `⟨Money⟩ * ⟨Money⟩ / ⟨Money⟩`, a share · `-3 EUR`
+**Numbers:** `⟨np⟩` · `the total ⟨attr⟩ of ⟨np⟩'s ⟨Kinds⟩ [that ⟨cond⟩]` · `the number of ⟨np⟩'s ⟨Kinds⟩ [that ⟨cond⟩]` (also across units, and through a reference: `its unit's Items`) · `the days in a row of their ⟨Kinds⟩ [that ⟨cond⟩]` (in `for each ⟨Kind⟩ and day from … to …`) · `the days from ⟨Time⟩ to ⟨Time⟩`, a Count of calendar days with both ends counted · `the total ⟨attr⟩ taken from ⟨np⟩` · `the total of ⟨calc⟩ over ⟨list⟩` · `+ - * /` and parentheses · `⟨Money⟩ * ⟨Money⟩ / ⟨Money⟩`, a share · `-3 EUR`
 
 **States:** Bool attributes · the states of state attributes · `define`d states · `done`, `failed` (parts and slots) · an effect's mark, outcomes and `timed out`
 
