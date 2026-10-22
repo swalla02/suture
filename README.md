@@ -150,6 +150,21 @@ Suture never prompts a model and never generates code. Models are optional. When
 - **Decide.** A program is full of small choices the rules leave open: which carrier, which garage, repair or write-off. `decide Outcome with model "assessor@1"` hands one to a decision model. The model is given only the options the rules already allow, and its pick is checked again. If it declines, is late, is unsure or fails, `prefer` picks by fixed criteria, and the trace says why.
 - **Read.** `source Claim's amount via model "invoices@1"` reads a value off a document or a photo, with a minimum confidence and a fallback.
 
+**Multimodal.** A model can look at an image, listen to a recording, watch a video or read a PDF before it decides or reads. Give an entity, or the options, an attribute of type `Media`:
+
+```text
+kind Claim { policy: Policy, photo: Media, invoice: Media, amount: Money, … }
+
+decide Outcome with model "assessor@1"                 -- sees the photo, picks repair, write-off or cash
+source Claim's amount via model "invoices@1" within 10 seconds
+  sends      its invoice
+  asking     "the total the invoice charges"
+  at least 0.8 sure
+  otherwise  ask again after 1 hour
+```
+
+Media is stored once, by its SHA-256, and a unit holds only a reference: `photo (image/png, 48213 bytes, sha256 9f2c41d07a1b)`. Images (PNG, JPEG, GIF, WebP), audio (MP3, WAV, Ogg), video (MP4, WebM), PDF and text come in through `POST /media`, or as `file "dent.png"` in a scenario. No rule or formula can read media, so what the program means never depends on how a model saw a picture. The model still only picks among allowed options, or reads one typed value.
+
 Every model answer is journaled, so replay never calls a model. With every model switched off, the system still runs. That makes Suture a governed runtime for AI decisions: a model can be wrong, but it can't take you past a limit, skip an approval or pay twice. See [chapter 15](docs/guide/15-decision-models.md) and [chapter 14](docs/guide/14-sourcing.md).
 
 ## What it guarantees
@@ -197,7 +212,7 @@ Suture is not infrastructure, and it doesn't replace your databases or providers
 | callers: apps, staff tools, partner systems | outside, through the ingress | `admit`: only admitted inputs get in |
 | platform services: PostgreSQL, Redis, Vault, Prometheus | pods | `source` for facts; API keys from environment variables; metrics and alerts out |
 | your services, and adapters to payment, mail and carrier providers | pods, which call out | `effect`, with a deadline and the outcomes it may report |
-| decision and reading models | vLLM or SGLang pods on GPU nodes, or a hosted API | `decide` and `source … via model` |
+| decision and reading models, including vision, audio and document models | vLLM or SGLang pods on GPU nodes, or a hosted API | `decide` and `source … via model`, with `Media` attributes |
 
 It's a good fit for workflows with many steps, outside services, shared resources and rules that must never break: bookings, orders and returns, claims, approvals, provisioning, rostering. It's a poor fit for heavy computation, UIs, or code that is mostly algorithms.
 
@@ -205,7 +220,7 @@ It's a good fit for workflows with many steps, outside services, shared resource
 
 | Construct | Says |
 |---|---|
-| `kind` | what exists, with typed attributes, states, defaults and formulas |
+| `kind` | what exists, with typed attributes (including `Media`: images, audio, video, PDFs), states, defaults and formulas |
 | `needs`, slots | what each thing needs, under conditions; or one of several alternatives, tried in order with patience |
 | `uses … taking` | a binding to a shared entity, such as stock, seats or a carrier, picked from a pool and checked by its rules |
 | `effect` | how a step talks to an outside service: what it sends, what it may report, and its deadline |
