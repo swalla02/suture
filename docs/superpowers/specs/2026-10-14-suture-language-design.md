@@ -2476,6 +2476,7 @@ The service read each connection, applied it, and posted to adapters on one thre
 2. **Posts.**
    - Once serving starts, a request to an adapter is handed to one of 8 posting threads, if the transport can run on another thread; `curl` can. A transport that cannot, as in tests, posts on the serving thread, as before.
    - The serving thread applies each answer when it comes, as an input, as if it had come at once. A failed post is tried again after `RETRY_SECS`, as before.
+   - `suture serve` starts the posting threads before it posts the requests that were waiting at a restart, so a slow adapter does not hold up the start.
    - A request is marked posted while its post runs, so it is not posted twice. A post still running when the service stops is posted again after a restart, with the same idempotency key (appendix L.2.6).
 
 ### BE.3 Acceptance

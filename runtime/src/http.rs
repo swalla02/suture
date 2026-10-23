@@ -351,8 +351,6 @@ pub const MAX_CONNECTIONS: usize = 64;
 
 fn serving(svc: &mut Service, listener: TcpListener, operator: Option<&str>, gateway: Option<&str>, stop: &AtomicBool, clock: impl Fn() -> u64, out: &mut dyn Write) -> std::io::Result<()> {
     listener.set_nonblocking(true)?;
-    let mut shown = svc.host.trace.len();
-    let mut last = 0;
     svc.start_posting();
     let (jobs, inbox) = mpsc::channel::<Job>();
     let done = Arc::new(AtomicBool::new(false));
@@ -363,6 +361,17 @@ fn serving(svc: &mut Service, listener: TcpListener, operator: Option<&str>, gat
         let (done, gateway) = (done.clone(), gateway.map(str::to_string));
         std::thread::spawn(move || accept(listener, jobs, gateway, &done))
     };
+    let applied = applying(svc, &inbox, operator, stop, clock, out);
+    // However the loop ended, the port is let go.
+    done.store(true, Ordering::Relaxed);
+    let _ = acceptor.join();
+    applied
+}
+
+/// Applies the requests read, one at a time, and the timers, until `stop`.
+fn applying(svc: &mut Service, inbox: &mpsc::Receiver<Job>, operator: Option<&str>, stop: &AtomicBool, clock: impl Fn() -> u64, out: &mut dyn Write) -> std::io::Result<()> {
+    let mut shown = svc.host.trace.len();
+    let mut last = 0;
     while !stop.load(Ordering::Relaxed) {
         // A request is taken as soon as it is read; timers wait at most a
         // tenth of a second past their second.
@@ -396,8 +405,6 @@ fn serving(svc: &mut Service, listener: TcpListener, operator: Option<&str>, gat
         svc.host.trim(TRACE_KEEP);
         shown = svc.host.trace.len();
     }
-    done.store(true, Ordering::Relaxed);
-    let _ = acceptor.join();
     Ok(())
 }
 

@@ -346,9 +346,14 @@ fn serving(
         println!("  {l}");
     }
     println!("  replayed {replayed} trace lines; operator requests {}", if operator.is_some() { "need the token" } else { "refused: SUTURE_OPERATOR_TOKEN is not set" });
-    // Requests that were waiting when the service stopped are posted again.
-    svc.post_new(unix_now())?;
+    // Requests that were waiting when the service stopped are posted again,
+    // on the posting threads, so a slow adapter does not hold up the start.
     stop_on_signals();
+    svc.start_posting();
+    if let Err(e) = svc.post_new(unix_now()) {
+        svc.leave();
+        return Err(e);
+    }
     suture_runtime::http::serve(svc, listener, operator.as_deref(), gateway.as_deref(), &STOP, unix_now, &mut std::io::stdout()).map_err(|e| e.to_string())?;
     println!("stopped; pod {pod} left");
     Ok(true)
