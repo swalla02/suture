@@ -465,7 +465,13 @@ impl Service {
     /// Writes `snapshot.json`: the state after the log as read so far
     /// (appendix BG.2.2). A broken pod writes none.
     pub fn snapshot(&mut self) -> Result<(), String> {
-        let (Some(state), Some(_), None) = (self.state.clone(), &self.log, &self.broken) else { return Ok(()) };
+        let (Some(_), Some(_), None) = (&self.state, &self.log, &self.broken) else { return Ok(()) };
+        // Under the lock, so the log is the one it read.
+        self.locked(|s| s.snapshotted())
+    }
+
+    fn snapshotted(&mut self) -> Result<(), String> {
+        let state = self.state.clone().ok_or("a snapshot needs the state directory")?;
         let (path, tmp) = (state.join("snapshot.json"), state.join(format!("snapshot.json.{}.tmp", self.pod)));
         let (header, tail) = log_marks(&state.join("log.jsonl"), self.read_to).map_err(|e| e.to_string())?;
         let snap = Snapshot { suture: SNAPSHOT_FORMAT, header, tail, offset: self.read_to, host: self.host.image() };
@@ -806,7 +812,9 @@ impl Service {
     /// to `archive/`, and a new log holds only what comes after the
     /// snapshot of them (appendix BH.2.2). False if it did not.
     pub fn compact(&mut self, now: u64) -> Result<bool, String> {
-        if self.state.is_none() || self.log.is_none() || self.broken.is_some() || self.pods(now) != [self.pod.clone()] {
+        // Where a pod cannot tell one log file from another, none archives,
+        // since the others would not see it (appendix BH.2.3).
+        if self.state.is_none() || self.log.is_none() || self.log_id.is_none() || self.broken.is_some() || self.pods(now) != [self.pod.clone()] {
             return Ok(false);
         }
         self.locked(|s| s.compacted())

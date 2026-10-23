@@ -2572,7 +2572,10 @@ After slice 56, a restart read only the log after the snapshot, but `log.jsonl` 
    - A crash at any step leaves a state that restarts: either the old log, with a snapshot that does not match it and so replays whole, or the new log, with its snapshot.
    - The header line changes with every archive, so a snapshot of one log never matches another.
    - An error after the new log is in place breaks the pod, since the file it appends to is then the archive's.
-3. **Other pods.** At each read of the log, a pod checks that the log is the file it opened (by inode, on Unix). If it is not, the pod is broken, with `another pod archived the log`, and takes nothing until it restarts.
+3. **Other pods.**
+   - At each read of the log, a pod checks that the log is the file it opened (by inode, on Unix). If it is not, the pod is broken, with `another pod archived the log`, and takes nothing until it restarts.
+   - Where a pod cannot tell one file from another, no pod archives.
+   - A snapshot is written holding the lock, so it is of the log as read.
 
 ### BH.3 Acceptance
 
