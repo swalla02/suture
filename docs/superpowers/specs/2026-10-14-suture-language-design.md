@@ -2339,8 +2339,8 @@ runtime/tests/work.rs builds a shop of 100 and of 1000 members and bookings, and
 
 ### BA.2 Not flat yet
 
-- A choice among a pool decodes every candidate of the pool, and stops looking after `candidates` of them, so a pool whose first candidates are full refuses, and its refusals fill the unit.
-- A change to a total that every unit reads (`checked globally`) refreshes every reader.
+- A choice among a pool decodes every candidate of the pool, and stops looking after `candidates` of them, so a pool whose first candidates are full refuses, and its refusals fill the unit (fixed in slice 52, appendix BC).
+- A change to a total that units read through a reference refreshes each of them. A `checked globally` total and shared stock do not: their takers do not read the total.
 - Waiters, pending requests, the trace, the gate log and the kernel journal are scanned or kept in full.
 
 These are the next slices' work.
@@ -2394,4 +2394,33 @@ A security review of slices 1-50 found the service trusted too much of what reac
   - a scenario reads files only inside its module: `..`, an absolute path, and a symlink out are refused;
   - a unique personal value never shows in the trace or the gate log.
 - lang lex: deep parentheses are refused before parsing; lang/tests/nesting.rs: deep `the total of` is refused, not a stack overflow.
+
+## Appendix BC. Prototype slice 52: pools that are full first (2026-10-23)
+
+Appendix BA.2 found that a choice among a pool looked only at its first `candidates` in creation order. When those were full, each was asked, refused, and added to the request's skip list, which is kept in the unit. A pool of a few hundred full candidates made the unit pass 4096 bytes, and the step faulted.
+
+### BC.1 What slice 52 adds
+
+| Added in slice 52 | Still waits |
+|---|---|
+| a pool offers only candidates that would grant the take | an index of the candidates with room |
+| candidates decoded only as far as the choice needs | |
+| work counted per thread | |
+
+### BC.2 Semantics that slice 52 settles
+
+1. **Only candidates with room.**
+   - For a binding that is neither held nor unique, a candidate counts toward `candidates` only if the take would be granted now: the host steps a copy of it, as a wake does (appendix F.2.9).
+   - A full candidate is passed over, not asked and refused, so the skip list stays short.
+   - When none has room, the first choice still asks the best full one, so the trace names the rule that refused it; after that refusal the binding waits, as before.
+   - A model is offered only candidates with room.
+   - A held or unique binding is offered its first candidate as before, since its refusal is the rule's answer (appendix AA.2.2, AP.2.2).
+2. **Cost.** The pool is read in creation order and stops after `candidates` with room, so a choice costs one step for each full candidate before them. A pool whose early candidates are full still costs in proportion to them.
+3. **Counting.** `state::Work` counts per thread, so tests that run side by side do not count each other's work.
+
+### BC.3 Acceptance
+
+runtime/tests/work.rs:
+- a pool of 600 Titles, all full but the last: the Loan holds the last, and the next Loan waits;
+- a take from a global total, and from shared stock, costs the same at 100 and 1000 readers or holders.
 

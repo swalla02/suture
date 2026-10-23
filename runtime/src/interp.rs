@@ -417,7 +417,7 @@ pub fn step(prog: &Program, unit: &Unit, msg: &Msg) -> Outcome {
 /// note the goals that became met. `now` is the clock when the message was
 /// delivered; parts created by the step are created then.
 pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
-    crate::state::WORK.steps.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    crate::state::Work::step();
     let mut u = unit.clone();
     u.notes.clear();
     let mut out = Out::default();
@@ -919,8 +919,9 @@ pub fn would_grant(prog: &Program, c: &Unit, d: &Decide, now: i64) -> bool {
 
 /// The options of a binding's choice (appendix J.2.4): of the candidates, in
 /// creation order, the first `candidates` that meet the binding's filter,
-/// best first under its `prefer`.
-pub fn options(prog: &Program, u: &Unit, d: &Decide, candidates: impl Iterator<Item = Unit>) -> Vec<Unit> {
+/// best first under its `prefer`. With `grants`, the time now, only those
+/// that would grant the take then count.
+pub fn options(prog: &Program, u: &Unit, d: &Decide, candidates: impl Iterator<Item = Unit>, grants: Option<i64>) -> Vec<Unit> {
     let Some(b) = prog.bindings.get(d.binding as usize) else { return vec![] };
     let Some((at, elem)) = decide_place(prog, u, d) else { return vec![] };
     let mut gathered = vec![];
@@ -931,7 +932,7 @@ pub fn options(prog: &Program, u: &Unit, d: &Decide, candidates: impl Iterator<I
         let mut facts = u.facts.clone();
         facts.extend(own_facts(prog, &c));
         let v = View { facts: &facts, cand: Some(&c.label), elem: elem.as_deref(), ..View::of(u) };
-        if b.filter.iter().all(|f| eval(prog, v, &at, f) == T::Yes) {
+        if b.filter.iter().all(|f| eval(prog, v, &at, f) == T::Yes) && grants.is_none_or(|now| would_grant(prog, &c, d, now)) {
             let scores = b.prefer.iter().map(|cr| score(prog, v, &at, cr)).collect::<Vec<_>>();
             gathered.push((c, scores));
         }

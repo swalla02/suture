@@ -537,12 +537,21 @@ impl Host {
     }
 
     /// The pool's candidates for a binding that its filter lets through,
-    /// best first under `prefer`.
+    /// best first under `prefer`, decoded only as far as they are needed.
+    /// A binding that is neither held nor unique is offered only candidates
+    /// that would grant its take now, so full ones are passed over rather
+    /// than asked and refused (appendix BC.2.1). When none has room, the
+    /// first choice still asks the best, so its refusal names the rule.
     fn options(&self, u: &Unit, d: &Decide, key: &str) -> Vec<Unit> {
         let Some(b) = self.prog.bindings.get(d.binding as usize) else { return vec![] };
         let Some(labels) = self.pools.get(&(b.target.clone(), b.key_attr.clone())).and_then(|p| p.get(key)) else { return vec![] };
-        let candidates = labels.iter().filter(|l| !d.skip.contains(l)).filter_map(|l| self.unit(l)).collect::<Vec<_>>();
-        interp::options(&self.prog, u, d, candidates.into_iter())
+        let candidates = || labels.iter().filter(|l| !d.skip.contains(l)).filter_map(|l| self.unit(l));
+        let grants = (b.held.is_none() && !b.unique).then(|| self.clock());
+        let roomy = interp::options(&self.prog, u, d, candidates(), grants);
+        if !roomy.is_empty() || grants.is_none() || !d.skip.is_empty() {
+            return roomy;
+        }
+        interp::options(&self.prog, u, d, candidates(), None).into_iter().take(1).collect()
     }
 
     /// Puts a choice to its model after the step: the service asks it, and

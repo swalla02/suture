@@ -2,7 +2,7 @@
 //! requests, and how each is carried in kernel payloads.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::cell::Cell;
 
 use suture::Value;
 use suture_lang::ir::{Lit, Ty};
@@ -544,22 +544,30 @@ pub struct Unit {
     pub version: u32,
 }
 
-/// Work done since the process started, counted rather than timed, so
-/// tests can check that the cost of an input does not grow with the number
-/// of units (spec appendix BA).
+/// Work done on this thread, counted rather than timed, so tests can check
+/// that the cost of an input does not grow with the number of units (spec
+/// appendix BA). Per thread, so tests that run side by side do not count
+/// each other's work.
+#[derive(Default)]
 pub struct Work {
     /// Units read out of the kernel.
-    pub decoded: AtomicU64,
+    pub decoded: Cell<u64>,
     /// Steps the interpreter took.
-    pub steps: AtomicU64,
+    pub steps: Cell<u64>,
 }
 
-pub static WORK: Work = Work { decoded: AtomicU64::new(0), steps: AtomicU64::new(0) };
+thread_local! {
+    pub static WORK: Work = Work::default();
+}
 
 impl Work {
-    /// (units read, steps taken) so far.
-    pub fn now(&self) -> (u64, u64) {
-        (self.decoded.load(Ordering::Relaxed), self.steps.load(Ordering::Relaxed))
+    /// (units read, steps taken) so far on this thread.
+    pub fn now() -> (u64, u64) {
+        WORK.with(|w| (w.decoded.get(), w.steps.get()))
+    }
+
+    pub(crate) fn step() {
+        WORK.with(|w| w.steps.set(w.steps.get() + 1));
     }
 }
 
@@ -580,7 +588,7 @@ impl Unit {
     }
 
     pub fn from_value(v: &Value) -> Result<Unit, String> {
-        WORK.decoded.fetch_add(1, Ordering::Relaxed);
+        WORK.with(|w| w.decoded.set(w.decoded.get() + 1));
         let [label, root, notes, met, matched, alerts, timers, facts, taken, version] = fields::<10>(v, "unit")?;
         let mut wanted = vec![];
         for t in items(timers)? {

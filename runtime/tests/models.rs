@@ -116,7 +116,7 @@ fn a_model_that_declines_strays_or_is_missing_falls_back_to_prefer() {
 }
 
 #[test]
-fn a_pick_that_breaks_a_rule_is_refused_and_the_rest_offered_again() {
+fn a_model_is_offered_only_the_stock_with_room() {
     let p = prog("decide Stock with model \"stock@4\"\n");
     let t = trace(
         &p,
@@ -126,8 +126,10 @@ fn a_pick_that_breaks_a_rule_is_refused_and_the_rest_offered_again() {
   expect the total quantity taken from Big is 2
 ",
     );
-    assert!(t.contains("choice: Small for O1/Shipment#1@Stock by model \"stock@4\" (of Big, Small)"), "{t}");
-    // One option left is no choice: the model is not asked (appendix K.2.2).
+    // Small has 1 unit and the order needs 2, so only Big is offered
+    // (appendix BC.2.1); one option is no choice, and the model is not asked
+    // (appendix K.2.2).
+    assert!(!t.contains("by model \"stock@4\""), "{t}");
     assert!(t.contains("choice: Big for O1/Shipment#1@Stock\n"), "{t}");
 }
 

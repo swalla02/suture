@@ -5,7 +5,7 @@
 use suture_lang::ir::Program;
 use suture_lang::scenario::Caller;
 use suture_runtime::host::Host;
-use suture_runtime::state::{Val, WORK};
+use suture_runtime::state::{Val, Work};
 
 const SHOP: &str = "module shop version 1, currency EUR
 role staff
@@ -50,9 +50,9 @@ fn book(h: &mut Host, label: &str, member: &str, class: usize) {
 
 /// (units read, steps) one input costs.
 fn cost(h: &mut Host, input: impl FnOnce(&mut Host)) -> (u64, u64) {
-    let (d0, s0) = WORK.now();
+    let (d0, s0) = Work::now();
     input(h);
-    let (d1, s1) = WORK.now();
+    let (d1, s1) = Work::now();
     (d1 - d0, s1 - s0)
 }
 
@@ -66,9 +66,6 @@ fn costs(input: fn(&mut Host)) -> [(u64, u64); 2] {
 /// One input to a world.
 type Input = fn(&mut Host);
 
-// One test, so no other test's work is counted with it. Pools whose first
-// candidates are full, and totals read by every unit, are not flat yet
-// (spec appendix BA.4).
 #[test]
 fn the_cost_of_an_input_does_not_grow_with_the_units() {
     let cases: [(&str, Input); 4] = [
@@ -90,4 +87,65 @@ fn the_cost_of_an_input_does_not_grow_with_the_units() {
         let (_, steps) = cost(&mut h, |h| h.pass(3600).unwrap());
         assert_eq!(steps, n as u64, "{n} timers");
     }
+}
+
+const POOL: &str = "module stock version 1, currency EUR
+role staff
+kind Title { name: Text, stock: Count }
+kind Loan  { title: Text, copies: Count = 1 }
+kind Hold  { loan: Loan }
+Loan needs Hold
+Hold uses a Title where the Title's name is the Loan's title, taking the Loan's copies
+rule stock: the total copies taken from each Title is at most its stock
+admit lend a new Loan by staff
+";
+
+#[test]
+fn a_pool_whose_first_candidates_are_full_still_grants() {
+    let prog = suture_lang::compile(&[("t.st".to_string(), POOL.to_string())]).unwrap_or_else(|e| panic!("{e:?}"));
+    let mut h = Host::new(prog);
+    // More sold-out Titles than a choice gathers, then one with stock.
+    for i in 0..600 {
+        h.create("Title", &format!("T{i}"), &[("name".into(), Val::Text("rust".into())), ("stock".into(), Val::Count(i64::from(i == 599)))]).unwrap();
+    }
+    h.create("Loan", "L1", &[("title".into(), Val::Text("rust".into()))]).unwrap();
+    let hold = format!("{:?}", h.unit("L1").unwrap().root.parts[0].binds);
+    assert!(hold.contains("T599"), "{hold}\n{}", h.trace.join("\n"));
+    // The next Loan finds none left and waits, without filling its unit.
+    h.create("Loan", "L2", &[("title".into(), Val::Text("rust".into()))]).unwrap();
+    assert!(h.trace.iter().any(|l| l.contains("L2") && l.contains("wait")), "{}", h.trace.join("\n"));
+}
+
+const TALLY: &str = "module tally version 1, currency EUR
+role staff
+kind Vote { weight: Count }
+rule cap: the total weight of all Votes is at most 1000000, checked globally
+admit cast a new Vote by staff
+";
+
+#[test]
+fn a_take_from_a_global_total_does_not_grow_with_its_readers() {
+    let [small, large] = [100, 1000].map(|n| {
+        let prog = suture_lang::compile(&[("t.st".to_string(), TALLY.to_string())]).unwrap_or_else(|e| panic!("{e:?}"));
+        let mut h = Host::new(prog);
+        for i in 0..n {
+            h.create("Vote", &format!("V{i}"), &[("weight".into(), Val::Count(1))]).unwrap();
+        }
+        cost(&mut h, |h| h.create("Vote", "X", &[("weight".into(), Val::Count(1))]).unwrap())
+    });
+    assert_eq!(small, large, "(units read, steps) at 100 votes, at 1000");
+}
+
+#[test]
+fn a_take_from_shared_stock_does_not_grow_with_its_holders() {
+    let [small, large] = [100, 1000].map(|n| {
+        let prog = suture_lang::compile(&[("t.st".to_string(), POOL.to_string())]).unwrap_or_else(|e| panic!("{e:?}"));
+        let mut h = Host::new(prog);
+        h.create("Title", "T", &[("name".into(), Val::Text("rust".into())), ("stock".into(), Val::Count(1_000_000))]).unwrap();
+        for i in 0..n {
+            h.create("Loan", &format!("L{i}"), &[("title".into(), Val::Text("rust".into()))]).unwrap();
+        }
+        cost(&mut h, |h| h.create("Loan", "X", &[("title".into(), Val::Text("rust".into()))]).unwrap())
+    });
+    assert_eq!(small, large, "(units read, steps) at 100 holders, at 1000");
 }

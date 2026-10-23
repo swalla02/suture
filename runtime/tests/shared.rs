@@ -195,7 +195,7 @@ fn a_shipment_takes_the_cheapest_carrier_and_stock_in_its_country() {
 }
 
 #[test]
-fn a_stock_that_would_run_out_refuses_and_the_next_is_asked() {
+fn a_stock_that_would_run_out_is_passed_over() {
     let r = shop_run(
         "  and    a Stock S1 with warehouse WD, product P and units 1
   and    a Stock S2 with warehouse WF, product P and units 3
@@ -206,8 +206,9 @@ fn a_stock_that_would_run_out_refuses_and_the_next_is_asked() {
 ",
     );
     let trace = r.host.trace.join("\n");
-    assert!(trace.contains("refused O1/Shipment#1@Stock.0: rule stock"), "{trace}");
-    assert!(trace.contains("Stock S1 refused O1/Shipment#1@Stock.0: rule stock"), "{trace}");
+    // S1 has no room for 2, so it is passed over, not asked (appendix BC.2.1).
+    assert!(!trace.contains("refused"), "{trace}");
+    assert!(trace.contains("choice: S2 for O1/Shipment#1@Stock.0"), "{trace}");
 }
 
 #[test]
