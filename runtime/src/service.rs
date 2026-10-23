@@ -290,7 +290,7 @@ fn private(dir: &Path, path: &Path, tmp: &Path, text: &str) -> std::io::Result<(
 }
 
 /// The format of `snapshot.json`.
-const SNAPSHOT_FORMAT: u32 = 1;
+const SNAPSHOT_FORMAT: u32 = 2;
 
 /// How many records a pod applies before it writes a snapshot (appendix BG.2.2).
 pub const SNAPSHOT_EVERY: usize = 10_000;
@@ -381,6 +381,32 @@ impl Service {
         Ok(())
     }
 
+    /// The key a state directory names personal values by, in
+    /// `personal.key`: made the first time, if `write`, readable only by this
+    /// user (appendix BI.2.2). Without `write`, a missing key is made for
+    /// this process alone.
+    fn personal_key(state: &Path, write: bool) -> Result<suture_lang::ir::PersonalKey, String> {
+        let path = state.join("personal.key");
+        let shown = |e: String| format!("{}: {e}", path.display());
+        match std::fs::read_to_string(&path) {
+            Ok(t) => {
+                let t = t.trim();
+                let bytes: Option<Vec<u8>> = (t.len() == 64).then(|| (0..32).map(|i| u8::from_str_radix(t.get(2 * i..2 * i + 2)?, 16).ok()).collect()).flatten();
+                let k: [u8; 32] = bytes.and_then(|b| b.try_into().ok()).ok_or_else(|| shown("not a key of 64 hex digits".into()))?;
+                Ok(suture_lang::ir::PersonalKey(k))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let k = crate::media::random_key();
+                if write {
+                    let hex: String = k.iter().map(|b| format!("{b:02x}")).collect();
+                    private(state, &path, &state.join("personal.key.tmp"), &hex).map_err(|e| shown(e.to_string()))?;
+                }
+                Ok(suture_lang::ir::PersonalKey(k))
+            }
+            Err(e) => Err(shown(e.to_string())),
+        }
+    }
+
     /// The secret store a state directory keeps, if any.
     fn read_secrets(state: &Path) -> Result<BTreeMap<u64, String>, String> {
         let path = state.join("secrets.json");
@@ -405,6 +431,8 @@ impl Service {
         let prog: Program = std::fs::read_to_string(&first)
             .map_err(|e| format!("{}: {e}", shown(&first)))
             .and_then(|t| serde_json::from_str(&t).map_err(|e| format!("{}: {e}", shown(&first))))?;
+        let mut prog = prog;
+        prog.personal_key = Some(Self::personal_key(state, cut)?);
         let mut svc = Service::in_memory(&prog, now);
         svc.state = Some(state.to_path_buf());
         // Media is kept beside the log, where every pod reaches it (appendix V.2.2).
@@ -746,7 +774,9 @@ impl Service {
             }
             return Ok(svc);
         }
-        let mut svc = Service::in_memory(prog, now);
+        let mut keyed = prog.clone();
+        keyed.personal_key = Some(Self::personal_key(state, true)?);
+        let mut svc = Service::in_memory(&keyed, now);
         svc.state = Some(state.to_path_buf());
         // Media is kept beside the log, where every pod reaches it (appendix V.2.2).
         svc.host.media = crate::media::Store::in_dir(state.join("media"));

@@ -962,6 +962,7 @@ impl Checker {
             candidates: src.module.as_ref().and_then(|m| m.candidates).unwrap_or(8),
             warnings: vec![],
             grants: vec![],
+            personal_key: None,
         };
         self.kinds(src, &mut p);
         self.slots(src, &mut p);

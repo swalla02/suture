@@ -2584,3 +2584,35 @@ runtime/tests/snapshot.rs:
 - A pod does not archive while another beats. After it archives, the other pod's next input is refused until it restarts.
 - An archive left by a crash is taken over.
 
+## Appendix BI. Prototype slice 58: a key for personal values (2026-10-23)
+
+Slice 51 named a `no two` group on a personal value by an unkeyed SHA-256 (appendix BB.2.5). A reader of the trace could check a guess at a value with few possibilities.
+
+### BI.1 What slice 58 adds
+
+| Added in slice 58 | Still waits |
+|---|---|
+| `personal.key`: a key per state directory | turning the key over |
+| a group named by HMAC-SHA256 under it, 16 hex digits | erasing a personal value on request |
+
+### BI.2 Semantics that slice 58 settles
+
+1. **The name.**
+   - A `no two` group whose value is a personal attribute is named `(personal ⟨h⟩)`, where `⟨h⟩` is the first 16 hex digits of the HMAC-SHA256 of the value as shown, under the state directory's key.
+   - The key rides on the program at run time and is never written with it: not to `program.json`, not to a snapshot.
+   - A deploy, and a restart from a snapshot, keep the host's key.
+   - A host given no key, such as one running scenarios, makes one of its own for its run.
+2. **The key.**
+   - The first time a state directory is opened, 32 random bytes are kept in `personal.key`, as 64 hex digits, readable only by its user. They are written as `secrets.json` is, while the open holds the lock, so pods share one key.
+   - A read-only open (`suture check`) writes no key. Without one, it makes one for itself.
+   - A key that is not 64 hex digits is an error.
+   - A state directory from before slice 58 gets a key at its next open. Its groups on personal values start again under their new names, as a renamed total does.
+   - Snapshots move to format 2, so one taken under the old names is set aside and the log replays.
+
+### BI.3 Acceptance
+
+runtime/tests/hardening.rs:
+- HMAC-SHA256 matches RFC 4231, test case 1.
+- Two state directories name the same email differently, and neither uses the unkeyed hash. A restart names it the same.
+- The key file is readable only by its user, and is in neither the program nor the log.
+

@@ -37,6 +37,20 @@ pub struct Program {
     /// The marked fields each adapter may receive (appendix N.2.3).
     #[serde(default)]
     pub grants: Vec<Grant>,
+    /// The key that names personal values in group labels. The host gives
+    /// it at run time; it is never written with the program (appendix BI.2.1).
+    #[serde(skip)]
+    pub personal_key: Option<PersonalKey>,
+}
+
+/// A key for personal values, which never shows in a debug print.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PersonalKey(pub [u8; 32]);
+
+impl std::fmt::Debug for PersonalKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PersonalKey(..)")
+    }
 }
 
 /// `allow payments to receive Order's card`.

@@ -73,6 +73,7 @@ An `allow` for a field no send reads is a warning, and one for a field without a
 A secret never enters a unit. When an input carries one, the runtime puts the value in its secret store and keeps a reference in the unit. Only the request to a granted adapter carries the value itself.
 
 - The trace, explanations and `GET /units/⟨label⟩` show a secret as `(secret)` and a personal value as `(personal)`.
+- A `no two` group on a personal value is named by a keyed hash, `(personal 3f9a…)`. The key is in `personal.key` in the state directory, readable only by its user, so a reader of the trace cannot check a guess. Keep the file with the state: a new key renames those groups.
 - `GET /pending` masks them too, unless it carries the operator token: an adapter polling for its requests receives what it was granted.
 - Decision models receive no marked facts. A `Media` attribute can be marked `personal` (not `secret`), and is then not shown to models either.
 

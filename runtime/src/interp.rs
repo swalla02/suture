@@ -2298,7 +2298,15 @@ fn group_key(prog: &Program, vals: &[(Val, bool)]) -> String {
     let shown: Vec<String> = vals
         .iter()
         .map(|(x, personal)| match x {
-            x if *personal => format!("(personal {})", &crate::media::sha256(x.show(&prog.currency).as_bytes())[..12]),
+            // Keyed, so the name cannot be checked against guesses (appendix BI.2.1).
+            x if *personal => {
+                let text = x.show(&prog.currency);
+                let hash = match &prog.personal_key {
+                    Some(k) => crate::media::hmac_sha256(&k.0, text.as_bytes()),
+                    None => crate::media::sha256(text.as_bytes()),
+                };
+                format!("(personal {})", &hash[..16])
+            }
             Val::Text(s) => format!("{s:?}"),
             x => x.show(&prog.currency),
         })

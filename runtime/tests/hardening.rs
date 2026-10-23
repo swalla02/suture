@@ -153,3 +153,50 @@ fn a_slow_caller_holds_up_no_one() {
     stop.store(true, Ordering::Relaxed);
     server.join().unwrap();
 }
+
+#[test]
+fn hmac_sha256_matches_rfc_4231() {
+    let mut key = [0u8; 32];
+    key[..20].fill(0x0b);
+    assert_eq!(suture_runtime::media::hmac_sha256(&key, b"Hi There"), "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7");
+}
+
+/// The names a served state gives Ann's email, in its trace and gate.
+fn ann_named(dir: &std::path::Path) -> (String, String) {
+    use suture_runtime::service::{self, Record, Service, Who};
+    let p = compiled(&CFP.replace(", photo: Media", ""));
+    let mut s = Service::open(&p, dir, 1_800_000_000, |_| {}).unwrap();
+    let who = Who { role: "staff".into(), name: "Sam".into() };
+    for l in ["A", "B"] {
+        let attrs = service::attrs_json(&p, "Person", Some(&serde_json::json!({ "name": l, "email": "ann@x.org" }))).unwrap();
+        s.input(Record::New { by: who.clone(), verb: "adds".into(), kind: "Person".into(), label: l.into(), attrs, items: vec![] }, 1_800_000_000).unwrap();
+    }
+    let all = format!("{}\n{}", s.host.trace.join("\n"), s.host.gate.join("\n"));
+    let at = all.find("(personal ").expect(&all);
+    (all[at..at + 27].to_string(), all)
+}
+
+#[test]
+fn a_personal_value_is_named_by_a_key_of_its_state() {
+    let base = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("personal-key");
+    let _ = std::fs::remove_dir_all(&base);
+    let (one, all) = ann_named(&base.join("one"));
+    let (two, _) = ann_named(&base.join("two"));
+    assert_ne!(one, two, "another state, another key");
+    let unkeyed = &suture_runtime::media::sha256(b"\"ann@x.org\"")[..16];
+    assert!(!all.contains(unkeyed) && !all.contains(&suture_runtime::media::sha256(b"ann@x.org")[..12]), "{all}");
+    // The key is kept: a restart names it the same.
+    let p = compiled(&CFP.replace(", photo: Media", ""));
+    let again = suture_runtime::service::Service::open(&p, &base.join("one"), 1_800_000_100, |_| {}).unwrap();
+    assert!(again.host.trace.join("\n").contains(&one), "{one}");
+    let key = base.join("one").join("personal.key");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&key).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+    let hex = std::fs::read_to_string(&key).unwrap();
+    for f in ["program.json", "log.jsonl"] {
+        assert!(!std::fs::read_to_string(base.join("one").join(f)).unwrap().contains(&hex), "{f}");
+    }
+}

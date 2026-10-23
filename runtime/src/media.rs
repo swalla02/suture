@@ -38,6 +38,28 @@ pub fn sha256(data: &[u8]) -> String {
     Sha256::digest(data).iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// HMAC-SHA256 of `data` under a 32-byte `key` (RFC 2104), in hex.
+pub fn hmac_sha256(key: &[u8; 32], data: &[u8]) -> String {
+    let pad = |x: u8| -> Vec<u8> { key.iter().chain([0u8; 32].iter()).map(|k| k ^ x).collect() };
+    let inner = Sha256::new().chain_update(pad(0x36)).chain_update(data).finalize();
+    sha256(&[pad(0x5c), inner.to_vec()].concat())
+}
+
+/// 32 bytes from the operating system's randomness.
+pub fn random_key() -> [u8; 32] {
+    let mut k = [0u8; 32];
+    #[cfg(unix)]
+    if std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut k)).is_ok() {
+        return k;
+    }
+    // Elsewhere, std's hash keys, which it draws from the same source.
+    for chunk in k.chunks_mut(8) {
+        let h = std::hash::BuildHasher::hash_one(&std::collections::hash_map::RandomState::new(), 0u8);
+        chunk.copy_from_slice(&h.to_le_bytes());
+    }
+    k
+}
+
 /// Whether `mime` is a media type such as `image/png`: a type and a
 /// subtype, in lower-case letters, digits and `.+-`.
 pub fn valid_mime(mime: &str) -> bool {

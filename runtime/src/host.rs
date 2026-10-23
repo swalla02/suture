@@ -248,7 +248,9 @@ impl Host {
 
     /// Takes on the state of an [`Image`], keeping its own models, media,
     /// secrets and settings. Its machine journals anew to `journal`.
-    pub fn restore(&mut self, image: Image, journal: Box<dyn suture::Journal>) -> Result<(), String> {
+    pub fn restore(&mut self, mut image: Image, journal: Box<dyn suture::Journal>) -> Result<(), String> {
+        // An image holds no key: the host keeps its own.
+        image.prog.personal_key = self.prog.personal_key.clone();
         let prog = Arc::new(image.prog);
         let (kernel, kinds) = kernel::program(prog.clone());
         self.machine = Machine::from_image(kernel, image.machine, journal).map_err(|e| e.to_string())?;
@@ -282,7 +284,9 @@ impl Host {
 
     /// A host whose machine journals to `journal`. A served host keeps none,
     /// since its log is what replays (appendix BD.2.1).
-    pub fn with_journal(prog: Program, journal: Box<dyn suture::Journal>) -> Host {
+    pub fn with_journal(mut prog: Program, journal: Box<dyn suture::Journal>) -> Host {
+        // A host given no key for personal values makes one of its own.
+        prog.personal_key.get_or_insert_with(|| suture_lang::ir::PersonalKey(crate::media::random_key()));
         let prog = Arc::new(prog);
         let (kernel, kinds) = kernel::program(prog.clone());
         let mut h = Host {
@@ -1365,6 +1369,8 @@ impl Host {
     /// in the live units, each with the units it concerns and how it can be
     /// resolved. Empty when the deploy can go ahead.
     pub fn deploy_check(&self, new: &Program) -> Result<Vec<String>, String> {
+        let keyed = Program { personal_key: self.prog.personal_key.clone(), ..new.clone() };
+        let new = &keyed;
         if new.module != self.prog.module {
             return Err(format!("this is module {}, not {}", new.module, self.prog.module));
         }
@@ -1411,7 +1417,8 @@ impl Host {
     /// over and settles once under it, and only then are the messages they
     /// sent each other delivered (appendix M.2.5). An error before the
     /// kernel takes the new program leaves everything as it was.
-    pub fn deploy(&mut self, new: Program) -> Result<(), String> {
+    pub fn deploy(&mut self, mut new: Program) -> Result<(), String> {
+        new.personal_key = self.prog.personal_key.clone();
         let breaks = self.deploy_check(&new)?;
         if !breaks.is_empty() {
             return Err(format!("the deploy is refused: {} would break live units:\n  {}", new.version, breaks.join("\n  ")));
