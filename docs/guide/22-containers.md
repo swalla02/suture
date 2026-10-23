@@ -37,7 +37,7 @@ docker run -d --name tickets-b -v tickets:/data -e SUTURE_OPERATOR_TOKEN tickets
   serve /app --state /data --listen 0.0.0.0:7878 --pod b
 ```
 
-The image's health check asks `GET /health` every 10 seconds, on port 7878. If a container listens on another port, give it a health check of its own. A pod replays the whole log before it listens (chapter 17), so the check allows 5 minutes to start.
+The image's health check asks `GET /health` every 10 seconds, on port 7878. If a container listens on another port, give it a health check of its own. A pod replays the log after its last snapshot before it listens (chapter 17), so the check allows 5 minutes to start.
 
 ## Stopping
 

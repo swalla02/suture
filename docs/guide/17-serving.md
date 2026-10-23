@@ -144,7 +144,9 @@ Reads need no token. They show units and the requests' data, so, like inputs, th
 
 The state directory holds the compiled program and `log.jsonl`. Every input is a line of the log, and so is every move of the clock and every answer a model gave, with `{"decided": …}` for one asked after its step (chapter 15). An input is written, and synced to disk, after it is applied and before its caller is answered, so whatever a caller was told was accepted or refused is in the log. If the log cannot be written, for instance because the disk is full, the caller gets a 500 and the service takes no more inputs until it restarts, since memory would no longer match the log. A line cut short by a crash was never answered; the restart cuts it off.
 
-On start, the service replays the log. It gives the same units, the same trace and the same waiting requests, and no model is asked again, because the log holds what each one answered. Then it posts the waiting requests again, with their keys. Time that passed while the service was down passes at the first tick, so a deadline that ran out meanwhile fires then.
+On start, the service replays the log. It gives the same units, the same trace and the same waiting requests, and no model is asked again, because the log holds what each one answered.
+
+Every 10,000 records, the service writes `snapshot.json`: its state after the log so far, readable only by its user. It holds no secret, since those stay in `secrets.json`. On start, the service takes up the snapshot and replays only the log after it. A snapshot taken of another log, or one that cannot be read, is set aside with a line in the trace, and the whole log replays. Then it posts the waiting requests again, with their keys. Time that passed while the service was down passes at the first tick, so a deadline that ran out meanwhile fires then.
 
 A changed program under the same version is refused:
 

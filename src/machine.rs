@@ -122,7 +122,7 @@ impl Program {
 }
 
 /// Which ready pair to reduce next. Results never depend on the choice.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SchedulerKind {
     Fifo,
     Lifo,
@@ -186,7 +186,7 @@ pub struct EffectView {
     pub payload: Value,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Stats {
     pub reductions: u64,
     pub injects: u64,
@@ -223,6 +223,23 @@ struct InjectPlan {
 enum Target {
     Hole(HoleId),
     New(HoleId, Option<String>),
+}
+
+/// Everything a machine holds but its program and journal, in a set order:
+/// what a snapshot keeps, so a host goes on without replaying its past.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Image {
+    agents: Vec<(AgentId, Agent)>,
+    holes: Vec<(HoleId, Hole)>,
+    ready: Vec<(AgentId, AgentId)>,
+    faults: Vec<Fault>,
+    inject_seq: u64,
+    keys: Vec<(String, u64)>,
+    stats: Stats,
+    sched: SchedulerKind,
+    rng: u64,
+    pending_effects: Vec<HoleId>,
+    new_effects: Vec<HoleId>,
 }
 
 pub struct Machine {
@@ -986,6 +1003,45 @@ impl Machine {
     /// How many records the journal has committed.
     pub fn journal_len(&self) -> usize {
         self.journal.len_durable()
+    }
+
+    /// The machine's [`Image`].
+    pub fn image(&self) -> Image {
+        let (agents, holes) = self.graph.parts();
+        let mut keys: Vec<(String, u64)> = self.keys.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        keys.sort();
+        Image {
+            agents,
+            holes,
+            ready: self.ready.iter().copied().collect(),
+            faults: self.faults.values().cloned().collect(),
+            inject_seq: self.inject_seq,
+            keys,
+            stats: self.stats.clone(),
+            sched: self.sched,
+            rng: self.rng.state(),
+            pending_effects: self.pending_effects.iter().copied().collect(),
+            new_effects: self.new_effects.clone(),
+        }
+    }
+
+    /// The machine an [`Image`] was taken of, running `prog` and journaling
+    /// anew to `journal`. An image that breaks the graph's invariants, or
+    /// does not fit `prog`, is refused.
+    pub fn from_image(prog: Program, image: Image, journal: Box<dyn Journal>) -> Result<Machine, GraphError> {
+        let mut m = Self::fresh(prog, journal);
+        m.graph = Graph::from_parts(image.agents, image.holes);
+        m.ready = image.ready.into();
+        m.faults = image.faults.into_iter().map(|f| (norm(f.left, f.right), f)).collect();
+        m.inject_seq = image.inject_seq;
+        m.keys = image.keys.into_iter().collect();
+        m.stats = image.stats;
+        m.sched = image.sched;
+        m.rng = Rng::new(image.rng);
+        m.pending_effects = image.pending_effects.into_iter().collect();
+        m.new_effects = image.new_effects;
+        m.check_invariants()?;
+        Ok(m)
     }
 
     /// Releases the journal (e.g. to simulate a crash and recover from it).

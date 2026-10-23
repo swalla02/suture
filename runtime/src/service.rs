@@ -141,6 +141,8 @@ pub struct Service {
     held: u32,
     /// This pod's name (appendix O.2.4).
     pub pod: String,
+    /// How many records this process applied since its last snapshot.
+    since_snapshot: usize,
 }
 
 /// A request to post to its adapter.
@@ -237,6 +239,60 @@ fn lines(bytes: &[u8], first: usize, header: bool) -> Result<(Vec<(usize, String
 /// How long a failed post waits before it is tried again, in seconds.
 const RETRY_SECS: u64 = 5;
 
+/// Writes `text` to `path` in `dir`, readable only by this user, synced,
+/// and replaced in one step by way of `tmp`.
+fn private(dir: &Path, path: &Path, tmp: &Path, text: &str) -> std::io::Result<()> {
+    // A file left by a crash keeps its own mode, so it is made anew.
+    match std::fs::remove_file(tmp) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
+    let mut o = OpenOptions::new();
+    o.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+    let mut f = o.open(tmp)?;
+    f.write_all(text.as_bytes())?;
+    f.sync_all()?;
+    std::fs::rename(tmp, path)?;
+    File::open(dir)?.sync_all()
+}
+
+/// The format of `snapshot.json`.
+const SNAPSHOT_FORMAT: u32 = 1;
+
+/// How many records a pod applies before it writes a snapshot (appendix BG.2.2).
+pub const SNAPSHOT_EVERY: usize = 10_000;
+
+/// How many bytes before its offset a snapshot checks the log by.
+const SNAPSHOT_TAIL: u64 = 4096;
+
+/// The state after the log's first `offset` bytes, so a restart replays
+/// only what follows (appendix BG.2.1).
+#[derive(Serialize, Deserialize)]
+struct Snapshot {
+    suture: u32,
+    /// The log's header line, and the hash of the bytes just before
+    /// `offset`: a snapshot is used only with the log it was taken of.
+    header: String,
+    tail: String,
+    offset: u64,
+    host: crate::host::Image,
+}
+
+/// The log's header line, without its newline, and the hash of the up to
+/// [`SNAPSHOT_TAIL`] bytes before `offset`.
+fn log_marks(path: &Path, offset: u64) -> std::io::Result<(String, String)> {
+    let mut f = File::open(path)?;
+    let mut head = vec![];
+    std::io::BufRead::read_until(&mut std::io::BufReader::new((&mut f).take(1 << 20)), b'\n', &mut head)?;
+    let from = offset.saturating_sub(SNAPSHOT_TAIL);
+    let mut tail = vec![0; (offset - from) as usize];
+    f.seek(SeekFrom::Start(from))?;
+    f.read_exact(&mut tail)?;
+    Ok((String::from_utf8_lossy(&head).trim_end().to_string(), crate::media::sha256(&tail)))
+}
+
 fn synced(path: &Path, text: &str) -> std::io::Result<()> {
     let mut f = File::create(path)?;
     f.write_all(text.as_bytes())?;
@@ -271,6 +327,7 @@ impl Service {
             lock: None,
             held: 0,
             pod: "solo".into(),
+            since_snapshot: 0,
         }
     }
 
@@ -280,23 +337,7 @@ impl Service {
         let Some(state) = &self.state else { return Ok(()) };
         let (path, tmp) = (state.join("secrets.json"), state.join("secrets.json.tmp"));
         let text = serde_json::to_string(&self.host.secrets).map_err(|e| e.to_string())?;
-        let write = || -> std::io::Result<()> {
-            // A file left by a crash keeps its own mode, so it is made anew.
-            match std::fs::remove_file(&tmp) {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
-                _ => {}
-            }
-            let mut o = OpenOptions::new();
-            o.write(true).create_new(true);
-            #[cfg(unix)]
-            std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
-            let mut f = o.open(&tmp)?;
-            f.write_all(text.as_bytes())?;
-            f.sync_all()?;
-            std::fs::rename(&tmp, &path)?;
-            File::open(state)?.sync_all()
-        };
-        write().map_err(|e| format!("{}: {e}", path.display()))?;
+        private(state, &path, &tmp, &text).map_err(|e| format!("{}: {e}", path.display()))?;
         self.kept_secrets = self.host.secrets.len();
         Ok(())
     }
@@ -332,8 +373,67 @@ impl Service {
         setup(&mut svc.host);
         svc.host.secrets = Self::read_secrets(state)?;
         svc.kept_secrets = svc.host.secrets.len();
-        svc.replay(&state.join("log.jsonl"), cut)?;
+        let log = state.join("log.jsonl");
+        match svc.resume(state, cut) {
+            Ok(true) => return Ok(svc),
+            Ok(false) => {}
+            // A snapshot is only a shortcut: one that does not hold up is
+            // set aside, and the whole log replays (appendix BG.2.3).
+            Err(why) => {
+                let mut again = Service::in_memory(&prog, now);
+                again.state = Some(state.to_path_buf());
+                again.host.media = std::mem::take(&mut svc.host.media);
+                again.host.models = std::mem::take(&mut svc.host.models);
+                (again.host.defer_models, again.host.reads_at_once) = (svc.host.defer_models, svc.host.reads_at_once);
+                again.host.secrets = std::mem::take(&mut svc.host.secrets);
+                again.kept_secrets = again.host.secrets.len();
+                again.host.trace.push(format!("snapshot: not used, since {why}; the whole log replays"));
+                svc = again;
+            }
+        }
+        svc.replay(&log, cut)?;
         Ok(svc)
+    }
+
+    /// Goes on from `snapshot.json`, if there is one, replaying only the
+    /// log after it; false if there is none.
+    fn resume(&mut self, state: &Path, cut: bool) -> Result<bool, String> {
+        let (path, log) = (state.join("snapshot.json"), state.join("log.jsonl"));
+        let text = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(e.to_string()),
+        };
+        let snap: Snapshot = serde_json::from_str(&text).map_err(|e| format!("it is not one ({e})"))?;
+        if snap.suture != SNAPSHOT_FORMAT {
+            return Err(format!("its format {} is not {SNAPSHOT_FORMAT}", snap.suture));
+        }
+        let len = std::fs::metadata(&log).map_err(|e| e.to_string())?.len();
+        if snap.offset > len {
+            return Err(format!("it is of {} bytes of the log, which has {len}", snap.offset));
+        }
+        if log_marks(&log, snap.offset).map_err(|e| e.to_string())? != (snap.header.clone(), snap.tail.clone()) {
+            return Err("it was taken of another log".into());
+        }
+        let header: Header = serde_json::from_str(&snap.header).map_err(|e| format!("its log header: {e}"))?;
+        self.started = header.started;
+        self.host.restore(snap.host, Box::new(suture::NoJournal))?;
+        self.read_to = snap.offset;
+        self.read_on(&log, cut)?;
+        Ok(true)
+    }
+
+    /// Writes `snapshot.json`: the state after the log as read so far
+    /// (appendix BG.2.2). A broken pod writes none.
+    pub fn snapshot(&mut self) -> Result<(), String> {
+        let (Some(state), Some(_), None) = (self.state.clone(), &self.log, &self.broken) else { return Ok(()) };
+        let (path, tmp) = (state.join("snapshot.json"), state.join(format!("snapshot.json.{}.tmp", self.pod)));
+        let (header, tail) = log_marks(&state.join("log.jsonl"), self.read_to).map_err(|e| e.to_string())?;
+        let snap = Snapshot { suture: SNAPSHOT_FORMAT, header, tail, offset: self.read_to, host: self.host.image() };
+        let text = serde_json::to_string(&snap).map_err(|e| e.to_string())?;
+        private(&state, &path, &tmp, &text).map_err(|e| format!("{}: {e}", path.display()))?;
+        self.since_snapshot = 0;
+        Ok(())
     }
 
     /// The lock file of a state directory.
@@ -386,9 +486,15 @@ impl Service {
     /// alone, `cut` cuts off a line a crashed pod left short.
     fn catch_up(&mut self, cut: bool) -> Result<(), String> {
         let (Some(state), Some(_)) = (self.state.clone(), &self.log) else { return Ok(()) };
-        let path = state.join("log.jsonl");
+        self.read_on(&state.join("log.jsonl"), cut)
+    }
+
+    /// Applies the log after the bytes already read; `cut` cuts off a last
+    /// line a crash left short.
+    fn read_on(&mut self, path: &Path, cut: bool) -> Result<(), String> {
+        let state = self.state.clone().ok_or("reading the log needs the state directory")?;
         let shown = |e: std::io::Error| format!("{}: {e}", path.display());
-        let mut f = File::open(&path).map_err(shown)?;
+        let mut f = File::open(path).map_err(shown)?;
         if f.metadata().map_err(shown)?.len() <= self.read_to {
             return Ok(());
         }
@@ -396,7 +502,7 @@ impl Service {
         f.seek(SeekFrom::Start(self.read_to)).and_then(|_| f.read_to_end(&mut bytes)).map_err(shown)?;
         let (lines, good) = lines(&bytes, 0, false).map_err(|e| format!("{} after byte {}: {e}", path.display(), self.read_to))?;
         if cut && good < bytes.len() {
-            let w = OpenOptions::new().write(true).open(&path).map_err(shown)?;
+            let w = OpenOptions::new().write(true).open(path).map_err(shown)?;
             w.set_len(self.read_to + good as u64).and_then(|_| w.sync_all()).map_err(shown)?;
         }
         let mut records = vec![];
@@ -406,7 +512,7 @@ impl Service {
         // The secrets these lines refer to were written before them (appendix O.2.3).
         self.host.secrets = Self::read_secrets(&state)?;
         self.kept_secrets = self.host.secrets.len();
-        self.apply_all(&records, &path)?;
+        self.apply_all(&records, path)?;
         self.read_to += good as u64;
         Ok(())
     }
@@ -626,6 +732,7 @@ impl Service {
 
     /// Applies the records of the log, each input with the model answers it caused.
     fn apply_all(&mut self, records: &[Record], path: &Path) -> Result<(), String> {
+        self.since_snapshot += records.len();
         let mut i = 0;
         while i < records.len() {
             // The model answers an input caused come right after it.
@@ -698,6 +805,12 @@ impl Service {
         // Posts that failed are tried again.
         let from = self.host.trace.len();
         self.post_new(now)?;
+        // A snapshot now and then, so a restart replays little (appendix BG.2.2).
+        if self.since_snapshot >= SNAPSHOT_EVERY
+            && let Err(e) = self.snapshot() {
+            self.since_snapshot = 0;
+            self.host.trace.push(format!("snapshot: not written: {e}"));
+        }
         Ok([asked, fired, self.host.trace[from..].to_vec()].concat())
     }
 
@@ -890,6 +1003,7 @@ impl Service {
             return Err(format!("the log could not be written ({e}), so no input is taken until the service restarts"));
         }
         self.read_to += text.len() as u64;
+        self.since_snapshot += records.len();
         Ok(())
     }
 

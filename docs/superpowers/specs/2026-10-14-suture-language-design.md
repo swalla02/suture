@@ -2509,3 +2509,39 @@ After slice 54, a model was still asked on the serving thread, so a slow one hel
 
 runtime/tests/deferred.rs: while a model's API holds its answer, ticks and inputs go on, and its pick is applied when it comes. An answer in by the time the service looks past the deadline is still used. A panicking model's choice is made by `prefer`.
 
+## Appendix BG. Prototype slice 56: snapshots (2026-10-23)
+
+Up to slice 55, a restart, or a new pod, replayed the whole log, so the time to start grew with every input ever taken.
+
+### BG.1 What slice 56 adds
+
+| Added in slice 56 | Still waits |
+|---|---|
+| `snapshot.json`: the state after the log's first bytes | compacting the log |
+| a restart replays only the log after the snapshot | writing a snapshot beside the inputs, not in their way |
+| the kernel machine's and the host's images | |
+
+### BG.2 Semantics that slice 56 settles
+
+1. **Images.**
+   - A kernel machine's image is all it holds but its program and journal: agents, holes, the ready pairs, faults, keys, counters and the scheduler's state, in id order. A machine made from an image checks the graph's invariants, and refuses an image that breaks them.
+   - A host's image is its machine's image, its program, and every collection that replay builds. It leaves out what the host is given rather than what it builds: its models, its media store, its secret store and its settings.
+   - A secret is held in a unit by its number, so an image holds no secret value.
+2. **Snapshots.**
+   - A served pod writes `snapshot.json` once it has applied 10,000 records since its last one, at the end of a tick. The file is the format, the log's header line, the offset in bytes up to which it was taken, the SHA-256 of the up to 4096 bytes before that offset, and the host's image.
+   - It is written as `secrets.json` is: made anew, readable only by its user, synced, then put in place in one step. Each pod writes through a file of its own, so pods never write the same file at once.
+   - A pod whose log write failed writes none. One that cannot be written is noted in the trace, and the pod goes on.
+3. **A restart.**
+   - The snapshot is used only if it reads, its format is this one, its offset is within the log, and the log's header line and the bytes before the offset are the ones it names. Then the host takes up its image, keeping the models and settings `open` gave it, and replays the log from the offset.
+   - A snapshot that is not used is only a shortcut lost: it is set aside with the trace line `snapshot: not used, since …; the whole log replays`, and the whole log replays.
+   - A restart from a snapshot comes to the state a full replay comes to, but for the trace lines the restart itself writes.
+
+### BG.3 Acceptance
+
+- tests/image.rs: a machine made from its image goes on as the original did; an image with no holes is refused.
+- runtime/tests/snapshot.rs:
+  - a restart from a snapshot comes to the same state as a full replay, and goes on alike;
+  - a restart replays only the log after the snapshot, which is 20 times less work at 200 bookings;
+  - a snapshot of another log, or one that is not one, is set aside;
+  - a snapshot keeps no secret and is readable only by its user.
+

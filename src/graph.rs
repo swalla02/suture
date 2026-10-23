@@ -39,13 +39,13 @@ impl Endpoint {
 
 /// How an agent came to exist: injected by the host, or created by the
 /// reduction of a pair under a rule (index into the program's rule table).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Cause {
     Inject { seq: u64 },
     Reduce { left: AgentId, right: AgentId, rule: u32 },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Agent {
     pub kind: KindId,
     pub payload: Value,
@@ -54,13 +54,13 @@ pub struct Agent {
     pub cause: Cause,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HoleOrigin {
     Inject { seq: u64 },
     Effect { agent: AgentId },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hole {
     pub peer: Endpoint,
     pub label: Option<String>,
@@ -88,6 +88,9 @@ pub enum GraphError {
     #[error("effect index inconsistent: {0}")]
     Outbox(String),
 }
+
+/// A graph's agents and holes, in id order.
+pub(crate) type Parts = (Vec<(AgentId, Agent)>, Vec<(HoleId, Hole)>);
 
 #[derive(Clone, Debug, Default)]
 pub struct Graph {
@@ -276,6 +279,30 @@ impl Graph {
             }
         }
         d.finish()
+    }
+
+    /// Every agent and every hole, in id order.
+    pub(crate) fn parts(&self) -> Parts {
+        let mut agents: Vec<_> = self.agents.iter().map(|(i, a)| (*i, a.clone())).collect();
+        let mut holes: Vec<_> = self.holes.iter().map(|(i, h)| (*i, h.clone())).collect();
+        agents.sort_by_key(|(i, _)| *i);
+        holes.sort_by_key(|(i, _)| *i);
+        (agents, holes)
+    }
+
+    /// The graph of these agents and holes.
+    pub(crate) fn from_parts(agents: Vec<(AgentId, Agent)>, holes: Vec<(HoleId, Hole)>) -> Graph {
+        let mut g = Graph::default();
+        for (i, a) in agents {
+            g.agents.insert(i, a);
+        }
+        for (i, h) in holes {
+            if let Some(l) = &h.label {
+                g.labels.insert(l.clone(), i);
+            }
+            g.holes.insert(i, h);
+        }
+        g
     }
 
     pub(crate) fn insert_agent(&mut self, id: AgentId, a: Agent) {

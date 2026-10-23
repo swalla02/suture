@@ -24,7 +24,7 @@ pub fn order(scores: &[Vec<(u8, i128)>]) -> Vec<usize> {
 }
 
 /// What a model is given (appendix J.2.4, K.2.6).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Choice {
     /// The choice point: a `uses` target, a slot, or `Order's credit`.
     pub point: String,
@@ -39,7 +39,9 @@ pub struct Choice {
     /// The module's currency, to show amounts.
     pub currency: String,
     /// The content of the media among the facts and the options, by hash,
-    /// as far as the store has it (appendix V.2.3).
+    /// as far as the store has it (appendix V.2.3). Read from the store
+    /// each time, so never kept.
+    #[serde(skip)]
     pub media: BTreeMap<String, crate::media::Blob>,
     /// The program's `at least … sure`: below it, and with no confidence, a
     /// pick is not used, whatever the backend's own minimum (appendix AK).
@@ -66,7 +68,7 @@ impl Choice {
 
 /// One option: a candidate's name and attributes, an alternative's kind, or
 /// a source's adapter.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Option_ {
     pub label: String,
     pub attrs: Vec<(String, Val)>,

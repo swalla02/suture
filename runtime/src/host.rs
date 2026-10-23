@@ -39,7 +39,7 @@ pub struct Host {
     expired: Vec<Ask>,
     /// Shared entities by kind and key attribute, then by key, in creation
     /// order (appendix F.2.6).
-    pools: BTreeMap<(String, String), BTreeMap<String, Vec<String>>>,
+    pools: BTreeMap<(String, String), Pool>,
     /// Bindings with no candidate left, in arrival order (appendix F.2.9).
     waiters: Vec<Waiter>,
     /// Units something of whose may have freed up, with the bindings
@@ -76,6 +76,7 @@ pub struct Host {
 }
 
 /// A choice waiting for its model's answer (appendix S.2.2).
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Asking {
     model: String,
     choice: Choice,
@@ -90,6 +91,7 @@ struct Asking {
 }
 
 /// Where a deferred model's answer goes.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 enum Chooses {
     /// A binding's choice, with its hole and pool key.
     Bind { hole: HoleId, decide: Decide, pool: String },
@@ -106,7 +108,7 @@ enum Gathered {
 }
 
 /// A binding waiting on its pool key, with its choice's hole.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Waiter {
     hole: HoleId,
     decide: Decide,
@@ -161,6 +163,7 @@ fn key_text(v: &Val) -> String {
 }
 
 /// What a timer is for.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 enum Timer {
     /// The deadline of the request whose effect hole this is.
     Deadline(HoleId),
@@ -178,10 +181,101 @@ fn refusal_of(u: &Unit) -> Option<String> {
     u.notes.iter().find_map(|n| n.strip_prefix("refused ")?.split_once(": refused by rule ").map(|(_, r)| r.to_string()))
 }
 
+/// What a host holds but its models, media, secrets and settings: what a
+/// snapshot keeps (appendix BG.2.1). Collections keyed by pairs are lists,
+/// so that they write as JSON.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct Image {
+    prog: Program,
+    machine: suture::Image,
+    trace: Vec<String>,
+    trace_dropped: usize,
+    pending: Vec<(Ask, HoleId)>,
+    now: u64,
+    timers: Vec<((u64, u64), Timer)>,
+    started: u64,
+    goal_timers: BTreeSet<(String, u32)>,
+    patience_timers: BTreeSet<String>,
+    expired: Vec<Ask>,
+    pools: Vec<((String, String), Pool)>,
+    waiters: Vec<Waiter>,
+    to_wake: VecDeque<String>,
+    woken: BTreeSet<String>,
+    gate: Vec<String>,
+    readers: BTreeMap<String, Vec<String>>,
+    model_answers: Vec<(String, Answer)>,
+    asking: Vec<Asking>,
+}
+
+impl Image {
+    /// The program it was taken under.
+    pub fn program(&self) -> &Program {
+        &self.prog
+    }
+}
+
+/// A pool's shared entities, by key, in creation order.
+type Pool = BTreeMap<String, Vec<String>>;
+
 /// A request's answer: its outcome and the data it carries.
 pub type Outcome = (String, Vec<(String, Val)>);
 
 impl Host {
+    /// The host's [`Image`].
+    pub fn image(&self) -> Image {
+        Image {
+            prog: (*self.prog).clone(),
+            machine: self.machine.image(),
+            trace: self.trace.clone(),
+            trace_dropped: self.trace_dropped,
+            pending: self.pending.clone(),
+            now: self.now,
+            timers: self.timers.iter().map(|(k, t)| (*k, t.clone())).collect(),
+            started: self.started,
+            goal_timers: self.goal_timers.clone(),
+            patience_timers: self.patience_timers.clone(),
+            expired: self.expired.clone(),
+            pools: self.pools.iter().map(|(k, p)| (k.clone(), p.clone())).collect(),
+            waiters: self.waiters.clone(),
+            to_wake: self.to_wake.clone(),
+            woken: self.woken.clone(),
+            gate: self.gate.clone(),
+            readers: self.readers.clone(),
+            model_answers: self.model_answers.clone(),
+            asking: self.asking.clone(),
+        }
+    }
+
+    /// Takes on the state of an [`Image`], keeping its own models, media,
+    /// secrets and settings. Its machine journals anew to `journal`.
+    pub fn restore(&mut self, image: Image, journal: Box<dyn suture::Journal>) -> Result<(), String> {
+        let prog = Arc::new(image.prog);
+        let (kernel, kinds) = kernel::program(prog.clone());
+        self.machine = Machine::from_image(kernel, image.machine, journal).map_err(|e| e.to_string())?;
+        self.prog = prog;
+        self.kinds = kinds;
+        self.trace = image.trace;
+        self.trace_dropped = image.trace_dropped;
+        self.pending = image.pending;
+        self.now = image.now;
+        self.timers = image.timers.into_iter().collect();
+        self.started = image.started;
+        self.goal_timers = image.goal_timers;
+        self.patience_timers = image.patience_timers;
+        self.expired = image.expired;
+        self.pools = image.pools.into_iter().collect();
+        self.waiters = image.waiters;
+        self.to_wake = image.to_wake;
+        self.woken = image.woken;
+        self.gate = image.gate;
+        self.reading = image.readers.iter().flat_map(|(u, rs)| rs.iter().map(move |r| (u.clone(), r.clone()))).collect();
+        self.readers = image.readers;
+        self.model_answers = image.model_answers;
+        self.asking = image.asking;
+        self.replay.clear();
+        Ok(())
+    }
+
     pub fn new(prog: Program) -> Host {
         Self::with_journal(prog, Box::new(suture::MemJournal::new()))
     }

@@ -25,7 +25,7 @@ pub use explain::{Explanation, Terminal, WaitGroup};
 pub use graph::{Agent, Cause, Endpoint, Graph, GraphError, Hole, HoleOrigin};
 pub use id::{AgentId, Digest, DigestBuilder, HoleId};
 pub use journal::{FileJournal, Journal, JournalError, MemJournal, NoJournal, RecBind, Record, RecoveryError, UpgradeError};
-pub use machine::{EffectView, Fault, InjectError, InjectReceipt, Limits, Machine, Program, ProgramError, Rounds, RunOutcome, SchedulerKind, Stats};
+pub use machine::{EffectView, Fault, Image, InjectError, InjectReceipt, Limits, Machine, Program, ProgramError, Rounds, RunOutcome, SchedulerKind, Stats};
 pub use net::{Bind, HoleRef, Injection, NetAgent, NetBuilder, NetData, Slot, Var};
 pub use policy::{PatchView, Policy};
 pub use rng::Rng;

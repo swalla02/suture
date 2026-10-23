@@ -744,7 +744,7 @@ impl Msg {
 }
 
 /// A request to the outside world, carried by a kernel effect.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Ask {
     pub adapter: String,
     pub verb: String,
@@ -784,7 +784,7 @@ impl Ask {
 /// A binding asking for a choice (appendix F.2.7): a kernel effect whose hole
 /// the host fills with the pick. `node` is the part's key, `bind` its
 /// binding's id; `binding` indexes the program's bindings.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Decide {
     pub label: String,
     pub node: String,
