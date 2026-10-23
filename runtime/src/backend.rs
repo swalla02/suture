@@ -26,6 +26,12 @@ pub trait Transport {
     /// `key`: the bearer token, if any. An HTTP error status is an error,
     /// and a timeout is the error [`TIMED_OUT`].
     fn post(&mut self, url: &str, key: Option<&str>, body: &Value, timeout: Duration) -> Result<Value, String>;
+
+    /// The same transport for another thread, so posts run beside the
+    /// service (appendix BE.2.2); `None` posts on the service's own thread.
+    fn on_another_thread(&self) -> Option<Box<dyn Transport + Send>> {
+        None
+    }
 }
 
 /// The real transport: `curl`, given the headers and body on its standard
@@ -33,6 +39,10 @@ pub trait Transport {
 pub struct Curl;
 
 impl Transport for Curl {
+    fn on_another_thread(&self) -> Option<Box<dyn Transport + Send>> {
+        Some(Box::new(Curl))
+    }
+
     fn post(&mut self, url: &str, key: Option<&str>, body: &Value, timeout: Duration) -> Result<Value, String> {
         let quote = |s: &str| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
         let mut config = format!("url = {}\nheader = \"Content-Type: application/json\"\n", quote(url));

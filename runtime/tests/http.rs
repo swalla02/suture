@@ -144,3 +144,56 @@ fn the_server_answers_over_tcp() {
     let out = server.join().unwrap();
     assert!(out.contains("Ada placed: name \"Ada\""), "{out}");
 }
+
+/// An adapter that answers only once `open` is set.
+#[derive(Clone)]
+struct Held {
+    open: Arc<AtomicBool>,
+}
+
+impl suture_runtime::backend::Transport for Held {
+    fn post(&mut self, _: &str, _: Option<&str>, _: &Value, _: std::time::Duration) -> Result<Value, String> {
+        let start = std::time::Instant::now();
+        while !self.open.load(Ordering::Relaxed) && start.elapsed() < std::time::Duration::from_secs(20) {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        Ok(json!({ "outcome": "charged" }))
+    }
+
+    fn on_another_thread(&self) -> Option<Box<dyn suture_runtime::backend::Transport + Send>> {
+        Some(Box::new(self.clone()))
+    }
+}
+
+#[test]
+fn a_slow_adapter_holds_up_no_input() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    let (stop, open) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+    let p = tickets();
+    let server = {
+        let (stop, open) = (stop.clone(), open.clone());
+        std::thread::spawn(move || {
+            let mut svc = Service::in_memory(&p, T0);
+            setup(&mut svc);
+            let adapters = suture_runtime::service::adapters(r#"{"payments": {"url": "http://pay.local/charge"}}"#).unwrap();
+            svc.connect(adapters, Box::new(Held { open }));
+            suture_runtime::http::serve(&mut svc, listener, Some(TOKEN), None, &stop, || T0, &mut vec![]).unwrap();
+        })
+    };
+    let booking = r#"{"new": {"verb": "books", "kind": "Booking", "label": "B1", "attrs": {"fan": "Ada", "show": "Hamlet", "quantity": 2}}}"#;
+    // The payment is posted while the adapter holds it; the inputs go on.
+    assert_eq!(send(&addr, "POST", "/inputs", &[("Suture-Caller", "fan Ada")], booking).0, 200);
+    let b2 = booking.replace("B1", "B2");
+    assert_eq!(send(&addr, "POST", "/inputs", &[("Suture-Caller", "fan Ada")], &b2).0, 200);
+    let charged = |addr: &str| send(addr, "GET", "/trace?from=0", &[], "").1["lines"].as_array().unwrap().iter().any(|l| l.as_str().unwrap().contains("B1  Payment charged"));
+    assert!(!charged(&addr), "the adapter has not answered yet");
+    open.store(true, Ordering::Relaxed);
+    let start = std::time::Instant::now();
+    while !charged(&addr) {
+        assert!(start.elapsed() < std::time::Duration::from_secs(10), "its answer is applied when it comes");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    stop.store(true, Ordering::Relaxed);
+    server.join().unwrap();
+}

@@ -1,10 +1,11 @@
 //! The service's HTTP API (appendix L.2.5–L.2.6): a small HTTP/1.1 server
-//! on the standard library, one request at a time, so inputs are applied in
-//! the order they arrive.
+//! on the standard library. Connections are read side by side; requests are
+//! applied one at a time, in the order they were read (appendix BE).
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -342,38 +343,41 @@ pub fn serve(svc: &mut Service, listener: TcpListener, operator: Option<&str>, g
     served
 }
 
+/// A request read by a connection's thread, and where its answer goes.
+type Job = (Request, mpsc::Sender<(u16, Value)>);
+
+/// The most connections read at once; past that, a connection is answered 503.
+pub const MAX_CONNECTIONS: usize = 64;
+
 fn serving(svc: &mut Service, listener: TcpListener, operator: Option<&str>, gateway: Option<&str>, stop: &AtomicBool, clock: impl Fn() -> u64, out: &mut dyn Write) -> std::io::Result<()> {
     listener.set_nonblocking(true)?;
     let mut shown = svc.host.trace.len();
     let mut last = 0;
+    svc.start_posting();
+    let (jobs, inbox) = mpsc::channel::<Job>();
+    let done = Arc::new(AtomicBool::new(false));
+    // Connections are accepted and read on threads of their own, so a slow
+    // caller holds up no one; this thread alone applies them, one at a time,
+    // in the order they were read (appendix BE.2.1).
+    let acceptor = {
+        let (done, gateway) = (done.clone(), gateway.map(str::to_string));
+        std::thread::spawn(move || accept(listener, jobs, gateway, &done))
+    };
     while !stop.load(Ordering::Relaxed) {
-        match listener.accept() {
-            Ok((mut stream, _)) => {
-                stream.set_nonblocking(false)?;
-                stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-                let (status, body, unread) = match read_request(&mut stream) {
-                    Ok(req) if !from_gateway(&req, gateway) => (401, json!({ "error": "this service is reached only through its gateway" }), false),
-                    Ok(req) => {
-                        let (status, body) = handle(svc, &req, operator, clock());
-                        (status, body, false)
-                    }
-                    Err(e) => (400, json!({ "error": e }), true),
-                };
-                // A caller that has gone away does not stop the service.
-                let _ = write_response(&mut stream, status, &body);
-                if unread {
-                    // Closing with unread bytes would reset the connection before
-                    // the caller reads why; so read a little of the rest, briefly.
-                    let _ = stream.shutdown(std::net::Shutdown::Write);
-                    let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
-                    let _ = std::io::copy(&mut (&stream).take(MAX_BODY as u64), &mut std::io::sink());
-                }
+        // A request is taken as soon as it is read; timers wait at most a
+        // tenth of a second past their second.
+        match inbox.recv_timeout(Duration::from_millis(100)) {
+            Ok((req, reply)) => {
+                let _ = reply.send(handle(svc, &req, operator, clock()));
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(20)),
-            Err(e) => {
-                writeln!(out, "accept: {e}")?;
-                std::thread::sleep(Duration::from_millis(20));
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                writeln!(out, "accept: the listener stopped")?;
+                break;
             }
+        }
+        if let Err(e) = svc.collect(clock()) {
+            writeln!(out, "post: {e}")?;
         }
         // Once asked to stop, it starts no timer and posts nothing more.
         if stop.load(Ordering::Relaxed) {
@@ -392,5 +396,61 @@ fn serving(svc: &mut Service, listener: TcpListener, operator: Option<&str>, gat
         svc.host.trim(TRACE_KEEP);
         shown = svc.host.trace.len();
     }
+    done.store(true, Ordering::Relaxed);
+    let _ = acceptor.join();
     Ok(())
+}
+
+/// Accepts connections until `done`, each read on a thread of its own.
+fn accept(listener: TcpListener, jobs: mpsc::Sender<Job>, gateway: Option<String>, done: &AtomicBool) {
+    let open = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    while !done.load(Ordering::Relaxed) {
+        let mut stream = match listener.accept() {
+            Ok((stream, _)) => stream,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(5));
+                continue;
+            }
+            Err(_) => {
+                std::thread::sleep(Duration::from_millis(20));
+                continue;
+            }
+        };
+        if stream.set_nonblocking(false).is_err() {
+            continue;
+        }
+        if open.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
+            open.fetch_sub(1, Ordering::SeqCst);
+            let _ = write_response(&mut stream, 503, &json!({ "error": "too many connections; try again" }));
+            continue;
+        }
+        let (jobs, gateway, open) = (jobs.clone(), gateway.clone(), open.clone());
+        std::thread::spawn(move || {
+            connection(stream, &jobs, gateway.as_deref());
+            open.fetch_sub(1, Ordering::SeqCst);
+        });
+    }
+}
+
+/// Reads one request, has the serving thread answer it, and writes the answer.
+fn connection(mut stream: TcpStream, jobs: &mpsc::Sender<Job>, gateway: Option<&str>) {
+    let (status, body, unread) = match read_request(&mut stream) {
+        Ok(req) if !from_gateway(&req, gateway) => (401, json!({ "error": "this service is reached only through its gateway" }), false),
+        Ok(req) => {
+            let (reply, answer) = mpsc::channel();
+            let answered = jobs.send((req, reply)).ok().and_then(|_| answer.recv().ok());
+            let (status, body) = answered.unwrap_or_else(|| (503, json!({ "error": "the service is stopping" })));
+            (status, body, false)
+        }
+        Err(e) => (400, json!({ "error": e }), true),
+    };
+    // A caller that has gone away does not stop the service.
+    let _ = write_response(&mut stream, status, &body);
+    if unread {
+        // Closing with unread bytes would reset the connection before
+        // the caller reads why; so read a little of the rest, briefly.
+        let _ = stream.shutdown(std::net::Shutdown::Write);
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
+        let _ = std::io::copy(&mut (&stream).take(MAX_BODY as u64), &mut std::io::sink());
+    }
 }

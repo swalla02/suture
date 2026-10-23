@@ -128,3 +128,28 @@ fn a_personal_value_that_must_be_unique_is_never_shown() {
     assert!(!all.contains("ann@x.org"), "{all}");
     assert!(all.contains("(personal "), "the group is named by a hash: {all}");
 }
+
+#[test]
+fn a_slow_caller_holds_up_no_one() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    let stop = Arc::new(AtomicBool::new(false));
+    let p = compiled(CFP);
+    let server = {
+        let stop = stop.clone();
+        std::thread::spawn(move || {
+            let mut svc = Service::in_memory(&p, T0);
+            suture_runtime::http::serve(&mut svc, listener, None, None, &stop, || T0, &mut vec![]).unwrap();
+        })
+    };
+    // A caller that sends half its headers and waits; the request deadline is 5 s.
+    let mut slow = TcpStream::connect(&addr).unwrap();
+    slow.write_all(b"GET /health HTTP/1.1\r\nX-Slow: ").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    let start = std::time::Instant::now();
+    assert_eq!(send(&addr, "GET /health HTTP/1.1\r\n\r\n").0, 200);
+    assert!(start.elapsed() < std::time::Duration::from_secs(3), "answered after {:?}", start.elapsed());
+    drop(slow);
+    stop.store(true, Ordering::Relaxed);
+    server.join().unwrap();
+}

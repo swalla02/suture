@@ -113,6 +113,8 @@ pub struct Service {
     log: Option<File>,
     adapters: BTreeMap<String, Adapter>,
     transport: Box<dyn Transport>,
+    /// The threads that post, once serving starts.
+    poster: Option<Poster>,
     /// The requests already posted by this process, by key.
     posted: BTreeSet<String>,
     /// Requests whose post failed, by key, with when to try again.
@@ -136,6 +138,24 @@ pub struct Service {
     /// This pod's name (appendix O.2.4).
     pub pod: String,
 }
+
+/// A request to post to its adapter.
+struct Post {
+    ask: Ask,
+    url: String,
+    key: Option<String>,
+    body: Value,
+    timeout: Duration,
+}
+
+/// Threads that post requests, and the answers they got (appendix BE.2.2).
+struct Poster {
+    jobs: std::sync::mpsc::Sender<Post>,
+    done: std::sync::mpsc::Receiver<(Post, Result<Value, String>)>,
+}
+
+/// How many posts run at once.
+pub const POSTERS: usize = 8;
 
 /// Why a deploy did not happen.
 enum Refusal {
@@ -211,6 +231,7 @@ impl Service {
             log: None,
             adapters: BTreeMap::new(),
             transport: Box::new(backend::Curl),
+            poster: None,
             posted: BTreeSet::new(),
             retry: BTreeMap::new(),
             broken: None,
@@ -847,6 +868,7 @@ impl Service {
         if self.broken.is_some() {
             return Ok(());
         }
+        self.collect(now)?;
         // A pod posts the requests of its own units only (appendix O.2.5).
         let pods = self.pods(now);
         // A request whose unit went to another pod, or that is answered, is
@@ -864,15 +886,10 @@ impl Service {
             self.beat(now + began.elapsed().as_secs())?;
             self.posted.insert(ask.key.clone());
             self.retry.remove(&ask.key);
-            let failed = |s: &mut Service, why: String| {
-                s.host.trace.push(format!("      {}: {why}; trying again in {RETRY_SECS} seconds   ({})", ask.adapter, ask.key));
-                s.posted.remove(&ask.key);
-                s.retry.insert(ask.key.clone(), now + RETRY_SECS);
-            };
             let adapter = self.adapters[&ask.adapter].clone();
             let key = match adapter.key_env.as_deref().map(|e| std::env::var(e).map_err(|_| format!("{e} is not set"))) {
                 Some(Err(e)) => {
-                    failed(self, format!("not posted: {e}"));
+                    self.post_failed(&ask, format!("not posted: {e}"), now);
                     continue;
                 }
                 Some(Ok(k)) => Some(k),
@@ -880,23 +897,85 @@ impl Service {
             };
             let body = request_json(&self.host, &ask, true);
             let timeout = Duration::from_secs(self.host.prog.request_within(&ask.kind).max(1)).min(POST_TIMEOUT);
-            match self.transport.post(&adapter.url, key.as_deref(), &body, timeout) {
-                Ok(reply) => match reply.get("outcome").and_then(Value::as_str) {
-                    Some(outcome) => {
-                        let data = reply.get("data").map_or(Ok(vec![]), |d| answer_data(&self.host.prog, &ask, d));
-                        match data {
-                            Ok(data) => {
-                                let r = Record::Answer { adapter: ask.adapter.clone(), outcome: outcome.to_string(), key: Some(ask.key.clone()), target: None, data };
-                                self.input(r, now)?;
-                            }
-                            Err(e) => self.host.trace.push(format!("      {}: an answer it cannot read: {e}   ({})", ask.adapter, ask.key)),
-                        }
+            let post = Post { ask, url: adapter.url, key, body, timeout };
+            match &self.poster {
+                // Its answer is applied when it comes (appendix BE.2.2).
+                Some(p) => {
+                    if let Err(e) = p.jobs.send(post) {
+                        let ask = e.0.ask;
+                        self.post_failed(&ask, "could not be posted: the posting threads stopped".into(), now);
                     }
-                    None => self.host.trace.push(format!("      {}: posted; it answers later   ({})", ask.adapter, ask.key)),
-                },
-                Err(e) => failed(self, format!("could not be posted: {e}")),
+                }
+                None => {
+                    let r = self.transport.post(&post.url, post.key.as_deref(), &post.body, post.timeout);
+                    self.posted_with(post, r, now)?;
+                }
             }
         }
+    }
+
+    /// Posts from now on on `POSTERS` threads of their own, if the transport
+    /// can, so a slow adapter holds up no input (appendix BE.2.2).
+    pub fn start_posting(&mut self) {
+        if self.poster.is_some() {
+            return;
+        }
+        let Some(first) = self.transport.on_another_thread() else { return };
+        let (jobs, inbox) = std::sync::mpsc::channel::<Post>();
+        let (answers, done) = std::sync::mpsc::channel();
+        let inbox = std::sync::Arc::new(std::sync::Mutex::new(inbox));
+        let mut transports = vec![first];
+        transports.extend((1..POSTERS).filter_map(|_| self.transport.on_another_thread()));
+        for mut t in transports {
+            let (inbox, answers) = (inbox.clone(), answers.clone());
+            std::thread::spawn(move || {
+                loop {
+                    let next = inbox.lock().map_err(|_| ()).and_then(|i| i.recv().map_err(|_| ()));
+                    let Ok(post) = next else { return };
+                    let r = t.post(&post.url, post.key.as_deref(), &post.body, post.timeout);
+                    if answers.send((post, r)).is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+        self.poster = Some(Poster { jobs, done });
+    }
+
+    /// Applies the answers of the posts that finished.
+    pub fn collect(&mut self, now: u64) -> Result<(), String> {
+        while let Some((post, r)) = self.poster.as_ref().and_then(|p| p.done.try_recv().ok()) {
+            self.posted_with(post, r, now)?;
+        }
+        Ok(())
+    }
+
+    fn post_failed(&mut self, ask: &Ask, why: String, now: u64) {
+        self.host.trace.push(format!("      {}: {why}; trying again in {RETRY_SECS} seconds   ({})", ask.adapter, ask.key));
+        self.posted.remove(&ask.key);
+        self.retry.insert(ask.key.clone(), now + RETRY_SECS);
+    }
+
+    /// What a post came to: an answer is an input; a failure is tried again.
+    fn posted_with(&mut self, post: Post, r: Result<Value, String>, now: u64) -> Result<(), String> {
+        let ask = post.ask;
+        match r {
+            Ok(reply) => match reply.get("outcome").and_then(Value::as_str) {
+                Some(outcome) => {
+                    let data = reply.get("data").map_or(Ok(vec![]), |d| answer_data(&self.host.prog, &ask, d));
+                    match data {
+                        Ok(data) => {
+                            let r = Record::Answer { adapter: ask.adapter.clone(), outcome: outcome.to_string(), key: Some(ask.key.clone()), target: None, data };
+                            self.input(r, now)?;
+                        }
+                        Err(e) => self.host.trace.push(format!("      {}: an answer it cannot read: {e}   ({})", ask.adapter, ask.key)),
+                    }
+                }
+                None => self.host.trace.push(format!("      {}: posted; it answers later   ({})", ask.adapter, ask.key)),
+            },
+            Err(e) => self.post_failed(&ask, format!("could not be posted: {e}"), now),
+        }
+        Ok(())
     }
 
     /// The state directory's default place, beside the program.

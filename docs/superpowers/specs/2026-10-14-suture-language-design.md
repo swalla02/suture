@@ -2455,3 +2455,31 @@ runtime/tests/memory.rs:
 - a trimmed trace keeps its line numbers, and `/trace` skips the lines no longer kept;
 - a served machine journals nothing.
 
+## Appendix BE. Prototype slice 54: slow callers and slow adapters (2026-10-23)
+
+The service read each connection, applied it, and posted to adapters on one thread. A caller that sent its headers slowly held every other caller for up to 5 seconds, and a slow adapter held the service for up to 10 seconds per post.
+
+### BE.1 What slice 54 adds
+
+| Added in slice 54 | Still waits |
+|---|---|
+| connections read on threads of their own | inputs applied side by side |
+| adapter posts on 8 threads | model asks off the serving thread |
+| | an HTTP client in the runtime instead of `curl` |
+
+### BE.2 Semantics that slice 54 settles
+
+1. **Connections.**
+   - A thread accepts connections, and each connection is read on a thread of its own, at most 64 at once; past that, a connection is answered 503.
+   - The gateway token is checked as the request is read.
+   - The serving thread alone applies requests, one at a time, in the order they were read, so the log's order is still the order of the inputs. It waits at most a tenth of a second for one, then runs the timers that fell due.
+2. **Posts.**
+   - Once serving starts, a request to an adapter is handed to one of 8 posting threads, if the transport can run on another thread; `curl` can. A transport that cannot, as in tests, posts on the serving thread, as before.
+   - The serving thread applies each answer when it comes, as an input, as if it had come at once. A failed post is tried again after `RETRY_SECS`, as before.
+   - A request is marked posted while its post runs, so it is not posted twice. A post still running when the service stops is posted again after a restart, with the same idempotency key (appendix L.2.6).
+
+### BE.3 Acceptance
+
+- runtime/tests/hardening.rs: a caller that sends half its headers holds up no other request.
+- runtime/tests/http.rs: while an adapter holds a payment, bookings are still answered, and its answer is applied when it comes.
+
