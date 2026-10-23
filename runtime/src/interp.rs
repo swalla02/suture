@@ -417,6 +417,7 @@ pub fn step(prog: &Program, unit: &Unit, msg: &Msg) -> Outcome {
 /// note the goals that became met. `now` is the clock when the message was
 /// delivered; parts created by the step are created then.
 pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
+    crate::state::WORK.steps.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut u = unit.clone();
     u.notes.clear();
     let mut out = Out::default();

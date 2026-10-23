@@ -2,6 +2,7 @@
 //! requests, and how each is carried in kernel payloads.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use suture::Value;
 use suture_lang::ir::{Lit, Ty};
@@ -543,6 +544,25 @@ pub struct Unit {
     pub version: u32,
 }
 
+/// Work done since the process started, counted rather than timed, so
+/// tests can check that the cost of an input does not grow with the number
+/// of units (spec appendix BA).
+pub struct Work {
+    /// Units read out of the kernel.
+    pub decoded: AtomicU64,
+    /// Steps the interpreter took.
+    pub steps: AtomicU64,
+}
+
+pub static WORK: Work = Work { decoded: AtomicU64::new(0), steps: AtomicU64::new(0) };
+
+impl Work {
+    /// (units read, steps taken) so far.
+    pub fn now(&self) -> (u64, u64) {
+        (self.decoded.load(Ordering::Relaxed), self.steps.load(Ordering::Relaxed))
+    }
+}
+
 impl Unit {
     pub fn to_value(&self) -> Value {
         Value::tuple([
@@ -560,6 +580,7 @@ impl Unit {
     }
 
     pub fn from_value(v: &Value) -> Result<Unit, String> {
+        WORK.decoded.fetch_add(1, Ordering::Relaxed);
         let [label, root, notes, met, matched, alerts, timers, facts, taken, version] = fields::<10>(v, "unit")?;
         let mut wanted = vec![];
         for t in items(timers)? {
