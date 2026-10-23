@@ -165,6 +165,18 @@ enum Thought {
     Read(Ask, Answer),
 }
 
+/// Asks a model on a thread of its own, which answers on `answers` even if
+/// the model panics; false if no thread could be started, so it is asked
+/// again on the next tick.
+fn apart(answers: std::sync::mpsc::Sender<Thought>, ask: impl FnOnce() -> Answer + Send + 'static, thought: impl FnOnce(Answer) -> Thought + Send + 'static) -> bool {
+    std::thread::Builder::new()
+        .spawn(move || {
+            let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(ask)).unwrap_or_else(|_| Answer::Failed("the model's thread panicked".into()));
+            let _ = answers.send(thought(answer));
+        })
+        .is_ok()
+}
+
 /// How many models are asked at once.
 pub const THINKERS: usize = 8;
 
@@ -665,6 +677,9 @@ impl Service {
             return Err(format!("the log could not be written ({why}), so this pod takes nothing until it restarts"));
         }
         self.beat(now)?;
+        // The answers already in come before the clock moves, so a model that
+        // answered in time is not overtaken by its own deadline (appendix BF.2.1).
+        self.collect(now)?;
         // Models first: their deadlines are timers too (appendix S.2.2).
         let asked = self.ask_models(now)?;
         let elapsed = self.elapsed(now);
@@ -711,10 +726,11 @@ impl Service {
             // A model that can be asked on a thread of its own is, so a slow
             // one holds up nothing; its answer is applied when it comes.
             if let Some((make, answers)) = self.think(&model, &key) {
-                std::thread::spawn(move || {
-                    let answer = crate::choice::ask_backend(make().as_mut(), &choice, within);
-                    let _ = answers.send(Thought::Decided(key, answer));
-                });
+                let k = key.clone();
+                let went = apart(answers, move || crate::choice::ask_backend(make().as_mut(), &choice, within), move |a| Thought::Decided(k, a));
+                if !went {
+                    self.thinking.remove(&key);
+                }
                 continue;
             }
             let answer = self.host.models.ask(&model, &choice, within);
@@ -741,10 +757,10 @@ impl Service {
                 Err(unread) => unread,
                 Ok((model, r, within)) => match self.think(&model, &ask.key) {
                     Some((make, answers)) => {
-                        std::thread::spawn(move || {
-                            let answer = crate::choice::read_backend(make().as_mut(), &r, within);
-                            let _ = answers.send(Thought::Read(ask, answer));
-                        });
+                        let key = ask.key.clone();
+                        if !apart(answers, move || crate::choice::read_backend(make().as_mut(), &r, within), move |a| Thought::Read(ask, a)) {
+                            self.thinking.remove(&key);
+                        }
                         continue;
                     }
                     None => {
@@ -770,6 +786,7 @@ impl Service {
         if let Some(why) = &self.broken {
             return Err(format!("the log could not be written ({why}), so no input is taken until the service restarts"));
         }
+        self.collect(now)?;
         // Media must be in the store before an input names it, so a model can
         // see it; such an input is refused before it is logged (appendix V.2.2).
         if let Some(Val::Media { sha256, mime, .. }) = values_of(&r).into_iter().find(|v| !self.host.media.holds(v)) {

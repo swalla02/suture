@@ -132,14 +132,16 @@ fn a_deploy_while_a_model_is_asked_carries_the_choice_over() {
     assert!(t.contains("choice: Fast for O1/Shipment#1@Carrier by model \"dearest@1\" (of Cheap, Fast)"), "{t}");
 }
 
-/// A model's API that answers only once `open` is set.
+/// A model's API that answers only once `open` is set, or panics.
 #[derive(Clone)]
 struct Held {
     open: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    panics: bool,
 }
 
 impl suture_runtime::backend::Transport for Held {
     fn post(&mut self, _: &str, _: Option<&str>, _: &serde_json::Value, _: std::time::Duration) -> Result<serde_json::Value, String> {
+        assert!(!self.panics, "the model's API broke");
         let start = std::time::Instant::now();
         while !self.open.load(std::sync::atomic::Ordering::Relaxed) && start.elapsed() < std::time::Duration::from_secs(20) {
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -154,25 +156,13 @@ impl suture_runtime::backend::Transport for Held {
 
 #[test]
 fn a_slow_model_holds_up_no_input() {
-    use suture_runtime::backend::{Custom, MediaMode};
     let p = prog();
     let open = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let mut svc = Service::in_memory(&p, T0);
-    let backend = Custom { url: "http://model.local".into(), key_env: None, pick: "/pick".into(), value: None, confidence: None, min_confidence: None, media: MediaMode::Omit, max_media_bytes: 0, transport: Box::new(Held { open: open.clone() }) };
-    svc.host.models.register_backend("dearest@1", Box::new(backend));
-    svc.start_posting();
-    for r in [
-        world(&p, "Product", "Kettle", json!({ "name": "Kettle" })),
-        world(&p, "Carrier", "Cheap", json!({ "name": "Cheap", "zone": "EU", "fee": "5 EUR" })),
-        world(&p, "Carrier", "Fast", json!({ "name": "Fast", "zone": "EU", "fee": "9 EUR" })),
-    ] {
-        assert_eq!(svc.input(r, T0).unwrap().refused, None);
-    }
+    let mut svc = held(&p, Held { open: open.clone(), panics: false });
     let order = |label: &str| {
         let attrs = service::attrs_json(&p, "Order", Some(&json!({ "product": "Kettle", "zone": "EU" }))).unwrap();
         Record::New { by: Who { role: "staff".into(), name: "Sam".into() }, verb: "places".into(), kind: "Order".into(), label: label.into(), attrs, items: vec![] }
     };
-    svc.input(order("O1"), T0).unwrap();
     // The model is asked on a thread of its own: the tick and the next input go on.
     let ticked = svc.tick(T0).unwrap();
     assert_eq!(carrier(&ticked), "", "{ticked:?}");
@@ -185,4 +175,43 @@ fn a_slow_model_holds_up_no_input() {
         svc.collect(T0).unwrap();
         svc.tick(T0).unwrap();
     }
+}
+
+fn held(p: &Program, api: Held) -> Service {
+    use suture_runtime::backend::{Custom, MediaMode};
+    let mut svc = Service::in_memory(p, T0);
+    let backend = Custom { url: "http://model.local".into(), key_env: None, pick: "/pick".into(), value: None, confidence: None, min_confidence: None, media: MediaMode::Omit, max_media_bytes: 0, transport: Box::new(api) };
+    svc.host.models.register_backend("dearest@1", Box::new(backend));
+    svc.start_posting();
+    for r in [
+        world(p, "Product", "Kettle", json!({ "name": "Kettle" })),
+        world(p, "Carrier", "Cheap", json!({ "name": "Cheap", "zone": "EU", "fee": "5 EUR" })),
+        world(p, "Carrier", "Fast", json!({ "name": "Fast", "zone": "EU", "fee": "9 EUR" })),
+    ] {
+        assert_eq!(svc.input(r, T0).unwrap().refused, None);
+    }
+    let attrs = service::attrs_json(p, "Order", Some(&json!({ "product": "Kettle", "zone": "EU" }))).unwrap();
+    svc.input(Record::New { by: Who { role: "staff".into(), name: "Sam".into() }, verb: "places".into(), kind: "Order".into(), label: "O1".into(), attrs, items: vec![] }, T0).unwrap();
+    svc
+}
+
+#[test]
+fn an_answer_in_time_is_not_overtaken_by_its_deadline() {
+    let p = prog();
+    let mut svc = held(&p, Held { open: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)), panics: false });
+    svc.tick(T0).unwrap();
+    // The model answers at once; the service next looks well past the deadline.
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    svc.tick(T0 + 60).unwrap();
+    assert!(svc.host.trace.iter().any(|l| l.contains("choice: Fast for O1/Shipment#1@Carrier by model \"dearest@1\"")), "{}", svc.host.trace.join("\n"));
+}
+
+#[test]
+fn a_model_whose_thread_panics_answers_that_it_failed() {
+    let p = prog();
+    let mut svc = held(&p, Held { open: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)), panics: true });
+    svc.tick(T0).unwrap();
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    svc.tick(T0).unwrap();
+    assert!(svc.host.trace.iter().any(|l| l.contains("choice: Cheap for O1/Shipment#1@Carrier by prefer") && l.contains("panicked")), "{}", svc.host.trace.join("\n"));
 }

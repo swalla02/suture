@@ -2501,10 +2501,11 @@ After slice 54, a model was still asked on the serving thread, so a slow one hel
    - Once serving starts, the model of a waiting choice (appendix S.2.2), or of a source's request (appendix AF.2.3), is asked on a thread of its own, if its backend can be made there. Jev, a custom backend and Workers AI can, over `curl`. A registered function, a scripted answer, or a backend over a test transport is asked on the serving thread, as before.
    - At most 8 models think at once; the rest are asked when one answers.
    - The serving thread logs and applies each answer when it comes, as `decided` for a choice and as the request's answer for a source. A source's answer is judged (type, scale, how sure) as it is applied.
-   - A choice whose deadline passes while its model thinks is made by `prefer`, as before; the late answer is logged and noted as `nothing waits for it`.
+   - The answers already in are applied before the clock moves, at each tick and input, so an answer given in time is not overtaken by its own deadline. A choice whose deadline passes while its model still thinks is made by `prefer`, as before; the late answer is logged and noted as `nothing waits for it`.
+   - A model whose thread panics answers that it failed. A thread that cannot start leaves the model to be asked on the next tick.
 2. **Backends.** `Backend::on_another_thread` gives what makes the same backend on another thread, with its transport's `on_another_thread`. It is a function, not a backend, since a backend's transport need not be `Send`.
 
 ### BF.3 Acceptance
 
-runtime/tests/deferred.rs: while a model's API holds its answer, ticks and inputs go on, and its pick is applied when it comes.
+runtime/tests/deferred.rs: while a model's API holds its answer, ticks and inputs go on, and its pick is applied when it comes. An answer in by the time the service looks past the deadline is still used. A panicking model's choice is made by `prefer`.
 
