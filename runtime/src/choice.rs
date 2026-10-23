@@ -110,6 +110,13 @@ pub type Model = Box<dyn FnMut(&Choice) -> Option<String>>;
 pub trait Backend {
     fn decide(&mut self, c: &Choice, within: Duration) -> Answer;
 
+    /// What makes the same backend on another thread, so the service asks
+    /// it beside its work (appendix BF.2.1); `None` asks on the service's own
+    /// thread.
+    fn on_another_thread(&self) -> Option<Elsewhere> {
+        None
+    }
+
     /// Reads a value (appendix AF): [`Answer::Read`], or [`Answer::Declined`]
     /// when it finds none. A backend that only picks cannot.
     fn extract(&mut self, _: &Reading, _: Duration) -> Answer {
@@ -159,6 +166,23 @@ pub struct Models {
     scripted: BTreeMap<String, VecDeque<Scripted>>,
 }
 
+/// Makes a backend on the thread that asks it.
+pub type Elsewhere = Box<dyn FnOnce() -> Box<dyn Backend> + Send>;
+
+/// Asks a backend, which has `within_ms` to answer: a pick that comes later is late.
+pub fn ask_backend(b: &mut dyn Backend, c: &Choice, within_ms: u64) -> Answer {
+    let (within, start) = (Duration::from_millis(within_ms), Instant::now());
+    let a = b.decide(c, within);
+    if start.elapsed() > within && matches!(a, Answer::Picked(_)) { Answer::Late } else { a }
+}
+
+/// Has a backend read a value, as [`ask_backend`] asks it.
+pub fn read_backend(b: &mut dyn Backend, r: &Reading, within_ms: u64) -> Answer {
+    let (within, start) = (Duration::from_millis(within_ms), Instant::now());
+    let a = b.extract(r, within);
+    if start.elapsed() > within && matches!(a, Answer::Read(..)) { Answer::Late } else { a }
+}
+
 /// What a model did with a choice.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Answer {
@@ -197,7 +221,6 @@ impl Models {
     /// Asks the model `name`, which has `within_ms` to answer. A scripted
     /// answer still queued comes before the backend of that name.
     pub fn ask(&mut self, name: &str, c: &Choice, within_ms: u64) -> Answer {
-        let within = Duration::from_millis(within_ms);
         match self.scripted.get_mut(name).and_then(VecDeque::pop_front) {
             Some(Scripted::Pick(p, sure)) => return confident(p, sure.map(|t| f64::from(t) / 1000.0), None, c.sure),
             Some(Scripted::Late) => return Answer::Late,
@@ -206,16 +229,22 @@ impl Models {
             None => {}
         }
         if let Some(b) = self.backends.get_mut(name) {
-            let start = Instant::now();
-            let a = b.decide(c, within);
-            return if start.elapsed() > within && matches!(a, Answer::Picked(_)) { Answer::Late } else { a };
+            return ask_backend(b.as_mut(), c, within_ms);
         }
         if self.scripted.contains_key(name) { Answer::Declined } else { Answer::Unknown }
     }
 
+    /// The backend `name` for another thread, if it has one and no scripted
+    /// answer stands in for it.
+    pub fn on_another_thread(&self, name: &str) -> Option<Elsewhere> {
+        if self.scripted.contains_key(name) {
+            return None;
+        }
+        self.backends.get(name)?.on_another_thread()
+    }
+
     /// Asks the model `name` to read a value, within `within_ms`, as [`Models::ask`] does.
     pub fn read(&mut self, name: &str, r: &Reading, within_ms: u64) -> Answer {
-        let within = Duration::from_millis(within_ms);
         match self.scripted.get_mut(name).and_then(VecDeque::pop_front) {
             Some(Scripted::Read(v, c)) => return Answer::Read(v, c.map(|t| f64::from(t) / 1000.0)),
             Some(Scripted::Late) => return Answer::Late,
@@ -224,9 +253,7 @@ impl Models {
             None => {}
         }
         if let Some(b) = self.backends.get_mut(name) {
-            let start = Instant::now();
-            let a = b.extract(r, within);
-            return if start.elapsed() > within && matches!(a, Answer::Read(..)) { Answer::Late } else { a };
+            return read_backend(b.as_mut(), r, within_ms);
         }
         if self.scripted.contains_key(name) { Answer::Declined } else { Answer::Unknown }
     }

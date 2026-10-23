@@ -115,6 +115,10 @@ pub struct Service {
     transport: Box<dyn Transport>,
     /// The threads that post, once serving starts.
     poster: Option<Poster>,
+    /// Where models asked on threads of their own answer, once serving
+    /// starts, and the keys of those still thinking (appendix BF.2.1).
+    thought: Option<(std::sync::mpsc::Sender<Thought>, std::sync::mpsc::Receiver<Thought>)>,
+    thinking: BTreeSet<String>,
     /// The requests already posted by this process, by key.
     posted: BTreeSet<String>,
     /// Requests whose post failed, by key, with when to try again.
@@ -153,6 +157,16 @@ struct Poster {
     jobs: std::sync::mpsc::Sender<Post>,
     done: std::sync::mpsc::Receiver<(Post, Result<Value, String>)>,
 }
+
+/// What a model asked on another thread answered: for a choice, by its
+/// key, or for a source's request.
+enum Thought {
+    Decided(String, Answer),
+    Read(Ask, Answer),
+}
+
+/// How many models are asked at once.
+pub const THINKERS: usize = 8;
 
 /// How many posts run at once.
 pub const POSTERS: usize = 8;
@@ -232,6 +246,8 @@ impl Service {
             adapters: BTreeMap::new(),
             transport: Box::new(backend::Curl),
             poster: None,
+            thought: None,
+            thinking: BTreeSet::new(),
             posted: BTreeSet::new(),
             retry: BTreeMap::new(),
             broken: None,
@@ -682,12 +698,26 @@ impl Service {
         let pods = self.pods(now);
         let mut asked = BTreeSet::new();
         loop {
+            // With [`THINKERS`] models thinking, the rest are asked later.
+            if self.thinking.len() >= THINKERS {
+                break;
+            }
             self.refresh()?;
             let mine = |l: &String| owner(l, &pods) == Some(&self.pod);
-            let next = self.host.model_asks().into_iter().find(|(k, l)| mine(l) && !asked.contains(k));
+            let next = self.host.model_asks().into_iter().find(|(k, l)| mine(l) && !asked.contains(k) && !self.thinking.contains(k));
             let Some((key, _)) = next else { break };
             asked.insert(key.clone());
-            let Some(answer) = self.host.ask_model_now(&key) else { continue };
+            let Some((model, choice, within)) = self.host.model_job(&key) else { continue };
+            // A model that can be asked on a thread of its own is, so a slow
+            // one holds up nothing; its answer is applied when it comes.
+            if let Some((make, answers)) = self.think(&model, &key) {
+                std::thread::spawn(move || {
+                    let answer = crate::choice::ask_backend(make().as_mut(), &choice, within);
+                    let _ = answers.send(Thought::Decided(key, answer));
+                });
+                continue;
+            }
+            let answer = self.host.models.ask(&model, &choice, within);
             out.extend(self.locked(|s| {
                 let from = s.host.trace.len();
                 s.applied(Record::Decided { key: key.clone(), answer: answer.clone() })?;
@@ -698,13 +728,31 @@ impl Service {
         // Then the sources a model reads: its answer is logged as the
         // request's, so replay never asks it again (appendix AF.2.3).
         loop {
+            if self.thinking.len() >= THINKERS {
+                return Ok(out);
+            }
             self.refresh()?;
             let mine = |l: &String| owner(l, &pods) == Some(&self.pod);
-            let next = self.host.pending().into_iter().find(|a| a.verb == crate::interp::READ_VERB && mine(&a.label) && !asked.contains(&a.key)).cloned();
+            let next = self.host.pending().into_iter().find(|a| a.verb == crate::interp::READ_VERB && mine(&a.label) && !asked.contains(&a.key) && !self.thinking.contains(&a.key)).cloned();
             let Some(ask) = next else { return Ok(out) };
             asked.insert(ask.key.clone());
             let from = self.host.trace.len();
-            let (outcome, data) = self.host.read_model(&ask);
+            let (outcome, data) = match self.host.reading_of(&ask) {
+                Err(unread) => unread,
+                Ok((model, r, within)) => match self.think(&model, &ask.key) {
+                    Some((make, answers)) => {
+                        std::thread::spawn(move || {
+                            let answer = crate::choice::read_backend(make().as_mut(), &r, within);
+                            let _ = answers.send(Thought::Read(ask, answer));
+                        });
+                        continue;
+                    }
+                    None => {
+                        let answer = self.host.models.read(&model, &r, within);
+                        self.host.judged(&ask, answer)
+                    }
+                },
+            };
             out.extend(self.host.trace[from..].to_vec());
             out.extend(self.locked(|s| {
                 let from = s.host.trace.len();
@@ -920,6 +968,7 @@ impl Service {
         if self.poster.is_some() {
             return;
         }
+        self.thought.get_or_insert_with(std::sync::mpsc::channel);
         let Some(first) = self.transport.on_another_thread() else { return };
         let (jobs, inbox) = std::sync::mpsc::channel::<Post>();
         let (answers, done) = std::sync::mpsc::channel();
@@ -942,12 +991,37 @@ impl Service {
         self.poster = Some(Poster { jobs, done });
     }
 
-    /// Applies the answers of the posts that finished.
+    /// Applies the answers of the posts and the models that finished.
     pub fn collect(&mut self, now: u64) -> Result<(), String> {
         while let Some((post, r)) = self.poster.as_ref().and_then(|p| p.done.try_recv().ok()) {
             self.posted_with(post, r, now)?;
         }
+        while let Some(t) = self.thought.as_ref().and_then(|(_, done)| done.try_recv().ok()) {
+            let r = match t {
+                Thought::Decided(key, answer) => {
+                    self.thinking.remove(&key);
+                    Record::Decided { key, answer }
+                }
+                Thought::Read(ask, answer) => {
+                    self.thinking.remove(&ask.key);
+                    let (outcome, data) = self.host.judged(&ask, answer);
+                    Record::Answer { adapter: ask.adapter.clone(), outcome, key: Some(ask.key.clone()), target: None, data }
+                }
+            };
+            self.locked(|s| s.applied(r))?;
+        }
         Ok(())
+    }
+
+    /// Where to ask `model` for the request `key` on a thread of its own:
+    /// what makes its backend, and where it answers. `None` asks it here:
+    /// before serving starts, or for a backend that cannot.
+    fn think(&mut self, model: &str, key: &str) -> Option<(crate::choice::Elsewhere, std::sync::mpsc::Sender<Thought>)> {
+        let (answers, _) = self.thought.as_ref()?;
+        let make = self.host.models.on_another_thread(model)?;
+        let answers = answers.clone();
+        self.thinking.insert(key.to_string());
+        Some((make, answers))
     }
 
     fn post_failed(&mut self, ask: &Ask, why: String, now: u64) {

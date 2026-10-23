@@ -9,7 +9,7 @@ use std::time::Duration;
 use base64::Engine;
 use serde_json::{json, Map, Value};
 
-use crate::choice::{confident, Answer, Backend, Choice, Reading};
+use crate::choice::{confident, Answer, Backend, Choice, Elsewhere, Reading};
 use crate::state::Val;
 use suture_lang::ir::Ty;
 
@@ -322,6 +322,12 @@ impl Jev {
 }
 
 impl Backend for Jev {
+    fn on_another_thread(&self) -> Option<Elsewhere> {
+        let transport = self.transport.on_another_thread()?;
+        let (url, model, key_env, min_confidence, media, max_media_bytes) = (self.url.clone(), self.model.clone(), self.key_env.clone(), self.min_confidence, self.media, self.max_media_bytes);
+        Some(Box::new(move || Box::new(Jev { url, model, key_env, min_confidence, media, max_media_bytes, transport })))
+    }
+
     fn decide(&mut self, c: &Choice, within: Duration) -> Answer {
         if let Some(why) = media_unsent(c, self.media, self.max_media_bytes) {
             return Answer::Failed(why);
@@ -420,6 +426,13 @@ impl Custom {
 }
 
 impl Backend for Custom {
+    fn on_another_thread(&self) -> Option<Elsewhere> {
+        let transport = self.transport.on_another_thread()?;
+        let (url, key_env, pick, value, confidence) = (self.url.clone(), self.key_env.clone(), self.pick.clone(), self.value.clone(), self.confidence.clone());
+        let (min_confidence, media, max_media_bytes) = (self.min_confidence, self.media, self.max_media_bytes);
+        Some(Box::new(move || Box::new(Custom { url, key_env, pick, value, confidence, min_confidence, media, max_media_bytes, transport })))
+    }
+
     fn decide(&mut self, c: &Choice, within: Duration) -> Answer {
         if let Some(why) = media_unsent(c, self.media, self.max_media_bytes) {
             return Answer::Failed(why);
@@ -557,6 +570,12 @@ impl WorkersAi {
 }
 
 impl Backend for WorkersAi {
+    fn on_another_thread(&self) -> Option<Elsewhere> {
+        let transport = self.transport.on_another_thread()?;
+        let (url, key_env, min_confidence, max_media_bytes) = (self.url.clone(), self.key_env.clone(), self.min_confidence, self.max_media_bytes);
+        Some(Box::new(move || Box::new(WorkersAi { url, key_env, min_confidence, max_media_bytes, transport })))
+    }
+
     fn decide(&mut self, _: &Choice, _: Duration) -> Answer {
         Answer::Failed("this model reads values; it does not pick among options".into())
     }

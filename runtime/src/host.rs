@@ -178,6 +178,9 @@ fn refusal_of(u: &Unit) -> Option<String> {
     u.notes.iter().find_map(|n| n.strip_prefix("refused ")?.split_once(": refused by rule ").map(|(_, r)| r.to_string()))
 }
 
+/// A request's answer: its outcome and the data it carries.
+pub type Outcome = (String, Vec<(String, Val)>);
+
 impl Host {
     pub fn new(prog: Program) -> Host {
         Self::with_journal(prog, Box::new(suture::MemJournal::new()))
@@ -612,10 +615,15 @@ impl Host {
     /// Asks the model of a waiting choice, and gives its answer without
     /// applying it: the caller logs it and applies it with [`Host::model_answer`].
     pub fn ask_model_now(&mut self, key: &str) -> Option<Answer> {
-        let a = self.asking.iter().find(|a| a.choice.key == key)?;
-        let (model, within) = (a.model.clone(), a.within);
-        let choice = self.with_media(&a.choice);
+        let (model, choice, within) = self.model_job(key)?;
         Some(self.models.ask(&model, &choice, within))
+    }
+
+    /// What asking the model of a waiting choice takes: its name, the choice
+    /// with its media, and its milliseconds to answer.
+    pub fn model_job(&self, key: &str) -> Option<(String, Choice, u64)> {
+        let a = self.asking.iter().find(|a| a.choice.key == key)?;
+        Some((a.model.clone(), self.with_media(&a.choice), a.within))
     }
 
     /// The choice with the content of its media, read from the store just
@@ -1008,11 +1016,24 @@ impl Host {
     /// Asks the model of a source it reads (appendix AF.2.1), and gives the
     /// request's answer without applying it: `read` with the value, or
     /// `unread`, with why in the trace.
-    pub fn read_model(&mut self, ask: &Ask) -> (String, Vec<(String, Val)>) {
+    pub fn read_model(&mut self, ask: &Ask) -> Outcome {
+        match self.reading_of(ask) {
+            Ok((model, r, within)) => {
+                let answer = self.models.read(&model, &r, within);
+                self.judged(ask, answer)
+            }
+            Err(unread) => unread,
+        }
+    }
+
+    /// What a model source's request asks its model: the model, the reading
+    /// with its media, and its milliseconds to answer; or, with no source
+    /// that reads it, the request's answer.
+    pub fn reading_of(&mut self, ask: &Ask) -> Result<(String, Reading, u64), Outcome> {
         let model = ask.adapter.clone();
         let Some(src) = self.prog.sources.iter().find(|s| s.model && s.request_kind() == ask.kind).cloned() else {
             self.trace.push(format!("      model \"{model}\": no source of the program is read by it   ({})", ask.key));
-            return (UNREAD.into(), vec![]);
+            return Err((UNREAD.into(), vec![]));
         };
         let mut r = Reading {
             unit: ask.label.clone(),
@@ -1027,8 +1048,15 @@ impl Host {
             media: BTreeMap::new(),
         };
         r.media = r.media_named().into_iter().filter_map(|h| Some((h.to_string(), self.media.get(h)?))).collect();
-        let within = src.within_secs.saturating_mul(1000);
-        let why = match self.models.read(&model, &r, within) {
+        Ok((model, r, src.within_secs.saturating_mul(1000)))
+    }
+
+    /// The answer to a model source's request, from what its model read:
+    /// a value it may use, or none, and why (appendix AF.2.3).
+    pub fn judged(&mut self, ask: &Ask, answer: Answer) -> Outcome {
+        let model = ask.adapter.clone();
+        let Some(src) = self.prog.sources.iter().find(|s| s.model && s.request_kind() == ask.kind).cloned() else { return (UNREAD.into(), vec![]) };
+        let why = match answer {
             Answer::Read(v, _) if v.ty() != src.ty => format!("it gave {}, which is not a {:?}", interp::shown(&self.prog, &src.attr, &v), src.ty),
             // A score outside its scale is not used (appendix AZ.2.2).
             Answer::Read(Val::Count(n), _) if src.scale.is_some_and(|(a, b)| !(a..=b).contains(&n)) => {
