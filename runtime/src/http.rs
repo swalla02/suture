@@ -64,6 +64,16 @@ fn decoded(path: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// The most trace lines one `GET /trace` returns.
+pub const TRACE_PAGE: usize = 1000;
+
+/// Whether a request may be served: it carries the gateway's token, if
+/// there is one, or it is `GET /health`.
+pub fn from_gateway(req: &Request, gateway: Option<&str>) -> bool {
+    let Some(t) = gateway else { return true };
+    (req.method == "GET" && req.path == "/health") || req.header("suture-gateway").is_some_and(|g| same(t, g))
+}
+
 /// Answers one request at Unix time `now`. `operator` is the token operator
 /// requests must carry; without one, they are refused.
 pub fn handle(svc: &mut Service, req: &Request, operator: Option<&str>, now: u64) -> (u16, Value) {
@@ -85,8 +95,10 @@ pub fn handle(svc: &mut Service, req: &Request, operator: Option<&str>, now: u64
         }
         ("GET", "/trace") => {
             let from = req.query.split('&').find_map(|kv| kv.strip_prefix("from=")).and_then(|n| n.parse::<usize>().ok()).unwrap_or(0);
+            // At most TRACE_PAGE lines at a time; `next` reads on.
             let lines = svc.host.trace.get(from..).unwrap_or_default();
-            (200, json!({ "from": from, "next": svc.host.trace.len().max(from), "lines": lines }))
+            let lines = &lines[..lines.len().min(TRACE_PAGE)];
+            (200, json!({ "from": from, "next": from + lines.len(), "lines": lines }))
         }
         ("GET", p) if p.starts_with("/units/") => {
             let label = decoded(&p["/units/".len()..]);
@@ -109,8 +121,11 @@ pub fn handle(svc: &mut Service, req: &Request, operator: Option<&str>, now: u64
             }
         }
         ("POST", "/media") => {
-            if req.header("suture-caller").is_none_or(|c| c.trim().split_once(' ').is_none()) {
+            let Some((role, _)) = req.header("suture-caller").and_then(|c| c.trim().split_once(' ')) else {
                 return error(401, "media needs the header `Suture-Caller: <role> <name>`, which the gateway sets".into());
+            };
+            if !svc.host.prog.roles.iter().any(|r| r.name == role) {
+                return error(403, format!("there is no role {role}"));
             }
             let Some(mime) = req.header("content-type").map(|m| m.split(';').next().unwrap_or_default().trim().to_ascii_lowercase()) else {
                 return error(400, "media needs a `Content-Type` such as image/png".into());
@@ -251,11 +266,15 @@ pub fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
             (req.path, req.query) = (path.to_string(), query.to_string());
         } else if l.is_empty() {
             break;
+        } else if line.starts_with([' ', '\t']) {
+            // A folded header line, which a gateway may read as part of the
+            // header above it.
+            return Err("a header line may not start with a space".into());
         } else if let Some((k, v)) = l.split_once(':') {
             let k = k.trim().to_ascii_lowercase();
             // A gateway that adds a header rather than replacing it must not let
             // the client's own win.
-            if ["suture-caller", "content-length", "authorization"].contains(&k.as_str()) && req.header(&k).is_some() {
+            if ["suture-caller", "suture-gateway", "content-length", "authorization"].contains(&k.as_str()) && req.header(&k).is_some() {
                 return Err(format!("more than one `{k}` header"));
             }
             req.headers.push((k, v.trim().to_string()));
@@ -309,13 +328,15 @@ pub fn write_response(stream: &mut TcpStream, status: u16, body: &Value) -> std:
 /// Serves until `stop` is set: one request at a time, and once a second the
 /// timers that fell due (appendix L.2.4). Each trace line goes to `out`.
 /// However it ends, the pod leaves the pods, so its units move at once.
-pub fn serve(svc: &mut Service, listener: TcpListener, operator: Option<&str>, stop: &AtomicBool, clock: impl Fn() -> u64, out: &mut dyn Write) -> std::io::Result<()> {
-    let served = serving(svc, listener, operator, stop, clock, out);
+/// With a `gateway` token, every request but `GET /health` must carry it as
+/// `Suture-Gateway`, so only the gateway can name callers (appendix BB.2.1).
+pub fn serve(svc: &mut Service, listener: TcpListener, operator: Option<&str>, gateway: Option<&str>, stop: &AtomicBool, clock: impl Fn() -> u64, out: &mut dyn Write) -> std::io::Result<()> {
+    let served = serving(svc, listener, operator, gateway, stop, clock, out);
     svc.leave();
     served
 }
 
-fn serving(svc: &mut Service, listener: TcpListener, operator: Option<&str>, stop: &AtomicBool, clock: impl Fn() -> u64, out: &mut dyn Write) -> std::io::Result<()> {
+fn serving(svc: &mut Service, listener: TcpListener, operator: Option<&str>, gateway: Option<&str>, stop: &AtomicBool, clock: impl Fn() -> u64, out: &mut dyn Write) -> std::io::Result<()> {
     listener.set_nonblocking(true)?;
     let mut shown = svc.host.trace.len();
     let mut last = 0;
@@ -325,6 +346,7 @@ fn serving(svc: &mut Service, listener: TcpListener, operator: Option<&str>, sto
                 stream.set_nonblocking(false)?;
                 stream.set_read_timeout(Some(Duration::from_secs(5)))?;
                 let (status, body, unread) = match read_request(&mut stream) {
+                    Ok(req) if !from_gateway(&req, gateway) => (401, json!({ "error": "this service is reached only through its gateway" }), false),
                     Ok(req) => {
                         let (status, body) = handle(svc, &req, operator, clock());
                         (status, body, false)

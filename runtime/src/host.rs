@@ -989,14 +989,14 @@ impl Host {
         r.media = r.media_named().into_iter().filter_map(|h| Some((h.to_string(), self.media.get(h)?))).collect();
         let within = src.within_secs.saturating_mul(1000);
         let why = match self.models.read(&model, &r, within) {
-            Answer::Read(v, _) if v.ty() != src.ty => format!("it gave {}, which is not a {:?}", v.show(&self.prog.currency), src.ty),
+            Answer::Read(v, _) if v.ty() != src.ty => format!("it gave {}, which is not a {:?}", interp::shown(&self.prog, &src.attr, &v), src.ty),
             // A score outside its scale is not used (appendix AZ.2.2).
             Answer::Read(Val::Count(n), _) if src.scale.is_some_and(|(a, b)| !(a..=b).contains(&n)) => {
                 let (a, b) = src.scale.unwrap_or_default();
                 format!("it scored {n}, outside the scale from {a} to {b}")
             }
             Answer::Read(v, c) => match (src.sure.map(|t| f64::from(t) / 1000.0), c) {
-                (Some(t), Some(c)) if c < t => format!("it read {} at {c:.2}, and the source needs at least {t} sure", v.show(&self.prog.currency)),
+                (Some(t), Some(c)) if c < t => format!("it read {} at {c:.2}, and the source needs at least {t} sure", interp::shown(&self.prog, &src.attr, &v)),
                 (Some(t), None) => format!("it gave no confidence, and the source needs at least {t} sure"),
                 (_, c) => {
                     if let Some(c) = c {

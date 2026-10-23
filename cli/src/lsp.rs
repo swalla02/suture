@@ -40,10 +40,17 @@ fn read(input: &mut impl BufRead) -> std::io::Result<Option<Value>> {
         }
     }
     let Some(n) = length else { return Ok(Some(Value::Null)) };
+    // A module's files are small; a larger message is not read into memory.
+    if n > MAX_MESSAGE {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("a message of {n} bytes; at most {MAX_MESSAGE}")));
+    }
     let mut body = vec![0; n];
     input.read_exact(&mut body)?;
     Ok(Some(serde_json::from_slice(&body).unwrap_or(Value::Null)))
 }
+
+/// The largest message the server reads.
+const MAX_MESSAGE: usize = 16 * 1024 * 1024;
 
 fn write(out: &mut impl Write, msg: &Value) -> std::io::Result<()> {
     let body = msg.to_string();

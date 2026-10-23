@@ -328,14 +328,19 @@ fn serving(
     if operator.as_deref().is_some_and(|t| t.trim().is_empty()) {
         return Err("SUTURE_OPERATOR_TOKEN is empty; set a token, or unset it to refuse operator requests".into());
     }
+    let gateway = std::env::var("SUTURE_GATEWAY_TOKEN").ok();
+    if gateway.as_deref().is_some_and(|t| t.trim().is_empty()) {
+        return Err("SUTURE_GATEWAY_TOKEN is empty; set a token the gateway sends as `Suture-Gateway`".into());
+    }
     let bound = listener.local_addr().map_err(|e| e.to_string())?;
+    // Beyond this machine, anyone could name themselves a caller (appendix BB.2.1).
+    if !bound.ip().is_loopback() && gateway.is_none() {
+        return Err(format!("{bound} is reachable beyond this machine; set SUTURE_GATEWAY_TOKEN, which the gateway sends as the header `Suture-Gateway`, or listen on 127.0.0.1"));
+    }
     println!("{} v{} on http://{bound}, state in {}, pod {pod}", prog.module, prog.version, state.display());
     let others: Vec<String> = svc.pods(unix_now()).into_iter().filter(|p| *p != pod).collect();
     if !others.is_empty() {
         println!("  with pods {}", others.join(", "));
-    }
-    if !bound.ip().is_loopback() {
-        println!("  warning: listening beyond this machine; only the gateway may reach this port, since it trusts the Suture-Caller header");
     }
     for l in &svc.deployed {
         println!("  {l}");
@@ -344,7 +349,7 @@ fn serving(
     // Requests that were waiting when the service stopped are posted again.
     svc.post_new(unix_now())?;
     stop_on_signals();
-    suture_runtime::http::serve(svc, listener, operator.as_deref(), &STOP, unix_now, &mut std::io::stdout()).map_err(|e| e.to_string())?;
+    suture_runtime::http::serve(svc, listener, operator.as_deref(), gateway.as_deref(), &STOP, unix_now, &mut std::io::stdout()).map_err(|e| e.to_string())?;
     println!("stopped; pod {pod} left");
     Ok(true)
 }

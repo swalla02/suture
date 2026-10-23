@@ -96,11 +96,17 @@ fn strip_comment(line: &str) -> &str {
     line
 }
 
+/// The most parentheses one line may have open at once. The parsers try a
+/// `(` as a group and then as a calculation, so each level can double their
+/// work; deeper nesting is refused before they start (appendix BB.2.4).
+pub const MAX_DEPTH: usize = 8;
+
 /// Splits one line into tokens.
 pub fn tokens(text: &str) -> Result<Vec<Tok>, String> {
     let chars: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
+    let mut depth = 0usize;
     while i < chars.len() {
         let c = chars[i];
         if c.is_whitespace() {
@@ -146,6 +152,14 @@ pub fn tokens(text: &str) -> Result<Vec<Tok>, String> {
                 }
             }
         } else if "{}:,=|()+-*/×−".contains(c) {
+            if c == '(' {
+                depth += 1;
+                if depth > MAX_DEPTH {
+                    return Err(format!("more than {MAX_DEPTH} parentheses open at once"));
+                }
+            } else if c == ')' {
+                depth = depth.saturating_sub(1);
+            }
             out.push(Tok::Sym(c));
             i += 1;
         } else {
@@ -283,6 +297,14 @@ mod tests {
         assert!(t.contains(&Tok::Num("120".into())));
         assert!(t.contains(&Tok::Str("a -- b".into())));
         assert!(t.contains(&Tok::Sym('{')) && t.contains(&Tok::Sym(':')));
+    }
+
+    #[test]
+    fn deep_parentheses_are_refused_before_parsing() {
+        let deep = format!("rule r: every A's x is at most {}1{}", "(".repeat(MAX_DEPTH + 1), ")".repeat(MAX_DEPTH + 1));
+        assert!(tokens(&deep).unwrap_err().contains("parentheses open at once"));
+        let ok = format!("{}1{}", "(".repeat(MAX_DEPTH), ")".repeat(MAX_DEPTH));
+        assert!(tokens(&ok).is_ok());
     }
 
     #[test]

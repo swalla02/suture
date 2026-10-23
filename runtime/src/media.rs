@@ -27,7 +27,13 @@ pub struct Blob {
 pub struct Store {
     mem: BTreeMap<String, Blob>,
     dir: Option<PathBuf>,
+    /// The bytes kept, counted when first needed.
+    used: Option<u64>,
 }
+
+/// The most the store keeps in all, so uploads cannot fill the disk the
+/// log is on (appendix BB.2.2).
+pub const MAX_STORE_BYTES: u64 = 1024 * 1024 * 1024;
 
 /// The SHA-256 of `data`, in lower-case hex.
 pub fn sha256(data: &[u8]) -> String {
@@ -63,7 +69,7 @@ pub fn mime_of(name: &str) -> Option<&'static str> {
 impl Store {
     /// A store in the directory `dir`, made if missing.
     pub fn in_dir(dir: PathBuf) -> Store {
-        Store { mem: BTreeMap::new(), dir: Some(dir) }
+        Store { mem: BTreeMap::new(), dir: Some(dir), used: None }
     }
 
     /// Keeps `data` as `mime`, and gives the value that refers to it.
@@ -80,6 +86,11 @@ impl Store {
         if let Some(kept) = self.get(&hash) {
             return Ok(Val::Media { sha256: hash, mime: kept.mime, bytes });
         }
+        let used = self.used();
+        if used + bytes > MAX_STORE_BYTES {
+            return Err(format!("the media store is full: it keeps at most {MAX_STORE_BYTES} bytes"));
+        }
+        self.used = Some(used + bytes);
         match &self.dir {
             Some(dir) => {
                 let path = dir.join(&hash);
@@ -112,6 +123,17 @@ impl Store {
                 Ok(Val::Media { sha256: hash, mime: mime.to_string(), bytes })
             }
         }
+    }
+
+    /// The bytes kept so far.
+    fn used(&mut self) -> u64 {
+        if let Some(u) = self.used {
+            return u;
+        }
+        let on_disk = self.dir.as_ref().and_then(|d| std::fs::read_dir(d).ok()).into_iter().flatten().flatten().filter_map(|e| e.metadata().ok()).map(|m| m.len()).sum::<u64>();
+        let u = on_disk + self.mem.values().map(|b| b.data.len() as u64).sum::<u64>();
+        self.used = Some(u);
+        u
     }
 
     /// The media with this hash, if it is kept and its content still has it.

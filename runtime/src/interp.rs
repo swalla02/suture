@@ -839,7 +839,7 @@ fn decide_for(prog: &Program, u: &Unit, at: &[usize], id: &str, skip: Vec<String
                 }
                 (Some(per), None) => format!("{}@{}", t.name, period_key(per, node_at(&u.root, at).created)),
                 (None, _) if !t.group.is_empty() => {
-                    let vals = t.group.iter().map(|n| num(prog, v, at, n)).collect::<Option<Vec<_>>>()?;
+                    let vals = t.group.iter().map(|n| Some((num(prog, v, at, n)?, is_personal(prog, n)))).collect::<Option<Vec<_>>>()?;
                     format!("{}#{}", t.name, group_key(prog, &vals))
                 }
                 (None, _) => t.name.clone(),
@@ -1018,7 +1018,7 @@ fn answer(prog: &Program, u: &mut Unit, key: &str, outcome: &str, data: &[(Strin
                     return Err(refuse(why));
                 }
             }
-            Some((_, ty)) => return Err(refuse(format!("{name} must be {ty:?}, not {}", v.show(&prog.currency)))),
+            Some((_, ty)) => return Err(refuse(format!("{name} must be {ty:?}, not {}", shown(prog, name, v)))),
             None => return Err(refuse(format!("a {kind} answer has no field {name}"))),
         }
     }
@@ -2100,6 +2100,11 @@ pub fn violated<'p>(prog: &'p Program, u: &Unit) -> Option<&'p Rule> {
 /// and the value of an attribute some kind marks personal as `(personal)`
 /// (appendix N.2.5). Marks are matched by the attribute's name, so this
 /// masks more than it needs to, never less.
+/// Whether `n` reads a personal attribute.
+fn is_personal(prog: &Program, n: &Num) -> bool {
+    matches!(n, Num::Path(p) if matches!(p.steps.last(), Some(Step::Attr(a)) if prog.kinds.iter().any(|k| k.attr(a).is_some_and(|x| x.mark == Some(Mark::Personal)))))
+}
+
 pub fn shown(prog: &Program, attr: &str, v: &Val) -> String {
     let personal = prog.kinds.iter().any(|k| k.attr(attr).is_some_and(|a| a.mark == Some(suture_lang::ir::Mark::Personal)));
     if personal && !matches!(v, Val::Secret(_)) { "(personal)".into() } else { v.show(&prog.currency) }
@@ -2285,11 +2290,14 @@ fn num(prog: &Program, v: View, at: &[usize], n: &Num) -> Option<Val> {
 
 /// The group of a take for `no two … have the same …`, from the entity's
 /// values: `"Bo"`, `Ann, 2026-03-01`. It never holds `@` or `#`, which
-/// mark a total's period and group (appendix AP.2.2).
-fn group_key(prog: &Program, vals: &[Val]) -> String {
+/// mark a total's period and group (appendix AP.2.2). A personal value is
+/// kept as a hash of it, so traces and read-outs never show it
+/// (appendix BB.2.5).
+fn group_key(prog: &Program, vals: &[(Val, bool)]) -> String {
     let shown: Vec<String> = vals
         .iter()
-        .map(|x| match x {
+        .map(|(x, personal)| match x {
+            x if *personal => format!("(personal {})", &crate::media::sha256(x.show(&prog.currency).as_bytes())[..12]),
             Val::Text(s) => format!("{s:?}"),
             x => x.show(&prog.currency),
         })

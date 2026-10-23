@@ -74,6 +74,13 @@ spec:
                 secretKeyRef:
                   name: tickets-operator
                   key: token
+            # The gateway sends this as `Suture-Gateway`; without it, a pod
+            # listening beyond localhost does not start.
+            - name: SUTURE_GATEWAY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tickets-gateway
+                  key: token
           ports:
             - name: http
               containerPort: 7878

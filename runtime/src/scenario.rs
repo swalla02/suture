@@ -248,8 +248,7 @@ fn values(prog: &Program, media: &mut Store, base: &Path, pairs: &[(String, Lite
                 }
                 Literal::File(name) => {
                     let mime = mime_of(name).ok_or_else(|| format!("{k}: file \"{name}\": name a .png, .jpg, .gif, .webp, .mp3, .wav, .ogg, .mp4, .webm, .pdf or .txt file"))?;
-                    let path = base.join(name);
-                    let data = std::fs::read(&path).map_err(|e| format!("{k}: file \"{name}\": {}: {e}", path.display()))?;
+                    let data = module_file(base, name).map_err(|e| format!("{k}: file \"{name}\": {e}"))?;
                     media.put(mime, data).map_err(|e| format!("{k}: file \"{name}\": {e}"))?
                 }
             };
@@ -304,4 +303,26 @@ fn alert(host: &Host, name: &str, negated: bool) -> Result<(), String> {
         (false, true) => Err(format!("expected no alert for {name}")),
         _ => Ok(()),
     }
+}
+
+/// A file a scenario names, read only from inside the module's directory
+/// and only up to the size of media, so a module cannot read or send out
+/// other files (appendix BB.2.3).
+fn module_file(base: &std::path::Path, name: &str) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let path = std::path::Path::new(name);
+    if path.is_absolute() || path.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+        return Err("name a file in the module's directory, without `..` or a leading `/`".into());
+    }
+    let inside = |p: &std::path::Path| p.canonicalize().map_err(|e| format!("{}: {e}", p.display()));
+    let (root, file) = (inside(base)?, inside(&base.join(path))?);
+    if !file.starts_with(&root) || !file.is_file() {
+        return Err(format!("{} is not a file in the module's directory", base.join(path).display()));
+    }
+    let mut data = vec![];
+    std::fs::File::open(&file).and_then(|f| f.take(crate::media::MAX_MEDIA_BYTES as u64 + 1).read_to_end(&mut data)).map_err(|e| format!("{}: {e}", file.display()))?;
+    if data.len() > crate::media::MAX_MEDIA_BYTES {
+        return Err(format!("it is larger than {} bytes", crate::media::MAX_MEDIA_BYTES));
+    }
+    Ok(data)
 }

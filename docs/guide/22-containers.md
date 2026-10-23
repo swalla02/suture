@@ -57,7 +57,7 @@ A request can take up to 15 seconds: 5 to read it, and 10 to post to a slow adap
 - each pod is named after its Kubernetes pod (`--pod $(POD_NAME)`, so `tickets-0` and `tickets-1`);
 - `/health` is the startup, readiness and liveness probe, and the startup probe gives a long replay up to 5 minutes;
 - the pods get 30 seconds to stop;
-- `SUTURE_OPERATOR_TOKEN` comes from the secret `tickets-operator`;
+- `SUTURE_OPERATOR_TOKEN` comes from the secret `tickets-operator`, and `SUTURE_GATEWAY_TOKEN`, which the gateway sends as `Suture-Gateway`, from `tickets-gateway`;
 - the service `tickets` must be reachable only by the gateway, since the pods trust the `Suture-Caller` header it sets (chapter 17).
 
 A new version is a new image. Roll it out as chapter 20 says: the first pod with the new version deploys it, and the others pick it up from the log and are then restarted with the new image too. A StatefulSet's rolling update does this one pod at a time.

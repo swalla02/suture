@@ -1,6 +1,6 @@
 # serve: HTTP and JSON
 
-`suture serve <dir>` serves the module with a durable log. Every `POST /inputs` needs the header `Suture-Caller: ⟨role⟩ ⟨name⟩` (`member Ann`), else 401. Its body is one of:
+`suture serve <dir>` serves the module with a durable log. Every `POST /inputs` needs the header `Suture-Caller: ⟨role⟩ ⟨name⟩` (`member Ann`), else 401; listening beyond localhost, every request but `GET /health` also needs `Suture-Gateway: $SUTURE_GATEWAY_TOKEN`. Its body is one of:
 
 - `{"new": {"verb": "books", "kind": "Booking", "label": "B1", "attrs": {…}, "items": {"lines": [{…}]}}}`
 - `{"event": {"verb": "cancels", "target": "B1", "data": {…}, "part": "Ticket"}}`: `data` only if the `admit` declares some, `part` for an event to a part

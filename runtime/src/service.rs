@@ -232,8 +232,13 @@ impl Service {
         let (path, tmp) = (state.join("secrets.json"), state.join("secrets.json.tmp"));
         let text = serde_json::to_string(&self.host.secrets).map_err(|e| e.to_string())?;
         let write = || -> std::io::Result<()> {
+            // A file left by a crash keeps its own mode, so it is made anew.
+            match std::fs::remove_file(&tmp) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+                _ => {}
+            }
             let mut o = OpenOptions::new();
-            o.write(true).create(true).truncate(true);
+            o.write(true).create_new(true);
             #[cfg(unix)]
             std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
             let mut f = o.open(&tmp)?;
@@ -492,7 +497,12 @@ impl Service {
     /// Opens the state directory: a new one starts its log at `now`; one with a
     /// log replays it, refusing a log written under another program (appendix L.2.3).
     pub fn open(prog: &Program, state: &Path, now: u64, setup: impl FnOnce(&mut Host)) -> Result<Service, String> {
-        std::fs::create_dir_all(state).map_err(|e| format!("{}: {e}", state.display()))?;
+        // A new state directory is this user's alone (appendix BB.2.6).
+        let mut dir = std::fs::DirBuilder::new();
+        dir.recursive(true);
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut dir, 0o700);
+        dir.create(state).map_err(|e| format!("{}: {e}", state.display()))?;
         // Pods open the state directory one at a time (appendix O.2.8).
         let lock = Self::lock_file(state)?;
         lock.lock().map_err(|e| format!("{}: {e}", state.join("log.lock").display()))?;

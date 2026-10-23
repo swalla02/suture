@@ -63,12 +63,15 @@ fn costs(input: fn(&mut Host)) -> [(u64, u64); 2] {
     })
 }
 
+/// One input to a world.
+type Input = fn(&mut Host);
+
 // One test, so no other test's work is counted with it. Pools whose first
 // candidates are full, and totals read by every unit, are not flat yet
 // (spec appendix BA.4).
 #[test]
 fn the_cost_of_an_input_does_not_grow_with_the_units() {
-    let cases: [(&str, fn(&mut Host)); 4] = [
+    let cases: [(&str, Input); 4] = [
         ("a new booking", |h| book(h, "X", "M1", 3)),
         ("an answer", |h| h.answer("payments", "paid", &[], Some("B1")).unwrap()),
         ("a cancel", |h| {

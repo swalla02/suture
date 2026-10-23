@@ -2328,3 +2328,67 @@ Slice 30's model sources (appendix AF) read a typed value, and Jev could not rea
   - an adapter state, a scale on a non-Count, and a reversed scale are errors;
   - Jev's request and answers, for yes or no and for a scale;
   - a custom backend's field and its boolean answer.
+
+## Appendix BA. Counting the work of an input (2026-10-23)
+
+The cost of one input should not grow with the number of units. It is counted, not timed: `state::WORK` counts units decoded and steps taken.
+
+### BA.1 What is measured
+
+runtime/tests/work.rs builds a shop of 100 and of 1000 members and bookings, and checks that each input costs the same (units decoded, steps) in both: a new booking, an adapter answer, a cancel, and a minute with no timer due. When every request times out, each timer costs one step.
+
+### BA.2 Not flat yet
+
+- A choice among a pool decodes every candidate of the pool, and stops looking after `candidates` of them, so a pool whose first candidates are full refuses, and its refusals fill the unit.
+- A change to a total that every unit reads (`checked globally`) refreshes every reader.
+- Waiters, pending requests, the trace, the gate log and the kernel journal are scanned or kept in full.
+
+These are the next slices' work.
+
+## Appendix BB. Prototype slice 51: hardening (2026-10-23)
+
+A security review of slices 1-50 found the service trusted too much of what reached it. Slice 51 closes what it found.
+
+### BB.1 What slice 51 adds
+
+| Added in slice 51 | Still waits |
+|---|---|
+| `SUTURE_GATEWAY_TOKEN`, sent as `Suture-Gateway` | callers authenticated by the service itself |
+| a media quota, and a role for uploads | a quota per caller |
+| scenario files only from the module's directory | |
+| at most 8 parentheses open at once | |
+| personal values hashed in `no two` groups | erasing a personal value on request |
+| tighter `curl`, redacted adapter errors, a private state directory | an HTTP client in the runtime |
+
+### BB.2 Semantics that slice 51 settles
+
+1. **The gateway.**
+   - With `SUTURE_GATEWAY_TOKEN` set, every request but `GET /health` must carry it as `Suture-Gateway`, compared in constant time, or it is answered 401.
+   - Listening on an address beyond loopback without the token, `suture serve` does not start.
+   - A header line that starts with a space or tab (a folded line) is refused, and so is a second `Suture-Gateway`.
+   - `GET /trace` returns at most 1000 lines; `next` reads on.
+2. **Media.**
+   - `POST /media` needs a caller whose role is one of the module's (403 otherwise).
+   - The store keeps at most 1 GiB in all; past that, an upload is refused.
+3. **Scenario files.** `file "⟨name⟩"` names a file in the module's directory: no absolute path and no `..`; after symlinks it must still be inside, be a plain file, and be at most the media limit.
+4. **Nesting.** A line with more than 8 parentheses open at once is a lexical error. The parsers try a `(` as a group and then as a calculation, so each level can double their work.
+5. **Personal values.**
+   - A `no two` group whose value is a personal attribute is named by the first 12 hex digits of the value's SHA-256, `(personal 3f9a…)`, never by the value.
+   - A mistyped answer, and a model's mistyped or unsure read, show a personal value as `(personal)`.
+   - A total grouped by a personal value before slice 51 starts again under its new name, as a renamed total does.
+6. **The state directory.** A new one is made with mode 0700. `secrets.json.tmp` is removed and made anew with mode 0600, so one left by a crash cannot keep a wider mode.
+7. **Adapters.**
+   - `curl` runs with `-q` (no `~/.curlrc`), `--proto =https,http`, no redirects, and answers of at most 4 MiB.
+   - An adapter's failure reaches the trace as `HTTP ⟨status⟩` or curl's exit code, never as the body or curl's message, which may echo what was sent.
+8. The LSP reads a message of at most 16 MiB.
+
+### BB.3 Acceptance
+
+- runtime/tests/hardening.rs:
+  - behind a gateway, only requests with its token are served, and a folded header is refused;
+  - the trace is read a page at a time;
+  - only a module's role uploads media;
+  - a scenario reads files only inside its module: `..`, an absolute path, and a symlink out are refused;
+  - a unique personal value never shows in the trace or the gate log.
+- lang lex: deep parentheses are refused before parsing.
+

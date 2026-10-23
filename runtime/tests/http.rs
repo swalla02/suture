@@ -120,7 +120,7 @@ fn the_server_answers_over_tcp() {
         std::thread::spawn(move || {
             let mut svc = Service::in_memory(&p, T0);
             let mut out = vec![];
-            suture_runtime::http::serve(&mut svc, listener, Some(TOKEN), &stop, || T0, &mut out).unwrap();
+            suture_runtime::http::serve(&mut svc, listener, Some(TOKEN), None, &stop, || T0, &mut out).unwrap();
             String::from_utf8(out).unwrap()
         })
     };

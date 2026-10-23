@@ -19,7 +19,8 @@ Suture v0 is a prototype. Everything earlier in this guide runs and is tested. T
 
 ## Security
 
-- **Callers are named, not authenticated.** The gate checks roles and conditions. A scenario says who the caller is, and a served program trusts the `Suture-Caller` header, which the gateway must set after it has authenticated the caller. Operator requests need one shared token.
+- **Callers are named, not authenticated.** The gate checks roles and conditions. A scenario says who the caller is, and a served program trusts the `Suture-Caller` header, which the gateway must set after it has authenticated the caller; beyond localhost, the gateway proves itself with `SUTURE_GATEWAY_TOKEN`. Operator requests need one shared token.
+- **Media has one quota.** The media store keeps at most 1 GiB in all, whoever sent it; there is no quota per caller.
 - **The secret store is a file.** `secrets.json` is protected by file permissions only; it is not encrypted, and there is no key management service behind it (chapter 19).
 - **Personal values are masked by name.** A value is masked when any kind marks an attribute of that name personal, so masking errs on the side of hiding. A personal value is not erased on request: the log keeps it.
 

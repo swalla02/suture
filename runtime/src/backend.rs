@@ -42,7 +42,9 @@ impl Transport for Curl {
         config.push_str(&format!("data-binary = {}\n", quote(&body.to_string())));
         let mut child = Command::new("curl")
             // curl reads `-m 0` as no limit, so never less than a millisecond.
-            .args(["-sS", "-K", "-", "-m", &format!("{:.3}", timeout.max(Duration::from_millis(1)).as_secs_f64()), "-w", "\n%{http_code}"])
+            // `-q` first, so no ~/.curlrc is read; only HTTP(S), no redirects,
+            // and a bounded answer (appendix BB.2.7).
+            .args(["-q", "-sS", "--proto", "=https,http", "--max-redirs", "0", "--max-filesize", "4194304", "-K", "-", "-m", &format!("{:.3}", timeout.max(Duration::from_millis(1)).as_secs_f64()), "-w", "\n%{http_code}"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -54,14 +56,16 @@ impl Transport for Curl {
         if out.status.code() == Some(28) {
             return Err(TIMED_OUT.into());
         }
+        // What curl or the service says goes to the trace, which callers can
+        // read, so only its kind is kept: never a body that may echo the request.
         if !out.status.success() {
-            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+            return Err(format!("curl failed with exit code {}", out.status.code().unwrap_or(-1)));
         }
         let text = String::from_utf8_lossy(&out.stdout);
         let (body, status) = text.rsplit_once('\n').unwrap_or(("", &text));
         match status.trim().parse::<u16>() {
             Ok(s) if (200..300).contains(&s) => serde_json::from_str(body).map_err(|e| format!("not JSON: {e}")),
-            Ok(s) => Err(format!("HTTP {s}: {}", body.chars().take(200).collect::<String>())),
+            Ok(s) => Err(format!("HTTP {s}")),
             Err(_) => Err(format!("no HTTP status in curl's output: {status}")),
         }
     }

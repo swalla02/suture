@@ -41,7 +41,9 @@ Without `SUTURE_OPERATOR_TOKEN` in its environment, the service refuses every op
 
 ## Inputs from callers
 
-A caller's input names the caller in the `Suture-Caller` header, as `⟨role⟩ ⟨name⟩`. The service trusts that header, so only the gateway may set it, after it has authenticated the caller. The gate then decides as in chapter 10:
+A caller's input names the caller in the `Suture-Caller` header, as `⟨role⟩ ⟨name⟩`. The service trusts that header, so only the gateway may set it, after it has authenticated the caller. The gate then decides as in chapter 10.
+
+Listening beyond this machine (`--listen 0.0.0.0:7878`), the service needs `SUTURE_GATEWAY_TOKEN`, or it does not start. Every request but `GET /health` must then carry it as the header `Suture-Gateway`, which the gateway adds; any other answers 401. On `127.0.0.1` the token is optional.
 
 ```sh
 curl -s localhost:7878/inputs -H 'Suture-Caller: fan Ada' \
@@ -87,7 +89,7 @@ The answer is 200 with the trace lines the input caused, 409 with `refused` when
 
 ### Media
 
-Media is sent before the input that names it. `POST /media` takes the content as its body, at most 8 MiB, with its `Content-Type` and the caller's `Suture-Caller` header, and keeps it in `⟨state⟩/media`, by the SHA-256 of the content:
+Media is sent before the input that names it. `POST /media` takes the content as its body, at most 8 MiB, with its `Content-Type` and the caller's `Suture-Caller` header, whose role must be one of the module's, and keeps it in `⟨state⟩/media`, by the SHA-256 of the content:
 
 ```sh
 curl -s -X POST localhost:7878/media -H 'Suture-Caller: adjuster Ann' -H 'Content-Type: image/png' --data-binary @dent.png
@@ -133,7 +135,7 @@ Posts are made one at a time, and the service waits for each, for up to the effe
 |---|---|
 | `GET /units/B1` | the explanation of `suture explain`, and the gate's decisions about B1 |
 | `GET /pending` | the requests waiting for an answer |
-| `GET /trace?from=40` | the trace from line 40, and the number to ask from next |
+| `GET /trace?from=40` | at most 1000 trace lines from line 40, and the number to ask from next |
 | `GET /health` | the module and its version |
 
 Reads need no token. They show units and the requests' data, so, like inputs, they must only be reachable through the gateway.
