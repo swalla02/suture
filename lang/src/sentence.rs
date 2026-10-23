@@ -366,6 +366,10 @@ fn word_at(c: &Cursor, k: usize, w: &str) -> bool {
 
 /// `( … )`, a literal, `the number of …`, `the total ⟨attr⟩ of …`, or a noun phrase.
 fn atom(c: &mut Cursor, bare: bool) -> Result<Num, Error> {
+    c.deeper(|c| atom_in(c, bare))
+}
+
+fn atom_in(c: &mut Cursor, bare: bool) -> Result<Num, Error> {
     if c.eat_sym('(') {
         let n = sum_of(c, bare)?;
         c.expect_sym(')')?;
@@ -441,6 +445,10 @@ fn atom(c: &mut Cursor, bare: bool) -> Result<Num, Error> {
 /// entities. It never takes an `and` or `or`, which belong to the sentence
 /// around it; name a combined condition with `define`.
 fn that(c: &mut Cursor) -> Result<Option<Box<Cond>>, Error> {
+    c.deeper(that_in)
+}
+
+fn that_in(c: &mut Cursor) -> Result<Option<Box<Cond>>, Error> {
     Ok(if c.eat_word("that") { Some(Box::new(simple(c)?)) } else { None })
 }
 
@@ -545,6 +553,10 @@ fn simple(c: &mut Cursor) -> Result<Cond, Error> {
 /// (appendix AU). A `(` that opens a calculation, as in `(a + b) * 2 is at
 /// most 9`, is read as one.
 fn part(c: &mut Cursor) -> Result<Cond, Error> {
+    c.deeper(part_in)
+}
+
+fn part_in(c: &mut Cursor) -> Result<Cond, Error> {
     if c.peek() == Some(&Tok::Sym('(')) {
         let mut g = c.clone();
         g.next();

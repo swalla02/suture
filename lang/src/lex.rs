@@ -176,11 +176,28 @@ pub struct Cursor<'a> {
     pos: usize,
     file: &'a str,
     line: usize,
+    /// How deep the parsers are in calculations and conditions.
+    depth: usize,
 }
+
+/// The most calculations and conditions one statement may nest, as in
+/// `the total of the total of …`, so no input exhausts the stack.
+pub const MAX_NESTING: usize = 32;
 
 impl<'a> Cursor<'a> {
     pub fn new(toks: &'a [Tok], file: &'a str, line: usize) -> Self {
-        Cursor { toks, pos: 0, file, line }
+        Cursor { toks, pos: 0, file, line, depth: 0 }
+    }
+
+    /// Parses with `f` one level deeper, refusing past [`MAX_NESTING`].
+    pub fn deeper<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, Error>) -> Result<T, Error> {
+        if self.depth >= MAX_NESTING {
+            return Err(self.error(format!("more than {MAX_NESTING} calculations or conditions inside one another")));
+        }
+        self.depth += 1;
+        let r = f(self);
+        self.depth -= 1;
+        r
     }
 
     pub fn error(&self, msg: impl Into<String>) -> Error {

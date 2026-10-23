@@ -2356,7 +2356,7 @@ A security review of slices 1-50 found the service trusted too much of what reac
 | `SUTURE_GATEWAY_TOKEN`, sent as `Suture-Gateway` | callers authenticated by the service itself |
 | a media quota, and a role for uploads | a quota per caller |
 | scenario files only from the module's directory | |
-| at most 8 parentheses open at once | |
+| at most 8 parentheses, and 32 nested calculations | |
 | personal values hashed in `no two` groups | erasing a personal value on request |
 | tighter `curl`, redacted adapter errors, a private state directory | an HTTP client in the runtime |
 
@@ -2369,13 +2369,16 @@ A security review of slices 1-50 found the service trusted too much of what reac
    - `GET /trace` returns at most 1000 lines; `next` reads on.
 2. **Media.**
    - `POST /media` needs a caller whose role is one of the module's (403 otherwise).
-   - The store keeps at most 1 GiB in all; past that, an upload is refused.
+   - The store keeps at most 1 GiB in all, counted afresh before each upload it writes, since pods share it; past that, an upload is refused.
 3. **Scenario files.** `file "⟨name⟩"` names a file in the module's directory: no absolute path and no `..`; after symlinks it must still be inside, be a plain file, and be at most the media limit.
-4. **Nesting.** A line with more than 8 parentheses open at once is a lexical error. The parsers try a `(` as a group and then as a calculation, so each level can double their work.
+4. **Nesting.**
+   - A line with more than 8 parentheses open at once is a lexical error. The parsers try a `(` as a group and then as a calculation, so each level can double their work.
+   - A statement may nest at most 32 calculations and conditions (`the total of the total of …`), so no input exhausts the parser's stack.
 5. **Personal values.**
    - A `no two` group whose value is a personal attribute is named by the first 12 hex digits of the value's SHA-256, `(personal 3f9a…)`, never by the value.
    - A mistyped answer, and a model's mistyped or unsure read, show a personal value as `(personal)`.
    - A total grouped by a personal value before slice 51 starts again under its new name, as a renamed total does.
+   - The hash is not keyed: whoever reads the trace can check a guess at a value with few possibilities. A key per state directory waits.
 6. **The state directory.** A new one is made with mode 0700. `secrets.json.tmp` is removed and made anew with mode 0600, so one left by a crash cannot keep a wider mode.
 7. **Adapters.**
    - `curl` runs with `-q` (no `~/.curlrc`), `--proto =https,http`, no redirects, and answers of at most 4 MiB.
@@ -2390,5 +2393,5 @@ A security review of slices 1-50 found the service trusted too much of what reac
   - only a module's role uploads media;
   - a scenario reads files only inside its module: `..`, an absolute path, and a symlink out are refused;
   - a unique personal value never shows in the trace or the gate log.
-- lang lex: deep parentheses are refused before parsing.
+- lang lex: deep parentheses are refused before parsing; lang/tests/nesting.rs: deep `the total of` is refused, not a stack overflow.
 

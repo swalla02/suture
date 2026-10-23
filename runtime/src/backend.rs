@@ -66,7 +66,7 @@ impl Transport for Curl {
         match status.trim().parse::<u16>() {
             Ok(s) if (200..300).contains(&s) => serde_json::from_str(body).map_err(|e| format!("not JSON: {e}")),
             Ok(s) => Err(format!("HTTP {s}")),
-            Err(_) => Err(format!("no HTTP status in curl's output: {status}")),
+            Err(_) => Err("no HTTP status in curl's output".into()),
         }
     }
 }
