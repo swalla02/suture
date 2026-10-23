@@ -2605,6 +2605,7 @@ Slice 51 named a `no two` group on a personal value by an unkeyed SHA-256 (appen
 2. **The key.**
    - The first time a state directory is opened, 32 random bytes are kept in `personal.key`, as 64 hex digits, readable only by its user. They are written as `secrets.json` is, while the open holds the lock, so pods share one key.
    - A read-only open (`suture check`) writes no key. Without one, it makes one for itself.
+   - The bytes come from `/dev/urandom` on Unix, which must be readable. Elsewhere they come from std's hash keys, which are weaker, at about 128 bits.
    - A key that is not 64 hex digits is an error.
    - A state directory from before slice 58 gets a key at its next open. Its groups on personal values start again under their new names, as a renamed total does.
    - Snapshots move to format 2, so one taken under the old names is set aside and the log replays.

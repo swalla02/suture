@@ -48,11 +48,12 @@ pub fn hmac_sha256(key: &[u8; 32], data: &[u8]) -> String {
 /// 32 bytes from the operating system's randomness.
 pub fn random_key() -> [u8; 32] {
     let mut k = [0u8; 32];
+    // A Unix with no randomness to read cannot keep anything private.
     #[cfg(unix)]
-    if std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut k)).is_ok() {
-        return k;
-    }
-    // Elsewhere, std's hash keys, which it draws from the same source.
+    std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut k)).expect("/dev/urandom must be readable");
+    // Elsewhere, std's hash keys, which it draws from the operating system:
+    // weaker, with about 128 bits between them.
+    #[cfg(not(unix))]
     for chunk in k.chunks_mut(8) {
         let h = std::hash::BuildHasher::hash_one(&std::collections::hash_map::RandomState::new(), 0u8);
         chunk.copy_from_slice(&h.to_le_bytes());
