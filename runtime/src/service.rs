@@ -200,7 +200,7 @@ fn synced(path: &Path, text: &str) -> std::io::Result<()> {
 impl Service {
     /// A service with no log: for tests, and for trying a program out.
     pub fn in_memory(prog: &Program, now: u64) -> Service {
-        let mut host = Host::new(prog.clone());
+        let mut host = Host::with_journal(prog.clone(), Box::new(suture::NoJournal));
         // A served program asks its models after the step (appendix S.2.2).
         host.defer_models = true;
         // And reads with a model as it posts to an adapter (appendix AF.2.3).

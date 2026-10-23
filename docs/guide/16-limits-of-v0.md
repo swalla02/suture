@@ -13,6 +13,8 @@ Suture v0 is a prototype. Everything earlier in this guide runs and is tested. T
 - **Small units.** A unit, with its parts, lists, carried facts and the trace notes of its last step, holds at most 4096 bytes. An input that would make one larger is refused before anything changes; an answer that would is a step fault, kept in the journal, and the unit keeps its state.
 - **HTTP only.** The service speaks plain HTTP/1.1, one request per connection, with a `Content-Length` body, and leaves TLS to the gateway in front of it. Adapters are reached over HTTP through `curl`.
 - **One request at a time.** Inputs, reads, timers, adapter posts and model asks take turns, so a slow adapter holds up the service for as long as its post takes (at most 10 seconds), and a slow model for its `within`. Models are asked after the input's step, so the input's own answer does not wait for them.
+- **The trace in memory is the recent one.** A served host keeps its last 100 000 trace lines and gate decisions; `GET /trace` reads those, and the rest are in the service's standard output.
+- **A restart replays the whole log.** There are no snapshots yet, so a long log takes long to start from.
 - **Build the image yourself.** The `Dockerfile` (chapter 22) is not published to a registry, and is built for the machine that builds it.
 - **No `suture test`.** Tests run through `cargo test` and `suture run`.
 - **Alerts** appear only in the trace and in `suture explain`; they are not sent anywhere.

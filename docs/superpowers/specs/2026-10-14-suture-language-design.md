@@ -2424,3 +2424,34 @@ runtime/tests/work.rs:
 - a pool of 600 Titles, all full but the last: the Loan holds the last, and the next Loan waits;
 - a take from a global total, and from shared stock, costs the same at 100 and 1000 readers or holders.
 
+## Appendix BD. Prototype slice 53: what a served host keeps (2026-10-23)
+
+A served host kept everything it had done: the kernel's journal of every inject and reduction, every trace line, every gate decision, every model answer and every timed-out request. Its memory grew with its age, not with its units.
+
+### BD.1 What slice 53 adds
+
+| Added in slice 53 | Still waits |
+|---|---|
+| a served machine journals nothing | snapshots, so a restart need not replay the whole log |
+| the trace and the gate keep their last 100 000 lines | a replay that streams the log |
+| model answers and timed-out requests are not kept for ever | |
+| readers found without a scan | indexes of pending requests and waiters |
+
+### BD.2 Semantics that slice 53 settles
+
+1. **No kernel journal when served.**
+   - The service's log is what replays (appendix L.2.3), so its machine uses `NoJournal`, which keeps no record.
+   - A scenario's machine keeps its in-memory journal, so tests can still recover the kernel from it.
+2. **Trimming.**
+   - Between inputs, `suture serve` keeps the last 100 000 trace lines and gate decisions once there are twice as many. Every line went to standard output when it happened.
+   - A line keeps its number: `GET /trace?from=n` reads from line n, or from the first line still kept. `trace_dropped` counts the lines no longer kept.
+   - The model answers are forgotten once the service has logged them.
+   - The last 100 000 timed-out requests are kept; a late answer to an older one is answered `has no pending request`, not noted as late.
+3. **Readers.** Whether a unit already reads another is found in a set, so a new reader of a popular entity costs no scan of its readers.
+
+### BD.3 Acceptance
+
+runtime/tests/memory.rs:
+- a trimmed trace keeps its line numbers, and `/trace` skips the lines no longer kept;
+- a served machine journals nothing.
+

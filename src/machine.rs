@@ -983,6 +983,11 @@ impl Machine {
         self.journal.commit()
     }
 
+    /// How many records the journal has committed.
+    pub fn journal_len(&self) -> usize {
+        self.journal.len_durable()
+    }
+
     /// Releases the journal (e.g. to simulate a crash and recover from it).
     pub fn into_journal(self) -> Box<dyn Journal> {
         self.journal

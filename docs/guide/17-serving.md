@@ -135,7 +135,7 @@ Posts are made one at a time, and the service waits for each, for up to the effe
 |---|---|
 | `GET /units/B1` | the explanation of `suture explain`, and the gate's decisions about B1 |
 | `GET /pending` | the requests waiting for an answer |
-| `GET /trace?from=40` | at most 1000 trace lines from line 40, and the number to ask from next |
+| `GET /trace?from=40` | at most 1000 trace lines from line 40 (or the first still kept), and the number to ask from next |
 | `GET /health` | the module and its version |
 
 Reads need no token. They show units and the requests' data, so, like inputs, they must only be reachable through the gateway.

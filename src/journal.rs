@@ -97,6 +97,29 @@ impl Journal for MemJournal {
     }
 }
 
+/// A journal that keeps nothing, for a host whose own log is durable: its
+/// machine is never recovered, so the records would only grow in memory.
+#[derive(Default)]
+pub struct NoJournal;
+
+impl Journal for NoJournal {
+    fn append(&mut self, _: Record) {}
+
+    fn commit(&mut self) -> Result<(), JournalError> {
+        Ok(())
+    }
+
+    fn durable(&self) -> Result<Vec<Record>, JournalError> {
+        Ok(vec![])
+    }
+
+    fn crash(&mut self) {}
+
+    fn len_durable(&self) -> usize {
+        0
+    }
+}
+
 /// A JSON-lines journal file. `commit` appends the buffered records plus a
 /// commit marker and fsyncs; `open` truncates anything after the last commit
 /// marker (a torn or uncommitted tail).

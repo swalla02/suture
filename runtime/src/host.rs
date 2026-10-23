@@ -21,6 +21,9 @@ pub struct Host {
     pub kinds: Kinds,
     /// One line for each thing that happened: each unit's notes, and each answer.
     pub trace: Vec<String>,
+    /// How many of the first lines a served host no longer keeps, so a line's
+    /// number stays the same (appendix BD.2.2).
+    pub trace_dropped: usize,
     /// Outside requests waiting for an answer, oldest first, with their effect holes.
     pending: Vec<(Ask, HoleId)>,
     /// The clock, in seconds from the start. Only `pass` moves it (appendix C.3.1).
@@ -49,6 +52,8 @@ pub struct Host {
     /// it, and those it granted a binding (appendix G.2.7).
     /// In the order they started reading it.
     readers: BTreeMap<String, Vec<String>>,
+    /// Each (unit, reader) of `readers`, to find one without a scan.
+    reading: BTreeSet<(String, String)>,
     /// The decision models, by `name@version` (appendix J.2.7).
     pub models: Models,
     /// Every model answer, by choice key, in the order they were given
@@ -175,13 +180,20 @@ fn refusal_of(u: &Unit) -> Option<String> {
 
 impl Host {
     pub fn new(prog: Program) -> Host {
+        Self::with_journal(prog, Box::new(suture::MemJournal::new()))
+    }
+
+    /// A host whose machine journals to `journal`. A served host keeps none,
+    /// since its log is what replays (appendix BD.2.1).
+    pub fn with_journal(prog: Program, journal: Box<dyn suture::Journal>) -> Host {
         let prog = Arc::new(prog);
         let (kernel, kinds) = kernel::program(prog.clone());
         let mut h = Host {
             prog,
-            machine: Machine::new(kernel),
+            machine: Machine::with_journal(kernel, journal).expect("a new journal is empty"),
             kinds,
             trace: vec![],
+            trace_dropped: 0,
             pending: vec![],
             now: 0,
             timers: BTreeMap::new(),
@@ -198,6 +210,7 @@ impl Host {
             woken: BTreeSet::new(),
             gate: vec![],
             readers: BTreeMap::new(),
+            reading: BTreeSet::new(),
             models: Models::default(),
             model_answers: vec![],
             replay: VecDeque::new(),
@@ -360,9 +373,26 @@ impl Host {
     }
 
     fn read_by(&mut self, read: &str, by: &str) {
-        let readers = self.readers.entry(read.to_string()).or_default();
-        if !readers.iter().any(|r| r == by) {
-            readers.push(by.to_string());
+        if self.reading.insert((read.to_string(), by.to_string())) {
+            self.readers.entry(read.to_string()).or_default().push(by.to_string());
+        }
+    }
+
+    /// Keeps only the last `keep` trace lines, gate decisions and timed-out
+    /// requests, once there are twice as many; and forgets the model answers,
+    /// which the service has logged (appendix BD.2.2). Called between inputs.
+    pub fn trim(&mut self, keep: usize) {
+        self.model_answers.clear();
+        if self.expired.len() > 2 * keep {
+            self.expired.drain(..self.expired.len() - keep);
+        }
+        if self.trace.len() > 2 * keep {
+            let n = self.trace.len() - keep;
+            self.trace.drain(..n);
+            self.trace_dropped += n;
+        }
+        if self.gate.len() > 2 * keep {
+            self.gate.drain(..self.gate.len() - keep);
         }
     }
 
@@ -759,11 +789,12 @@ impl Host {
         let keys: Vec<String> = self.keys_of(&u).into_iter().flat_map(|(_, k)| k).collect();
         let mut i = 0;
         while i < self.waiters.len() {
-            let w = self.waiters[i].clone();
+            let w = &self.waiters[i];
             if w.kind != u.root.kind || !keys.contains(&w.key) || self.woken.contains(&w.decide.key()) {
                 i += 1;
                 continue;
             }
+            let w = w.clone();
             let still = self.unit(&w.decide.label).filter(|r| interp::waiting(r, &w.decide.key()));
             let Some(requester) = still else {
                 self.waiters.remove(i);

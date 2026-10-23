@@ -64,6 +64,10 @@ fn decoded(path: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// The trace lines and gate decisions a served host keeps in memory; the
+/// rest went to its standard output.
+pub const TRACE_KEEP: usize = 100_000;
+
 /// The most trace lines one `GET /trace` returns.
 pub const TRACE_PAGE: usize = 1000;
 
@@ -96,7 +100,9 @@ pub fn handle(svc: &mut Service, req: &Request, operator: Option<&str>, now: u64
         ("GET", "/trace") => {
             let from = req.query.split('&').find_map(|kv| kv.strip_prefix("from=")).and_then(|n| n.parse::<usize>().ok()).unwrap_or(0);
             // At most TRACE_PAGE lines at a time; `next` reads on.
-            let lines = svc.host.trace.get(from..).unwrap_or_default();
+            // Lines no longer kept are skipped (appendix BD.2.2).
+            let from = from.max(svc.host.trace_dropped);
+            let lines = svc.host.trace.get(from - svc.host.trace_dropped..).unwrap_or_default();
             let lines = &lines[..lines.len().min(TRACE_PAGE)];
             (200, json!({ "from": from, "next": from + lines.len(), "lines": lines }))
         }
@@ -383,6 +389,7 @@ fn serving(svc: &mut Service, listener: TcpListener, operator: Option<&str>, gat
         for l in &svc.host.trace[shown..] {
             writeln!(out, "{l}")?;
         }
+        svc.host.trim(TRACE_KEEP);
         shown = svc.host.trace.len();
     }
     Ok(())
