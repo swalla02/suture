@@ -5,7 +5,8 @@ Suture v0 is a prototype. Everything earlier in this guide runs and is tested. T
 ## Running for real
 
 - **Pods copy the state.** Several pods (chapter 20) share one log on one volume, and each applies every input: they keep the service up and share out the adapter traffic, but do not split the work of applying inputs. A log replicated over the network, without a shared volume, is a later slice.
-- **The log only grows.** It is never compacted. A restart, or a new pod, starts from the last snapshot and replays only the log after it (chapter 17), but the disk still keeps every input since the start.
+- **The archive only grows.** A pod alone on a log past 64 MiB moves it to `archive/` (chapter 17), but nothing deletes an archive. Archives can be moved off the machine. Without them, a restart needs a snapshot it can use.
+- **Archiving needs a pod alone.** While other pods beat, the log is not archived. A pod that misses its beats and finds the log archived stops, and must restart.
 - **Deploys happen at start.** A new version is deployed when `suture serve` starts it (chapter 18), not while the service runs. Going back to an older version is not supported.
 - **Resolutions are few.** A rule over totals (`per-group` or `global`) cannot apply from a version, and a value cannot be migrated by a formula; change the rule, or give the attribute a default. A changed formula keeps the values it gave on live units.
 - **Totals are not checked at a deploy.** A new or tighter total (`per-group` or `global`) is checked from the next take on; a renamed `checked globally` total starts again from zero.

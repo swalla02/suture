@@ -189,3 +189,87 @@ admit place a new Order by customer where the Order's customer is the caller
     let pay = s.host.pending()[0].clone();
     assert_eq!(service::request_json(&s.host, &pay, true)["sends"]["card"], "4111 1111", "the secret comes back from the secret store");
 }
+
+fn archived(dir: &Path) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(dir.join("archive")).map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
+    v.sort();
+    v
+}
+
+#[test]
+fn an_archived_log_restarts_from_its_snapshot_and_replays_whole_without_it() {
+    let p = tickets();
+    let dir = state("archive");
+    let full = state("archive-full");
+    {
+        let mut s = Service::open(&p, &dir, T0, |_| {}).unwrap();
+        setup(&p, &mut s);
+        bookings(&p, &mut s, 0, 10);
+        assert!(s.compact(T0 + 100).unwrap());
+        bookings(&p, &mut s, 10, 10);
+        s.tick(T0 + 3600).unwrap();
+        assert!(s.compact(T0 + 3600).unwrap());
+        bookings(&p, &mut s, 20, 4);
+    }
+    {
+        // The same inputs, never archived.
+        let mut s = Service::open(&p, &full, T0, |_| {}).unwrap();
+        setup(&p, &mut s);
+        bookings(&p, &mut s, 0, 20);
+        s.tick(T0 + 3600).unwrap();
+        bookings(&p, &mut s, 20, 4);
+    }
+    assert_eq!(archived(&dir), ["log-000001.jsonl", "log-000002.jsonl"]);
+    let log = std::fs::read_to_string(dir.join("log.jsonl")).unwrap();
+    assert!(log.starts_with('{') && log.lines().next().unwrap().contains("\"archives\":2"), "{log}");
+    assert_eq!(log.lines().count(), 1 + 4 + 2, "the header, then only what came after: {log}");
+    let reference = image(&Service::open(&p, &full, T0 + 4000, |_| {}).unwrap());
+    assert_eq!(image(&Service::open(&p, &dir, T0 + 4000, |_| {}).unwrap()), reference);
+    // Without the snapshot, the archives replay first.
+    std::fs::remove_file(dir.join("snapshot.json")).unwrap();
+    assert_eq!(image(&Service::open(&p, &dir, T0 + 4000, |_| {}).unwrap()), reference);
+    // Without an archive, there is no going back to the start.
+    std::fs::remove_file(dir.join("archive").join("log-000001.jsonl")).unwrap();
+    let e = Service::open(&p, &dir, T0 + 4000, |_| {}).err().unwrap();
+    assert!(e.contains("log-000001.jsonl"), "{e}");
+}
+
+#[test]
+fn a_pod_archives_only_alone_and_another_pod_restarts_after() {
+    let p = tickets();
+    let dir = state("archive-pods");
+    let mut a = Service::open(&p, &dir, T0, |_| {}).unwrap();
+    a.join("a", T0).unwrap();
+    setup(&p, &mut a);
+    let mut b = Service::open(&p, &dir, T0, |_| {}).unwrap();
+    b.join("b", T0).unwrap();
+    bookings(&p, &mut a, 0, 3);
+    assert!(!a.compact(T0 + 1).unwrap(), "b still beats");
+    // Once b's beat is old, a is alone, and archives.
+    a.beat(T0 + 600).unwrap();
+    assert!(a.compact(T0 + 600).unwrap());
+    let e = b.input(booking(&p, "B9", 1), T0 + 601).err().unwrap();
+    assert_eq!(e, "the log could not be written (another pod archived the log), so this pod takes nothing until it restarts");
+    drop(b);
+    let b = Service::open(&p, &dir, T0 + 602, |_| {}).unwrap();
+    assert_eq!(image(&b)["machine"], image(&a)["machine"]);
+}
+
+#[test]
+fn an_archive_left_by_a_crash_is_taken_over() {
+    let p = tickets();
+    let dir = state("archive-crash");
+    let mut s = Service::open(&p, &dir, T0, |_| {}).unwrap();
+    setup(&p, &mut s);
+    bookings(&p, &mut s, 0, 3);
+    // A crash after the log got its second name, before it was replaced.
+    std::fs::create_dir_all(dir.join("archive")).unwrap();
+    std::fs::copy(dir.join("log.jsonl"), dir.join("archive").join("log-000001.jsonl")).unwrap();
+    bookings(&p, &mut s, 3, 3);
+    assert!(s.compact(T0 + 100).unwrap());
+    drop(s);
+    std::fs::remove_file(dir.join("snapshot.json")).unwrap();
+    let s = Service::open(&p, &dir, T0 + 100, |_| {}).unwrap();
+    assert!(s.host.unit("B5").is_some());
+    assert_eq!(s.host.unit("B0").map(|u| u.label), Some("B0".to_string()));
+}

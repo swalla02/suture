@@ -68,6 +68,35 @@ struct Header {
     module: String,
     version: u32,
     started: u64,
+    /// How many earlier logs `archive/` keeps, whose records come before
+    /// this one's (appendix BH.2.1).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    archives: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+/// How long the log grows before a pod alone on it archives it (appendix BH.2.2).
+pub const COMPACT_BYTES: u64 = 64 << 20;
+
+/// The `n`th archived log.
+fn archive_file(state: &Path, n: u32) -> PathBuf {
+    state.join("archive").join(format!("log-{n:06}.jsonl"))
+}
+
+/// What tells one log file from another at the same path.
+fn file_id(path: &Path) -> Option<u64> {
+    #[cfg(unix)]
+    {
+        std::fs::metadata(path).ok().map(|m| std::os::unix::fs::MetadataExt::ino(&m))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        None
+    }
 }
 
 /// Where an adapter is reached (appendix L.2.8).
@@ -143,6 +172,8 @@ pub struct Service {
     pub pod: String,
     /// How many records this process applied since its last snapshot.
     since_snapshot: usize,
+    /// Which file the log was when this process opened it.
+    log_id: Option<u64>,
 }
 
 /// A request to post to its adapter.
@@ -328,7 +359,15 @@ impl Service {
             held: 0,
             pod: "solo".into(),
             since_snapshot: 0,
+            log_id: None,
         }
+    }
+
+    /// Opens the log to append to.
+    fn open_log(&mut self, path: &Path) -> Result<(), String> {
+        self.log = Some(OpenOptions::new().append(true).open(path).map_err(|e| format!("{}: {e}", path.display()))?);
+        self.log_id = file_id(path);
+        Ok(())
     }
 
     /// Writes the secret store to `secrets.json`, readable only by this
@@ -464,6 +503,19 @@ impl Service {
         r
     }
 
+    /// Whether the log is still the file this process opened: another pod
+    /// that archived it put a new one in its place, which this one has not
+    /// read from the start, so it must restart (appendix BH.2.3).
+    fn same_log(&mut self) -> Result<(), String> {
+        let Some(state) = &self.state else { return Ok(()) };
+        if self.log.is_some() && self.log_id.is_some() && file_id(&state.join("log.jsonl")) != self.log_id {
+            let why = "another pod archived the log".to_string();
+            self.broken = Some(why.clone());
+            return Err(format!("the log could not be written ({why}), so this pod takes nothing until it restarts"));
+        }
+        Ok(())
+    }
+
     /// Reads what other pods appended to the log, so a read sees every
     /// input taken before it (appendix O.2.2).
     pub fn refresh(&mut self) -> Result<(), String> {
@@ -486,6 +538,7 @@ impl Service {
     /// alone, `cut` cuts off a line a crashed pod left short.
     fn catch_up(&mut self, cut: bool) -> Result<(), String> {
         let (Some(state), Some(_)) = (self.state.clone(), &self.log) else { return Ok(()) };
+        self.same_log()?;
         self.read_on(&state.join("log.jsonl"), cut)
     }
 
@@ -675,7 +728,7 @@ impl Service {
         if log_path.exists() {
             let mut svc = Self::load(state, now, setup, true)?;
             let same = svc.newer(prog).map_err(|e| format!("{}: {e}", shown(state)))?;
-            svc.log = Some(OpenOptions::new().append(true).open(&log_path).map_err(|e| format!("{}: {e}", shown(&log_path)))?);
+            svc.open_log(&log_path)?;
             if !same {
                 svc.deployed = match svc.deploy(prog, now) {
                     Ok(a) => a.trace,
@@ -696,16 +749,36 @@ impl Service {
             // The program first, then the log, each synced, then the directory:
             // a log is never there without the program it was written under.
             synced(&prog_path, &serde_json::to_string(&compiled).map_err(|e| e.to_string())?).map_err(|e| format!("{}: {e}", shown(&prog_path)))?;
-            let header = Header { suture: LOG_FORMAT, module: prog.module.clone(), version: prog.version, started: now };
+            let header = Header { suture: LOG_FORMAT, module: prog.module.clone(), version: prog.version, started: now, archives: 0 };
             synced(&log_path, &(serde_json::to_string(&header).map_err(|e| e.to_string())? + "\n")).map_err(|e| format!("{}: {e}", shown(&log_path)))?;
             File::open(state).and_then(|d| d.sync_all()).map_err(|e| format!("{}: {e}", shown(state)))?;
         }
-        svc.log = Some(OpenOptions::new().append(true).open(&log_path).map_err(|e| format!("{}: {e}", shown(&log_path)))?);
+        svc.open_log(&log_path)?;
         svc.read_to = std::fs::metadata(&log_path).map_err(|e| format!("{}: {e}", shown(&log_path)))?.len();
         Ok(svc)
     }
 
     fn replay(&mut self, path: &Path, cut: bool) -> Result<(), String> {
+        let (header, records) = self.read_log(path, cut)?;
+        let read_to = self.read_to;
+        // The archived logs come first, oldest first (appendix BH.2.1).
+        let state = path.parent().unwrap_or(Path::new("."));
+        for n in 1..=header.archives {
+            let a = archive_file(state, n);
+            let (h, earlier) = self.read_log(&a, false)?;
+            if h.archives != n - 1 || h.started != header.started || h.module != header.module {
+                return Err(format!("{}: this is not the log archived before {}", a.display(), if n == header.archives { path.display().to_string() } else { archive_file(state, n + 1).display().to_string() }));
+            }
+            self.apply_all(&earlier, &a)?;
+        }
+        self.read_to = read_to;
+        self.started = header.started;
+        self.apply_all(&records, path)
+    }
+
+    /// The header and the records of a log file, read to its last full
+    /// line; `cut` cuts off a last line a crash left short.
+    fn read_log(&mut self, path: &Path, cut: bool) -> Result<(Header, Vec<Record>), String> {
         let at = |n: usize| format!("{}:{}", path.display(), n + 1);
         let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
         // Each record ends with a newline. Whatever follows the last one was
@@ -722,12 +795,75 @@ impl Service {
         if header.suture != LOG_FORMAT {
             return Err(format!("{}: log format {} is not {LOG_FORMAT}", at(0), header.suture));
         }
-        self.started = header.started;
         let mut records = vec![];
         for (n, line) in rest {
             records.push(serde_json::from_str::<Record>(line).map_err(|e| format!("{}: {e}", at(*n)))?);
         }
-        self.apply_all(&records, path)
+        Ok((header, records))
+    }
+
+    /// Archives the log, if this pod is alone on it: its records so far go
+    /// to `archive/`, and a new log holds only what comes after the
+    /// snapshot of them (appendix BH.2.2). False if it did not.
+    pub fn compact(&mut self, now: u64) -> Result<bool, String> {
+        if self.state.is_none() || self.log.is_none() || self.broken.is_some() || self.pods(now) != [self.pod.clone()] {
+            return Ok(false);
+        }
+        self.locked(|s| s.compacted())
+    }
+
+    fn compacted(&mut self) -> Result<bool, String> {
+        let state = self.state.clone().ok_or("archiving needs the state directory")?;
+        let log = state.join("log.jsonl");
+        let shown = |p: &Path, e: std::io::Error| format!("{}: {e}", p.display());
+        let (first, _) = log_marks(&log, 0).map_err(|e| shown(&log, e))?;
+        let old: Header = serde_json::from_str(&first).map_err(|e| format!("{}: not a log header: {e}", log.display()))?;
+        if self.read_to <= first.len() as u64 + 1 {
+            return Ok(false);
+        }
+        // Under the lock, and caught up: nothing follows what was read.
+        let mut rest = vec![];
+        let mut f = File::open(&log).map_err(|e| shown(&log, e))?;
+        f.seek(SeekFrom::Start(self.read_to)).and_then(|_| f.read_to_end(&mut rest)).map_err(|e| shown(&log, e))?;
+        let n = old.archives + 1;
+        let header = Header { archives: n, ..old };
+        let mut text = serde_json::to_string(&header).map_err(|e| e.to_string())? + "\n";
+        let offset = text.len() as u64;
+        text.push_str(std::str::from_utf8(&rest).map_err(|e| format!("{}: {e}", log.display()))?);
+        // 1. The log is kept in the archive under a second name.
+        let archive = archive_file(&state, n);
+        let mut dir = std::fs::DirBuilder::new();
+        dir.recursive(true);
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut dir, 0o700);
+        let parent = archive.parent().unwrap_or(&state);
+        dir.create(parent).map_err(|e| shown(parent, e))?;
+        // One a crash left before the log was replaced is the log itself.
+        match std::fs::remove_file(&archive) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(shown(&archive, e)),
+            _ => {}
+        }
+        std::fs::hard_link(&log, &archive).map_err(|e| shown(&archive, e))?;
+        File::open(parent).and_then(|d| d.sync_all()).map_err(|e| shown(parent, e))?;
+        // 2. The snapshot of the new log, which the old one does not match.
+        let (head, _) = text.split_at(offset as usize);
+        let snap = Snapshot { suture: SNAPSHOT_FORMAT, header: head.trim_end().to_string(), tail: crate::media::sha256(head.as_bytes()), offset, host: self.host.image() };
+        let snapshot = state.join("snapshot.json");
+        let json = serde_json::to_string(&snap).map_err(|e| e.to_string())?;
+        private(&state, &snapshot, &state.join(format!("snapshot.json.{}.tmp", self.pod)), &json).map_err(|e| shown(&snapshot, e))?;
+        // 3. The new log takes the old one's place in one step.
+        let tmp = state.join("log.jsonl.tmp");
+        synced(&tmp, &text).map_err(|e| shown(&tmp, e))?;
+        std::fs::rename(&tmp, &log).map_err(|e| shown(&log, e))?;
+        // From here on, the file this pod appends to is the archive's: it
+        // takes no input until it has the new one.
+        if let Err(e) = File::open(&state).and_then(|d| d.sync_all()).map_err(|e| shown(&state, e)).and_then(|_| self.open_log(&log)) {
+            self.broken = Some(e.clone());
+            return Err(e);
+        }
+        self.read_to = offset + rest.len() as u64;
+        self.since_snapshot = 0;
+        Ok(true)
     }
 
     /// Applies the records of the log, each input with the model answers it caused.
@@ -806,10 +942,13 @@ impl Service {
         let from = self.host.trace.len();
         self.post_new(now)?;
         // A snapshot now and then, so a restart replays little (appendix BG.2.2).
-        if self.since_snapshot >= SNAPSHOT_EVERY
-            && let Err(e) = self.snapshot() {
-            self.since_snapshot = 0;
-            self.host.trace.push(format!("snapshot: not written: {e}"));
+        // A long log is archived, by a pod alone on it (appendix BH.2.2).
+        if self.since_snapshot >= SNAPSHOT_EVERY {
+            let r = if self.read_to > COMPACT_BYTES { self.compact(now).and_then(|done| if done { Ok(()) } else { self.snapshot() }) } else { self.snapshot() };
+            if let Err(e) = r {
+                self.since_snapshot = 0;
+                self.host.trace.push(format!("snapshot: not written: {e}"));
+            }
         }
         Ok([asked, fired, self.host.trace[from..].to_vec()].concat())
     }

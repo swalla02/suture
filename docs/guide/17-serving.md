@@ -146,7 +146,9 @@ The state directory holds the compiled program and `log.jsonl`. Every input is a
 
 On start, the service replays the log. It gives the same units, the same trace and the same waiting requests, and no model is asked again, because the log holds what each one answered.
 
-Every 10,000 records, the service writes `snapshot.json`: its state after the log so far, readable only by its user. It holds no secret, since those stay in `secrets.json`. On start, the service takes up the snapshot and replays only the log after it. A snapshot taken of another log, or one that cannot be read, is set aside with a line in the trace, and the whole log replays. Then it posts the waiting requests again, with their keys. Time that passed while the service was down passes at the first tick, so a deadline that ran out meanwhile fires then.
+Every 10,000 records, the service writes `snapshot.json`: its state after the log so far, readable only by its user. It holds no secret, since those stay in `secrets.json`. On start, the service takes up the snapshot and replays only the log after it. A snapshot taken of another log, or one that cannot be read, is set aside with a line in the trace, and the whole log replays.
+
+Once the log is past 64 MiB, a pod alone on it archives it when it next writes a snapshot. The log moves to `archive/log-000001.jsonl`, then `log-000002.jsonl`, and so on. A new `log.jsonl` starts with a header that counts the archives, and holds only what comes after the snapshot. A restart from the snapshot reads only the new log. Without a snapshot it can use, the restart replays the archives first, oldest first, then the log. So an archive may be moved off the machine only while the snapshot stays good. Then it posts the waiting requests again, with their keys. Time that passed while the service was down passes at the first tick, so a deadline that ran out meanwhile fires then.
 
 A changed program under the same version is refused:
 

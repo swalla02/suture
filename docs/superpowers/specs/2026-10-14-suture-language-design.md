@@ -2545,3 +2545,39 @@ Up to slice 55, a restart, or a new pod, replayed the whole log, so the time to 
   - a snapshot of another log, or one that is not one, is set aside;
   - a snapshot keeps no secret and is readable only by its user.
 
+## Appendix BH. Prototype slice 57: archiving the log (2026-10-23)
+
+After slice 56, a restart read only the log after the snapshot, but `log.jsonl` still held every input ever taken.
+
+### BH.1 What slice 57 adds
+
+| Added in slice 57 | Still waits |
+|---|---|
+| `archive/log-⟨n⟩.jsonl`: the log as it stood when archived | deleting archives |
+| a log header that counts the archives before it | archiving while other pods run |
+| a pod that finds its log replaced stops | |
+
+### BH.2 Semantics that slice 57 settles
+
+1. **Archives.**
+   - A log's header counts the archives before it (`"archives": n`, left out when 0). Archive `n` is the log whose header counts `n - 1`.
+   - A full replay replays archives 1 to `n` first, each checked to be the log archived before the next, with the same module and start, then the log.
+   - A missing archive is an error, since the state before it cannot be rebuilt. A restart from a usable snapshot reads no archive.
+2. **Archiving.**
+   - A pod archives the log when it would write a snapshot, if the log is past 64 MiB (`COMPACT_BYTES`) and no other pod beats.
+   - Holding the lock, and caught up, it:
+     1. gives the log a second name, archive `n + 1`, replacing one a crash left at that name;
+     2. writes the snapshot of the new log, at the offset just after the new header;
+     3. puts the new log in place in one step: the header with `archives: n + 1`, then whatever followed what was read.
+   - A crash at any step leaves a state that restarts: either the old log, with a snapshot that does not match it and so replays whole, or the new log, with its snapshot.
+   - The header line changes with every archive, so a snapshot of one log never matches another.
+   - An error after the new log is in place breaks the pod, since the file it appends to is then the archive's.
+3. **Other pods.** At each read of the log, a pod checks that the log is the file it opened (by inode, on Unix). If it is not, the pod is broken, with `another pod archived the log`, and takes nothing until it restarts.
+
+### BH.3 Acceptance
+
+runtime/tests/snapshot.rs:
+- A log archived twice holds only its header and what came after. It restarts from its snapshot to the state of a log never archived. Without the snapshot it replays the archives to the same state. Without an archive, it is an error that names the archive.
+- A pod does not archive while another beats. After it archives, the other pod's next input is refused until it restarts.
+- An archive left by a crash is taken over.
+
