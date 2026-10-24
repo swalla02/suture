@@ -116,6 +116,36 @@ fn a_pool_whose_first_candidates_are_full_still_grants() {
     assert!(h.trace.iter().any(|l| l.contains("L2") && l.contains("wait")), "{}", h.trace.join("\n"));
 }
 
+/// A world of `n` sold-out Titles, then one with stock, and the Loan that
+/// found it.
+fn sold_out(n: usize) -> Host {
+    let src = format!("{POOL}admit change Title's stock by staff\n");
+    let prog = suture_lang::compile(&[("t.st".to_string(), src)]).unwrap_or_else(|e| panic!("{e:?}"));
+    let mut h = Host::new(prog);
+    for i in 0..n {
+        h.create("Title", &format!("T{i}"), &[("name".into(), Val::Text("rust".into())), ("stock".into(), Val::Count(0))]).unwrap();
+    }
+    h.create("Title", "Last", &[("name".into(), Val::Text("rust".into())), ("stock".into(), Val::Count(1000))]).unwrap();
+    h.create("Loan", "L0", &[("title".into(), Val::Text("rust".into()))]).unwrap();
+    h
+}
+
+#[test]
+fn a_pool_passes_over_what_it_found_full_without_reading_it_again() {
+    let [small, large] = [50, 500].map(|n| {
+        let mut h = sold_out(n);
+        cost(&mut h, |h| h.create("Loan", "L1", &[("title".into(), Val::Text("rust".into()))]).unwrap())
+    });
+    assert_eq!(small, large, "(units read, steps) behind 50 sold-out Titles, behind 500");
+    // A Title restocked is offered again, first in creation order.
+    let mut h = sold_out(50);
+    let staff = suture_lang::scenario::Caller { role: "staff".into(), name: "Sam".into(), verb: "changes".into() };
+    h.input_change(Some(&staff), "T7", "stock", Val::Count(1)).unwrap();
+    h.create("Loan", "L1", &[("title".into(), Val::Text("rust".into()))]).unwrap();
+    let hold = format!("{:?}", h.unit("L1").unwrap().root.parts[0].binds);
+    assert!(hold.contains("T7"), "{hold}\n{}", h.trace.join("\n"));
+}
+
 const TALLY: &str = "module tally version 1, currency EUR
 role staff
 kind Vote { weight: Count }

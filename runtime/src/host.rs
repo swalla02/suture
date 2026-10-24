@@ -73,6 +73,9 @@ pub struct Host {
     pub reads_at_once: bool,
     /// The choices put to a model and not answered yet, in the order asked.
     asking: Vec<Asking>,
+    /// Shared entities found full, by label and take, with the agent that
+    /// held each then (appendix BJ.2.1). Not state: it only saves steps.
+    full: std::cell::RefCell<std::collections::HashMap<(String, String), suture::AgentId>>,
 }
 
 /// A choice waiting for its model's answer (appendix S.2.2).
@@ -275,6 +278,7 @@ impl Host {
         self.model_answers = image.model_answers;
         self.asking = image.asking;
         self.replay.clear();
+        self.full.get_mut().clear();
         Ok(())
     }
 
@@ -317,6 +321,7 @@ impl Host {
             replay: VecDeque::new(),
             secrets: BTreeMap::new(),
             media: crate::media::Store::default(),
+            full: Default::default(),
         };
         // One unit holds each total `checked globally` (appendix F.2.13).
         for g in h.prog.globals.clone() {
@@ -484,6 +489,9 @@ impl Host {
     /// which the service has logged (appendix BD.2.2). Called between inputs.
     pub fn trim(&mut self, keep: usize) {
         self.model_answers.clear();
+        if self.full.get_mut().len() > 2 * keep {
+            self.full.get_mut().clear();
+        }
         if self.expired.len() > 2 * keep {
             self.expired.drain(..self.expired.len() - keep);
         }
@@ -676,13 +684,29 @@ impl Host {
     fn options(&self, u: &Unit, d: &Decide, key: &str) -> Vec<Unit> {
         let Some(b) = self.prog.bindings.get(d.binding as usize) else { return vec![] };
         let Some(labels) = self.pools.get(&(b.target.clone(), b.key_attr.clone())).and_then(|p| p.get(key)) else { return vec![] };
-        let candidates = || labels.iter().filter(|l| !d.skip.contains(l)).filter_map(|l| self.unit(l));
-        let grants = (b.held.is_none() && !b.unique).then(|| self.clock());
-        let roomy = interp::options(&self.prog, u, d, candidates(), grants);
-        if !roomy.is_empty() || grants.is_none() || !d.skip.is_empty() {
+        let candidates = || labels.iter().filter(|l| !d.skip.contains(l));
+        let checks = b.held.is_none() && !b.unique;
+        // A candidate found full for this take, and not changed since, is
+        // passed over unread: a take's refusal depends on nothing else
+        // (appendix BJ.2.1).
+        let take = format!("{:?}", d.taken);
+        let now = self.clock();
+        let full = |l: &String| self.full.borrow().get(&(l.clone(), take.clone())).is_some_and(|a| Some(*a) == self.agent_of(l));
+        let grants = |c: &Unit| {
+            let ok = interp::would_grant(&self.prog, c, d, now);
+            if !ok && let Some(a) = self.agent_of(&c.label) {
+                self.full.borrow_mut().insert((c.label.clone(), take.clone()), a);
+            }
+            ok
+        };
+        let roomy = match checks {
+            true => interp::options(&self.prog, u, d, candidates().filter(|l| !full(l)).filter_map(|l| self.unit(l)), Some(&grants)),
+            false => interp::options(&self.prog, u, d, candidates().filter_map(|l| self.unit(l)), None),
+        };
+        if !roomy.is_empty() || !checks || !d.skip.is_empty() {
             return roomy;
         }
-        interp::options(&self.prog, u, d, candidates(), None).into_iter().take(1).collect()
+        interp::options(&self.prog, u, d, candidates().filter_map(|l| self.unit(l)), None).into_iter().take(1).collect()
     }
 
     /// Puts a choice to its model after the step: the service asks it, and
@@ -1429,6 +1453,8 @@ impl Host {
         let new = Arc::new(new);
         let (kernel, kinds) = kernel::program(new.clone());
         self.machine.upgrade(kernel).map_err(|e| e.to_string())?;
+        // New rules may give room where the old refused, on the same agents.
+        self.full.get_mut().clear();
         let old = std::mem::replace(&mut self.prog, new);
         self.kinds = kinds;
         self.goal_timers = std::mem::take(&mut self.goal_timers)
@@ -1499,6 +1525,13 @@ impl Host {
     }
 
     /// A unit's current state, read from the graph.
+    /// The kernel agent that holds the unit `label` now: a new one each
+    /// time the unit changes.
+    fn agent_of(&self, label: &str) -> Option<suture::AgentId> {
+        let (a, ..) = self.machine.hole_peer(self.machine.hole(label)?)?;
+        Some(a)
+    }
+
     pub fn unit(&self, label: &str) -> Option<Unit> {
         let h = self.machine.hole(label)?;
         let (_, port, agent) = self.machine.hole_peer(h)?;

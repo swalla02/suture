@@ -2617,3 +2617,28 @@ runtime/tests/hardening.rs:
 - Two state directories name the same email differently, and neither uses the unkeyed hash. A restart names it the same.
 - The key file is readable only by its user, and is in neither the program nor the log.
 
+## Appendix BJ. Prototype slice 59: pools that remember what is full (2026-10-24)
+
+Since slice 52, a pool offers only candidates with room. Each choice still read every full candidate before the first with room, and stepped it once to learn that it refuses. A pool with many sold-out entities early in creation order made every choice cost one step per sold-out entity.
+
+### BJ.1 What slice 59 adds
+
+| Added in slice 59 | Still waits |
+|---|---|
+| a host's note of the candidates found full, by take | an index of candidates by room |
+
+### BJ.2 Semantics that slice 59 settles
+
+1. **Full candidates.**
+   - Whether a shared entity grants a take depends only on the entity's state and the take's name and amount. It does not depend on who takes, under what key, or when. So once one refuses a take, it refuses the same take until it changes.
+   - The host notes each refusal it finds while gathering options, by the entity's label and the take, with the kernel agent that held the entity then. A changed entity is a new agent, so the note no longer holds.
+   - A candidate whose note holds is passed over unread. The options are the same as without the note, since that candidate would have been refused.
+   - A deploy, and a restore from a snapshot, drop the notes, since new rules may give room on the same agents.
+   - The notes are not state: they are not in a snapshot, and a served host drops them once they exceed twice what it keeps of its trace.
+   - When no candidate has room, the fallback that names the best full one (appendix BC) still reads them all.
+2. **The cost.** Once the candidates have been found full, a choice behind them costs the same whether 50 or 500 sold-out entities come first.
+
+### BJ.3 Acceptance
+
+runtime/tests/work.rs: a Loan behind 50 sold-out Titles reads and steps as much as one behind 500. A Title restocked after it was found full is offered again, first in creation order.
+

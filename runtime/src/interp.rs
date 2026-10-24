@@ -919,9 +919,9 @@ pub fn would_grant(prog: &Program, c: &Unit, d: &Decide, now: i64) -> bool {
 
 /// The options of a binding's choice (appendix J.2.4): of the candidates, in
 /// creation order, the first `candidates` that meet the binding's filter,
-/// best first under its `prefer`. With `grants`, the time now, only those
-/// that would grant the take then count.
-pub fn options(prog: &Program, u: &Unit, d: &Decide, candidates: impl Iterator<Item = Unit>, grants: Option<i64>) -> Vec<Unit> {
+/// best first under its `prefer`. With `grants`, only those it says would
+/// grant the take count; it is asked only of those that meet the filter.
+pub fn options(prog: &Program, u: &Unit, d: &Decide, candidates: impl Iterator<Item = Unit>, grants: Option<&dyn Fn(&Unit) -> bool>) -> Vec<Unit> {
     let Some(b) = prog.bindings.get(d.binding as usize) else { return vec![] };
     let Some((at, elem)) = decide_place(prog, u, d) else { return vec![] };
     let mut gathered = vec![];
@@ -932,7 +932,7 @@ pub fn options(prog: &Program, u: &Unit, d: &Decide, candidates: impl Iterator<I
         let mut facts = u.facts.clone();
         facts.extend(own_facts(prog, &c));
         let v = View { facts: &facts, cand: Some(&c.label), elem: elem.as_deref(), ..View::of(u) };
-        if b.filter.iter().all(|f| eval(prog, v, &at, f) == T::Yes) && grants.is_none_or(|now| would_grant(prog, &c, d, now)) {
+        if b.filter.iter().all(|f| eval(prog, v, &at, f) == T::Yes) && grants.is_none_or(|g| g(&c)) {
             let scores = b.prefer.iter().map(|cr| score(prog, v, &at, cr)).collect::<Vec<_>>();
             gathered.push((c, scores));
         }
