@@ -83,7 +83,7 @@ fn used(path: &Path) -> Result<Vec<&'static str>, String> {
             _ => {}
         }
     }
-    let time = days || src.rules.iter().any(|r| r.period.is_some()) || !src.goals.is_empty() || src.reactions.iter().any(|r| r.outcome.ends_with(suture_lang::ir::PASSES));
+    let time = days || !src.calendars.is_empty() || src.rules.iter().any(|r| r.period.is_some()) || !src.goals.is_empty() || src.reactions.iter().any(|r| r.outcome.ends_with(suture_lang::ir::PASSES));
     let models = src.decides.iter().any(|d| d.model.is_some()) || src.sources.iter().any(|s| s.model) || !src.allows.is_empty();
     let has = [
         ("kinds", src.module.is_some() || !src.kinds.is_empty()),
@@ -112,7 +112,7 @@ pub fn topic_of_line(line: &str, scenario: bool) -> &'static str {
         "rule" if line.contains(" for each ") => "time",
         "rule" if line.contains(" taken from each ") => "parts",
         "rule" | "define" | "keep" | "apply" => "rules",
-        "desired" => "time",
+        "desired" | "calendar" => "time",
         "when" if line.contains(" passes") => "time",
         "when" => "reactions",
         "decide" | "source" | "allow" => "models",
