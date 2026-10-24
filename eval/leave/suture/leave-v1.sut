@@ -159,7 +159,7 @@
         },
         {
           "name": "leaves",
-          "ty": "Count",
+          "ty": "Duration",
           "of": null,
           "default": null,
           "formula": null,
@@ -206,10 +206,34 @@
         },
         {
           "name": "days",
-          "ty": "Count",
+          "ty": "Duration",
           "of": null,
           "default": null,
-          "formula": null,
+          "formula": {
+            "Bin": [
+              {
+                "Path": {
+                  "steps": [
+                    {
+                      "Attr": "from"
+                    }
+                  ]
+                }
+              },
+              {
+                "Working": 0
+              },
+              {
+                "Path": {
+                  "steps": [
+                    {
+                      "Attr": "to"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
           "mark": null
         },
         {
@@ -318,7 +342,7 @@
                   "steps": []
                 },
                 "name": "days of Applications that are counted",
-                "ty": "Count",
+                "ty": "Duration",
                 "period": null
               }
             },
@@ -605,7 +629,7 @@
                         ]
                       },
                       "name": "days of Applications that are counted",
-                      "ty": "Count",
+                      "ty": "Duration",
                       "period": null,
                       "kind": "Allocation"
                     }
@@ -863,7 +887,7 @@
               "op": "Gt",
               "right": {
                 "Lit": {
-                  "Count": 0
+                  "Duration": 0
                 }
               }
             }
@@ -897,54 +921,6 @@
           },
           "state": "selfish",
           "negated": false
-        }
-      }
-    },
-    {
-      "kind": "Allocation",
-      "state": "pending",
-      "cond": {
-        "Cmp": {
-          "left": {
-            "Taken": {
-              "of": {
-                "steps": []
-              },
-              "name": "days of Applications that are open",
-              "ty": "Count",
-              "period": null
-            }
-          },
-          "op": "Gt",
-          "right": {
-            "Lit": {
-              "Count": 0
-            }
-          }
-        }
-      }
-    },
-    {
-      "kind": "Allocation",
-      "state": "used",
-      "cond": {
-        "Cmp": {
-          "left": {
-            "Taken": {
-              "of": {
-                "steps": []
-              },
-              "name": "days of Applications that are approved",
-              "ty": "Count",
-              "period": null
-            }
-          },
-          "op": "Gt",
-          "right": {
-            "Lit": {
-              "Count": 0
-            }
-          }
         }
       }
     }
@@ -1069,7 +1045,7 @@
             ]
           }
         },
-        "ty": "Count",
+        "ty": "Duration",
         "period": null
       },
       "prefer": [],
@@ -1084,92 +1060,6 @@
         }
       },
       "shared": true
-    },
-    {
-      "id": "Allocation(days of Applications that are open)",
-      "subject": "Application",
-      "target": "Allocation",
-      "per": null,
-      "key_attr": "",
-      "key_member": false,
-      "key": {
-        "Path": {
-          "steps": [
-            {
-              "Attr": "allocation"
-            }
-          ]
-        }
-      },
-      "filter": [],
-      "taking": {
-        "name": "days of Applications that are open",
-        "amount": {
-          "Path": {
-            "steps": [
-              {
-                "Attr": "days"
-              }
-            ]
-          }
-        },
-        "ty": "Count",
-        "period": null
-      },
-      "prefer": [],
-      "source": "each Application adds to its allocation's total days of Applications that are open",
-      "held": {
-        "State": {
-          "node": {
-            "steps": []
-          },
-          "state": "open",
-          "negated": false
-        }
-      }
-    },
-    {
-      "id": "Allocation(days of Applications that are approved)",
-      "subject": "Application",
-      "target": "Allocation",
-      "per": null,
-      "key_attr": "",
-      "key_member": false,
-      "key": {
-        "Path": {
-          "steps": [
-            {
-              "Attr": "allocation"
-            }
-          ]
-        }
-      },
-      "filter": [],
-      "taking": {
-        "name": "days of Applications that are approved",
-        "amount": {
-          "Path": {
-            "steps": [
-              {
-                "Attr": "days"
-              }
-            ]
-          }
-        },
-        "ty": "Count",
-        "period": null
-      },
-      "prefer": [],
-      "source": "each Application adds to its allocation's total days of Applications that are approved",
-      "held": {
-        "State": {
-          "node": {
-            "steps": []
-          },
-          "state": "approved",
-          "negated": false
-        }
-      }
     },
     {
       "id": "Employee(number of Applications that are held per day from its from to its to)",
@@ -1285,6 +1175,92 @@
             "steps": []
           },
           "state": "held",
+          "negated": false
+        }
+      }
+    },
+    {
+      "id": "Allocation(days of Applications that are open)",
+      "subject": "Application",
+      "target": "Allocation",
+      "per": null,
+      "key_attr": "",
+      "key_member": false,
+      "key": {
+        "Path": {
+          "steps": [
+            {
+              "Attr": "allocation"
+            }
+          ]
+        }
+      },
+      "filter": [],
+      "taking": {
+        "name": "days of Applications that are open",
+        "amount": {
+          "Path": {
+            "steps": [
+              {
+                "Attr": "days"
+              }
+            ]
+          }
+        },
+        "ty": "Duration",
+        "period": null
+      },
+      "prefer": [],
+      "source": "each Application adds to its allocation's total days of Applications that are open",
+      "held": {
+        "State": {
+          "node": {
+            "steps": []
+          },
+          "state": "open",
+          "negated": false
+        }
+      }
+    },
+    {
+      "id": "Allocation(days of Applications that are approved)",
+      "subject": "Application",
+      "target": "Allocation",
+      "per": null,
+      "key_attr": "",
+      "key_member": false,
+      "key": {
+        "Path": {
+          "steps": [
+            {
+              "Attr": "allocation"
+            }
+          ]
+        }
+      },
+      "filter": [],
+      "taking": {
+        "name": "days of Applications that are approved",
+        "amount": {
+          "Path": {
+            "steps": [
+              {
+                "Attr": "days"
+              }
+            ]
+          }
+        },
+        "ty": "Duration",
+        "period": null
+      },
+      "prefer": [],
+      "source": "each Application adds to its allocation's total days of Applications that are approved",
+      "held": {
+        "State": {
+          "node": {
+            "steps": []
+          },
+          "state": "approved",
           "negated": false
         }
       }
@@ -1856,5 +1832,26 @@
   "attempts": 3,
   "candidates": 8,
   "warnings": [],
-  "grants": []
+  "grants": [],
+  "calendars": [
+    {
+      "name": "leave",
+      "days": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "start": 0,
+      "end": 86400,
+      "holidays": [
+        181,
+        220,
+        221
+      ]
+    }
+  ]
 }

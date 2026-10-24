@@ -25,13 +25,13 @@ These are left out on both sides, and `count.py` drops hrms's lines for them by 
 - read permissions and document sharing (three access tests);
 - block dates and optional holidays;
 - carry-forward, expiry and the ledger split across allocations;
-- half days, and holiday lists.
+- holiday lists as data (since slice 61 the days off are a `calendar` in the program), and half days that share a date with another leave.
 
 ## Where the port differs, because of Suture v0
 
 Each of these is a finding (RESULTS.md):
 
-- **Days are counted by calendar.** hrms counts the days between the dates, less holidays, and halves a half day. Since slice 38 the port computes `days` from the dates, `the days from its from to its to`, both ends counted. It counts every calendar day, because Suture has no holiday lists yet, and it has no fractional counts for half days.
+- **Days are counted by calendar.** hrms counts the days between the dates, less holidays, and halves a half day. Since slice 61 the port computes `days` as the time calendar `leave` works between the dates, a `Duration`: whole days less its days off, and a half day is a span of half a day (`to 2026-07-02 12:00`).
 - **The allocation is given.** hrms finds the allocation whose period holds the dates. The port has the caller name it and checks that it fits, because a unit cannot pick another unit by a range.
 - **Overlap.** hrms refuses a leave that overlaps another open or approved leave of the employee (`validate_leave_overlap`). A relation filter reads only the sibling, never the reader, so `the number of its employee's Applications that end after its from` cannot be written. Ported since slice 28 as a total per day over the days each application spans; two half days on one date still overlap.
 - **Consecutive leave across applications.** hrms adds the leaves just before and after when checking the longest leave. Ported since slice 32, as days in a row per allocation: a run across two allocations is not joined, and it counts calendar days, not leave days less holidays.

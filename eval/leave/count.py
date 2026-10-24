@@ -38,12 +38,16 @@ SKIP_LINE = re.compile(r"holiday|half_day|attendance|salary|carry_forward|is_car
 def source(rel):
     return subprocess.run(["git", "-C", str(hrms), "show", f"{rev}:{rel}"], capture_output=True, text=True, check=True).stdout
 
-def python_logic(src):
+# Counting leave days less holidays and half days, which the port does since
+# slice 61 (its calendar): counted apart, without the line filter.
+DAYS = {"get_number_of_leave_days", "get_holidays", "validate_half_day_date"}
+
+def python_logic(src, functions=FUNCTIONS, skip=SKIP_LINE):
     tree = ast.parse(src)
     lines = src.splitlines()
     keep = set()
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in FUNCTIONS:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in functions:
             keep.update(range(node.lineno, node.end_lineno + 1))
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.body:
@@ -53,7 +57,7 @@ def python_logic(src):
     out = []
     for n in sorted(keep):
         s = lines[n - 1].strip()
-        if s and not s.startswith("#") and not s.startswith("@") and not SKIP_LINE.search(s):
+        if s and not s.startswith("#") and not s.startswith("@") and not (skip and skip.search(s)):
             out.append(s)
     return out
 
@@ -68,5 +72,7 @@ st = suture_logic("suture/leave.st")
 conds = sum(len(re.findall(SUTURE_CONDITIONS, l)) for l in st if l.startswith(("admit", "define", "rule")))
 print(f"{'suture':10} {len(st):5} lines  {conds:4} condition clauses and connectives (no control flow)")
 print(f"{'hrms':10} {len(py):5} lines  {sum(len(re.findall(PY_FLOW, l)) for l in py):4} control-flow statements, in {len(FUNCTIONS)} functions")
+days = python_logic(source(FILE), DAYS, None)
+print(f"{'days':10} {len(days):5} lines of hrms counting leave days, in {len(DAYS)} functions; the port: its `calendar` line")
 sc = suture_logic("suture/leave.scenario")
 print(f"{'scenarios':10} {len(sc):5} lines  {sum(1 for l in sc if re.match(r'(when|and|expect|given)\b', l)):4} steps")

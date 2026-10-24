@@ -27,7 +27,7 @@ hrms's count drops, by pattern, its lines about holidays and half days, attendan
 | `leave_approver_with_restricted_employee_access`, `leave_access_for_workflow_reviewer_without_employee_permission` | out of scope: read permissions |
 | `overlap_with_half_day_1`…`_3`, `overlap_with_half_day_on_today` | **not expressible**: two half days may share a day |
 | `max_consecutive_leaves_across_leave_applications` | translated, since slice 32 (below) |
-| `half_day_date_cannot_be_holiday`, `leave_days_across_two_holiday_lists` | **not expressible**: counting days |
+| `half_day_date_cannot_be_holiday`, `leave_days_across_two_holiday_lists` | translated, since slice 61 (below) |
 
 ## What we learned
 
@@ -95,3 +95,32 @@ Both ends are counted, by calendar date. No line is added: the attribute's line 
 ## After slice 47: weekdays
 
 `the weekdays from … to …` counts Monday to Friday only (spec appendix AW). The port keeps `the days from`, because hrms takes weekends from the holiday list, not from the calendar, and the port has no holiday lists. A port for a company that does not work weekends would write `the weekdays from its from to its to`. Holiday lists and half days still wait: one needs dates as data across units (a holiday calendar), the other a count that is not whole.
+
+## After slice 61: calendars
+
+Slice 61 measures time against a calendar (spec appendix BL). The port's `days` is now the time its calendar works between the dates. It is a `Duration`, and so is the allocation's `leaves`:
+
+```text
+calendar leave: every day, except 2026-07-01, 2026-08-09 and 2026-08-10
+kind Application { …, days: Duration = the leave time from its from to its to, … }
+```
+
+| | Suture | hrms |
+|---|---|---|
+| Leave days less holidays and half days | **+1**: the `calendar` line; `days` and `leaves` change type, and `more than 0` becomes `more than 0 days` | 41 lines: `get_number_of_leave_days`, `get_holidays`, `validate_half_day_date` (not counting the holiday list lookups in other files) |
+| After slice 61 | 42 lines of logic, 18 scenarios in 213 lines | 487 lines in 29 functions, plus those 41; 18 tests translated, 23 out of scope, 4 not expressible |
+
+- **The two holiday tests are now scenarios.**
+  - `half_day_date_cannot_be_holiday`: a half day on a day off works no time, so `valid` refuses it at the gate. hrms needs its own check and message for this.
+  - `leave_days_across_two_holiday_lists`: five days with two days off counts 3.
+- **No hours.** A calendar without hours works whole days, so a leave day is 24 hours of `Duration` and `leaves 30 days` reads as hrms's 30 leave days. A half day is half of one: `from 2026-07-02 to 2026-07-02 12:00` is 12 hours, shown as `12 hours`, not `0.5 days`. A company that counts by working hours writes `Monday to Friday, 9:00 to 17:00`, and a half day is then 4 hours.
+- **The scenarios changed in their units only.** `leaves 30` is now `leaves 30 days`, and `expect … is 4` is now `… is 4 days`. All 16 earlier scenarios pass without other changes.
+- **The holiday list is in the program.** hrms keeps it as data that HR edits and assigns per employee, and by period: the second test assigns two lists. The port has one calendar with fixed dates, so a new year's holidays need a deploy. That is the gap that still waits: days off as data across units.
+- **Still not expressible.** The four `overlap_with_half_day` tests. Two half days may share a date in hrms, because a half day is half of a date, not a span of hours. The port's `apart` rule counts applications per day. Counting the time taken per day instead needs a per-day total of working time, not of applications.
+
+## Next, from this round
+
+1. Days off as data (a holiday list as entities, read by a calendar), so they change without a deploy and can differ per employee.
+2. A per-day total of working time in span rules (`for each Employee and day from … to …, the total leave time of their Applications … is at most 1 day`). This would make the four half-day overlap tests expressible.
+3. Showing a whole-day calendar's durations in days (`0.5 days`).
+
