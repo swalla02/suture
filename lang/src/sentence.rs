@@ -404,6 +404,16 @@ fn atom_in(c: &mut Cursor, bare: bool) -> Result<Num, Error> {
         c.expect_word("to")?;
         return Ok(Num::Days { from, to: Box::new(atom(c, bare)?), weekdays });
     }
+    // `the work time from a to b`: the time a calendar works (appendix BL.2.2).
+    if word_at(c, 0, "the") && word_at(c, 2, "time") && word_at(c, 3, "from") && matches!(c.peek_at(1), Some(Tok::Word(w)) if w.starts_with(char::is_lowercase)) {
+        c.expect_word("the")?;
+        let calendar = c.word()?;
+        c.expect_word("time")?;
+        c.expect_word("from")?;
+        let from = Box::new(atom(c, bare)?);
+        c.expect_word("to")?;
+        return Ok(Num::Working { calendar, from, to: Box::new(atom(c, bare)?) });
+    }
     if word_at(c, 0, "the") && word_at(c, 1, "number") && word_at(c, 2, "of") {
         c.expect_word("the")?;
         c.expect_word("number")?;
@@ -704,7 +714,7 @@ fn each_in_cond(c: &Cond) -> Option<String> {
         };
         match n {
             Num::Np(x) | Num::Total { of: x, .. } | Num::Number { of: x, .. } | Num::Taken { from: x, .. } | Num::Run { of: x, .. } => np(x),
-            Num::Bin(a, _, b) | Num::Days { from: a, to: b, .. } => num(a).or_else(|| num(b)),
+            Num::Bin(a, _, b) | Num::Days { from: a, to: b, .. } | Num::Working { from: a, to: b, .. } => num(a).or_else(|| num(b)),
             Num::Over { list, .. } => np(list),
             Num::Lit(_) => None,
         }

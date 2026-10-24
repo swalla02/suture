@@ -147,7 +147,7 @@ fn num_formula(p: &Program, kind: &str, v: &str, n: &Num) -> String {
     match n {
         Num::Path(x) => path_formula(p, kind, v, x),
         Num::Lit(l) => lit_text(p, l),
-        Num::Bin(x, op, y) => bin(*op, x, y, |m| num_formula(p, kind, v, m)),
+        Num::Bin(x, op, y) => bin(p, *op, x, y, |m| num_formula(p, kind, v, m)),
         Num::Sum { of, kind: k, calc, filter, .. } => {
             let e = element_var(k, v);
             let filter = filter.as_ref().map_or_else(String::new, |f| format!(" where {}", cond_formula(p, k, &e, f)));
@@ -223,7 +223,7 @@ fn num_words(p: &Program, kind: &str, n: &Num) -> String {
     match n {
         Num::Path(x) => path_words(p, kind, x),
         Num::Lit(l) => lit_text(p, l),
-        Num::Bin(x, op, y) => bin(*op, x, y, |m| num_words(p, kind, m)),
+        Num::Bin(x, op, y) => bin(p, *op, x, y, |m| num_words(p, kind, m)),
         Num::Sum { of, kind: k, calc, filter, .. } => match calc.as_ref() {
             Num::Path(Path { steps }) if steps.len() == 1 && matches!(steps[0], Step::Attr(_)) => {
                 let Step::Attr(a) = &steps[0] else { unreachable!("matched above") };
@@ -279,26 +279,30 @@ fn element_words(p: &Program, owner: &str, element: &str, one: &str, n: &Num) ->
             let names: Vec<String> = step_names(p, element, path).into_iter().map(|(n, part)| if part { words_of_kind(&n) } else { n }).collect();
             if names.is_empty() { format!("the {one}") } else { format!("the {one}'s {}", names.join("'s ")) }
         }
-        Num::Bin(x, op, y) => bin(*op, x, y, |m| element_words(p, owner, element, one, m)),
+        Num::Bin(x, op, y) => bin(p, *op, x, y, |m| element_words(p, owner, element, one, m)),
         other => num_words(p, element, other),
     }
 }
 
 /// `x op y`, with parentheses where the reading needs them.
-fn bin(op: Arith, x: &Num, y: &Num, show: impl Fn(&Num) -> String) -> String {
-    if matches!(op, Arith::Days | Arith::Weekdays) {
+fn bin(p: &Program, op: Arith, x: &Num, y: &Num, show: impl Fn(&Num) -> String) -> String {
+    if matches!(op, Arith::Days | Arith::Weekdays | Arith::Working(_)) {
         let end = |m: &Num| match m {
-            Num::Bin(_, inner, _) if !matches!(inner, Arith::Days | Arith::Weekdays) => format!("({})", show(m)),
+            Num::Bin(_, inner, _) if !matches!(inner, Arith::Days | Arith::Weekdays | Arith::Working(_)) => format!("({})", show(m)),
             _ => show(m),
         };
-        let what = if op == Arith::Weekdays { "weekdays" } else { "days" };
+        let what = match op {
+            Arith::Weekdays => "weekdays".to_string(),
+            Arith::Working(i) => format!("{} time", p.calendars.get(i as usize).map_or("?", |c| c.name.as_str())),
+            _ => "days".to_string(),
+        };
         return format!("the {what} from {} to {}", end(x), end(y));
     }
     // `the days from … to …` reads as one value, so it is never bracketed.
     let prec = |a: Arith| match a {
         Arith::Add | Arith::Sub => 1,
         Arith::Mul | Arith::Div => 2,
-        Arith::Days | Arith::Weekdays => 3,
+        Arith::Days | Arith::Weekdays | Arith::Working(_) => 3,
     };
     let side = |m: &Num, right: bool| match m {
         // A right operand of the same precedence is bracketed too: with whole
@@ -313,7 +317,7 @@ fn bin(op: Arith, x: &Num, y: &Num, show: impl Fn(&Num) -> String) -> String {
         Arith::Sub => "−",
         Arith::Mul => "×",
         Arith::Div => "/",
-        Arith::Days | Arith::Weekdays => unreachable!("read above"),
+        Arith::Days | Arith::Weekdays | Arith::Working(_) => unreachable!("read above"),
     };
     format!("{} {sym} {}", side(x, false), side(y, true))
 }

@@ -2260,6 +2260,10 @@ fn num(prog: &Program, v: View, at: &[usize], n: &Num) -> Option<Val> {
                 (a, b, c) => arith(arith(a, Arith::Mul, b)?, Arith::Div, c),
             }
         }
+        Num::Bin(x, Arith::Working(i), y) => match (num(prog, v, at, x)?, num(prog, v, at, y)?) {
+            (Val::Time(a), Val::Time(b)) => Some(Val::Duration(working(prog.calendars.get(*i as usize)?, a, b))),
+            _ => None,
+        },
         Num::Bin(x, op, y) => arith(num(prog, v, at, x)?, *op, num(prog, v, at, y)?),
         Num::Sum { of, kind, calc, filter, ty } => {
             let mut total = zero(*ty);
@@ -2380,6 +2384,41 @@ fn weekdays(a: i64, b: i64) -> i64 {
     if b < a { 0 } else { upto(b) - upto(a - 1) }
 }
 
+/// The time calendar `c` works from `a` to `b`. An end at midnight takes
+/// that whole day, as `the days from` counts it; none when `b` is before `a`
+/// (appendix BL.2.2).
+pub fn working(c: &suture_lang::ir::Calendar, a: i64, b: i64) -> i64 {
+    const DAY: i64 = 86_400;
+    let b = if b.rem_euclid(DAY) == 0 { b.saturating_add(DAY) } else { b };
+    if b <= a {
+        return 0;
+    }
+    let off = |d: i64| c.holidays.binary_search(&d).is_ok();
+    // Day 0 of the runtime clock, 2026-01-01, was a Thursday.
+    let works = |d: i64| c.days[(d + 3).rem_euclid(7) as usize] && !off(d);
+    let overlap = |d: i64| match works(d) {
+        true => (b.min(d * DAY + c.end) - a.max(d * DAY + c.start)).max(0),
+        false => 0,
+    };
+    let (first, last) = (a.div_euclid(DAY), (b - 1).div_euclid(DAY));
+    if first == last {
+        return overlap(first);
+    }
+    // The whole days between: whole weeks at once, then what is left, then
+    // the days off that fall on working days.
+    let (from, to) = (first + 1, last - 1);
+    let mut whole = 0;
+    if to >= from {
+        let n = to - from + 1;
+        whole = n / 7 * c.days.iter().filter(|d| **d).count() as i64;
+        whole += (0..n % 7).filter(|k| c.days[(to - k + 3).rem_euclid(7) as usize]).count() as i64;
+        let lo = c.holidays.partition_point(|h| *h < from);
+        let hi = c.holidays.partition_point(|h| *h <= to);
+        whole -= c.holidays[lo..hi].iter().filter(|d| c.days[(**d + 3).rem_euclid(7) as usize]).count() as i64;
+    }
+    overlap(first) + overlap(last) + whole * (c.end - c.start)
+}
+
 /// Checked arithmetic on amounts and counts; division rounds toward zero.
 fn arith(x: Val, op: Arith, y: Val) -> Option<Val> {
     let f = |a: i64, b: i64| match op {
@@ -2387,7 +2426,7 @@ fn arith(x: Val, op: Arith, y: Val) -> Option<Val> {
         Arith::Sub => a.checked_sub(b),
         Arith::Mul => a.checked_mul(b),
         Arith::Div => a.checked_div(b),
-        Arith::Days | Arith::Weekdays => None,
+        Arith::Days | Arith::Weekdays | Arith::Working(_) => None,
     };
     match (x, y) {
         // Calendar days in UTC, both counted: none or fewer when `b` is before `a` (appendix AN.2.2).

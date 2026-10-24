@@ -48,11 +48,12 @@ pub(crate) fn statement(st: &Stmt, out: &mut Source) -> Result<(), Error> {
         "apply" => apply(st, at, out),
         "allow" => allow(st, at, out),
         "keep" => keep(st, at, out),
+        "calendar" => calendar(st, at, out),
         w if w.starts_with(char::is_uppercase) && matches!(st.lines[0].get(1), Some(Tok::Word(x)) if x == "is") => slot(st, at, out),
         w if w.starts_with(char::is_uppercase) && matches!(st.lines[0].get(1), Some(Tok::Word(x)) if x == "uses") => uses(st, at, out),
         w if w.starts_with(char::is_uppercase) => needs(st, at, out),
         _ => Err(st.error(format!(
-            "unknown statement `{first}`: expected module, kind, effect, source, decide, rule, define, desired, when, prefer, role, admit, apply, allow, keep, `Kind needs …` or `Slot is …`"
+            "unknown statement `{first}`: expected module, kind, effect, source, decide, rule, define, desired, when, prefer, role, admit, apply, allow, keep, calendar, `Kind needs …` or `Slot is …`"
         ))),
     }
 }
@@ -683,6 +684,88 @@ fn reaction(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
     }
     c.expect_end()?;
     out.reactions.push(ReactionDecl { kind, outcome, by, actions, at });
+    Ok(())
+}
+
+const WEEKDAYS: [&str; 7] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+/// `calendar work: Monday to Friday, 9:00 to 17:00, except 2026-12-25 and
+/// 2026-12-26`; `every day` for all seven (appendix BL.2.1).
+fn calendar(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
+    let toks = st.tokens();
+    let mut c = Cursor::new(&toks, &st.file, st.line);
+    c.expect_word("calendar")?;
+    let name = c.word()?;
+    if name.starts_with(char::is_uppercase) {
+        return Err(c.error(format!("a calendar is named in lower case: `calendar {}`", name.to_lowercase())));
+    }
+    c.expect_sym(':')?;
+    let day = |c: &mut Cursor| -> Result<usize, Error> {
+        let w = c.word()?;
+        WEEKDAYS.iter().position(|d| *d == w).ok_or_else(|| c.error(format!("`{w}` is not a day of the week: write Monday … Sunday")))
+    };
+    let mut days = [false; 7];
+    if c.eat_word("every") {
+        c.expect_word("day")?;
+        days = [true; 7];
+    } else {
+        let first = day(&mut c)?;
+        if c.eat_word("to") {
+            // A range may wrap round the week: `Sunday to Thursday`.
+            let last = day(&mut c)?;
+            let mut d = first;
+            loop {
+                days[d] = true;
+                if d == last {
+                    break;
+                }
+                d = (d + 1) % 7;
+            }
+        } else {
+            days[first] = true;
+            while c.is_word("and") || (matches!(c.peek(), Some(Tok::Sym(','))) && matches!(c.peek_at(1), Some(Tok::Word(w)) if WEEKDAYS.contains(&w.as_str()))) {
+                c.next();
+                days[day(&mut c)?] = true;
+            }
+        }
+    }
+    let clock = |c: &mut Cursor| -> Result<i64, Error> {
+        let (Some(Tok::Num(h)), Some(Tok::Sym(':')), Some(Tok::Num(m))) = (c.peek(), c.peek_at(1), c.peek_at(2)) else {
+            return Err(c.error(format!("expected a time of day such as `9:00`, found {}", c.found())));
+        };
+        let (h, m) = (h.parse::<i64>().unwrap_or(99), m.parse::<i64>().unwrap_or(99));
+        if m > 59 || h > 24 || (h == 24 && m > 0) {
+            return Err(c.error(format!("`{h}:{m:02}` is not a time of day")));
+        }
+        for _ in 0..3 {
+            c.next();
+        }
+        Ok(h * 3_600 + m * 60)
+    };
+    let mut hours = None;
+    let mut except = vec![];
+    while c.eat_sym(',') {
+        if c.eat_word("except") {
+            loop {
+                match literal(&mut c)? {
+                    Some(Literal::Time(t)) => except.push(t),
+                    _ => return Err(c.error(format!("expected a date such as `2026-12-25`, found {}", c.found()))),
+                }
+                if !(c.eat_sym(',') || c.eat_word("and")) {
+                    break;
+                }
+            }
+            break;
+        }
+        if hours.is_some() {
+            return Err(c.error(format!("expected `except`, found {}", c.found())));
+        }
+        let start = clock(&mut c)?;
+        c.expect_word("to")?;
+        hours = Some((start, clock(&mut c)?));
+    }
+    c.expect_end()?;
+    out.calendars.push(CalendarDecl { name, days, hours, except, at });
     Ok(())
 }
 

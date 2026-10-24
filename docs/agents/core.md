@@ -35,6 +35,7 @@ desired [within ⟨duration⟩]: every ⟨subject⟩ is ⟨state⟩             
 when a ⟨role⟩ [or ⟨role⟩] ⟨verb⟩s a ⟨Kind⟩: ⟨action⟩[ and ⟨action⟩]                  reactions
 when a ⟨Kind⟩ is ⟨outcome | timed out⟩: ⟨action⟩[ and ⟨action⟩]                      reactions
 when a ⟨Kind⟩'s ⟨Time attr⟩ passes: ⟨action⟩[ and ⟨action⟩]                         time
+calendar ⟨name⟩: Monday to Friday[, 9:00 to 17:00][, except ⟨date⟩ and ⟨date⟩]      time
 decide ⟨Slot⟩ with model "⟨m⟩@1" … · source ⟨Kind⟩'s ⟨attr⟩ via model "⟨m⟩@1" …     models
 scenario "⟨title⟩": given / when / expect lines                                  scenarios
 suture serve ⟨dir⟩: HTTP inputs and JSON values                                   serve
@@ -65,6 +66,7 @@ Conditions (`⟨cond⟩`), noun phrases, numbers and filters are in `rules`; act
 | becomes overdue by itself | `due: Time = created + 14 days` + `when a Loan's due passes: it is overdue`; guard with `define: a Loan is late when it is overdue and it is not returned` |
 | limit per day or month | `rule daily: for each Member and day, the number of their Bookings is at most 2` |
 | number of days between dates | `days: Count = the days from its from to its to`; Monday to Friday: `the weekdays from …` |
+| working time, half days, holidays | `calendar work: …` + `length: Duration = the work time from its from to its to`; total it: `at most 200 hours` |
 
 ## limits: not writable yet, and what to do
 
@@ -74,7 +76,6 @@ Conditions (`⟨cond⟩`), noun phrases, numbers and filters are in `rules`; act
 | `no two` on a value an answer or a source sets | compare a value callers set, or say duplicates are not prevented |
 | a reaction setting another entity it only references | a `define` on that entity, from a total of what references it |
 | a negative `Count` (`score - 3` is not −1) | compare totals, or use `Money` |
-| holidays and half days in a day count | take working days as an input, and say so |
 | taking back a request already sent | guard the state it sets with the fact that ends it |
 | loops, functions, generated text or code | none, by design |
 

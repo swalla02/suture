@@ -83,6 +83,9 @@ pub enum Num {
     /// `the days from its from to its to`: calendar days, both ends counted (appendix AN)
     /// `the weekdays from … to …`: Monday to Friday only (appendix AW).
     Days { from: Box<Num>, to: Box<Num>, weekdays: bool },
+    /// `the work time from … to …`: the time a calendar works between two
+    /// times (appendix BL).
+    Working { calendar: String, from: Box<Num>, to: Box<Num> },
 }
 
 /// What follows `is`: a literal, a noun phrase, or a bare word that the
@@ -424,6 +427,21 @@ pub struct Source {
     pub applies: Vec<ApplyDecl>,
     pub allows: Vec<AllowDecl>,
     pub keeps: Vec<KeepDecl>,
+    pub calendars: Vec<CalendarDecl>,
+}
+
+/// `calendar work: Monday to Friday, 9:00 to 17:00, except 2026-12-25`
+/// (appendix BL.2.1).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CalendarDecl {
+    pub name: String,
+    /// Monday first.
+    pub days: [bool; 7],
+    /// The seconds into the day it starts and stops working.
+    pub hours: Option<(i64, i64)>,
+    /// The dates it does not work, as times.
+    pub except: Vec<i64>,
+    pub at: Loc,
 }
 
 /// `keep the total days of each Allocation's Applications that are approved`

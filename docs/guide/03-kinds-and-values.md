@@ -116,7 +116,22 @@ kind Leave { employee: Employee, from: Time, to: Time, days: Count = the days fr
 
 Each end is one value. `the days from its from to its to - 1` is one day fewer than the count. To count to a calculated time, put it in brackets: `the days from its from to (its to + 1 day)`.
 
-`the weekdays from its from to its to` counts the same way but only Mondays to Fridays, so a leave from Friday to Monday is 2 days and a weekend is 0. Holidays and half days are not counted yet.
+`the weekdays from its from to its to` counts the same way but only Mondays to Fridays, so a leave from Friday to Monday is 2 days and a weekend is 0.
+
+### Working time
+
+For holidays, half days and working hours, declare a **calendar** and measure time against it:
+
+```text
+calendar work: Monday to Friday, 9:00 to 17:00, except 2026-04-06 and 2026-12-25
+kind Employee { name: Text, allowed: Duration }
+kind Leave { employee: Employee, from: Time, to: Time, length: Duration = the work time from its from to its to }
+rule enough: the total length of each Employee's Leaves is at most its allowed
+```
+
+`the work time from … to …` is a `Duration`: the hours the calendar works between the two times. Weekends, the days listed after `except`, and the hours outside 9:00–17:00 do not count. An end at midnight takes that whole day, as `the days from` does, so a leave from 2026-03-02 to 2026-03-06 is 40 hours, a full working week. A leave from 2026-03-09 9:00 to 13:00 is a half day, 4 hours. Easter week, 2026-04-06 to 2026-04-10, is 32 hours, because Easter Monday is off.
+
+Durations add up in totals like amounts and counts, so the allowance is a Duration too: `allowed 200 hours` is 25 working days. The days of the week can also be a range that wraps around the week (`Sunday to Thursday`), a list (`Monday, Wednesday and Friday`) or `every day`. Without hours, a calendar works whole days. Days off are dates in the program, so a new year's holidays come with a deploy (chapter 18).
 
 ## References
 

@@ -38,6 +38,8 @@ Suture v0 is a prototype. Everything earlier in this guide runs and is tested. T
 | refusing a new entity, or an answer, that would overfill a filtered total | its contribution waits for room |
 | ordering within a relation (`the newest Item`) | number them with a formula: `seq: Count = the number of its unit's Items` |
 | conditions that read the clock | `when a ⟨Kind⟩'s ⟨time⟩ passes` sets a fact the condition reads |
+| a calendar's days off as data that changes without a deploy, and `25 working days` as a unit | list the days off in the `calendar`; write working time in hours (`200 hours`) |
+| a working day split in two (a lunch break) | one span of hours a day |
 | multiplying two amounts, except as a share `a * b / c` | a Count factor, or a share |
 | negative counts and durations | count the other way, or subtract |
 | sets of values (`set of Text`) | a set of a small kind (`set of Zone`) |

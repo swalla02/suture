@@ -41,6 +41,22 @@ pub struct Program {
     /// it at run time; it is never written with the program (appendix BI.2.1).
     #[serde(skip)]
     pub personal_key: Option<PersonalKey>,
+    /// When the program's calendars work (appendix BL).
+    #[serde(default)]
+    pub calendars: Vec<Calendar>,
+}
+
+/// A working week, its hours and its days off (appendix BL.2.1).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Calendar {
+    pub name: String,
+    /// Monday first.
+    pub days: [bool; 7],
+    /// The seconds into a working day it starts and stops.
+    pub start: i64,
+    pub end: i64,
+    /// Its days off, as days on the runtime clock, sorted.
+    pub holidays: Vec<i64>,
 }
 
 /// A key for personal values, which never shows in a debug print.
@@ -632,6 +648,9 @@ pub enum Arith {
     /// `the weekdays from x to y`: the same, counting Monday to Friday only
     /// (appendix AW).
     Weekdays,
+    /// `the work time from x to y`: the Duration the program's calendar
+    /// number n works between them (appendix BL.2.2).
+    Working(u16),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

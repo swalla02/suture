@@ -242,6 +242,7 @@ const STATEMENTS: &[(&str, &str)] = &[
     ("decide", "decide ${1:Kind} with model \"${2:name}@${3:1}\""),
     ("apply", "apply rule ${1:name} to ${2:Kinds} created from version ${3:2}"),
     ("keep", "keep the number of each ${1:Kind}'s ${2:Kinds}"),
+    ("calendar", "calendar ${1:work}: ${2:Monday} to ${3:Friday}, ${4:9:00} to ${5:17:00}"),
 ];
 
 /// Whether the tokens can begin a statement: they parse, or the parser

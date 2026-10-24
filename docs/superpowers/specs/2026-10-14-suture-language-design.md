@@ -2667,3 +2667,38 @@ A scenario's clock counted from 2026-01-01 (F.2.12), but a served program's coun
 - runtime/tests/service.rs: a service opened at Unix time 1,800,000,000 has the clock at 2027-01-15T08:00:00Z. A log rewritten to format 1 still counts from when it started.
 - lang/tests/shared.rs: a default `2026-03-01` is day 59, and a formula may count days from a date.
 
+## Appendix BL. Prototype slice 61: calendars and working time (2026-10-24)
+
+The leave eval needed holidays and half days (AW). A count that is not whole would give half days but not hours or holidays. A time measured against a working calendar gives all three in one form, as a `Duration`, the type the language already has for lengths of time. Slice 60 made a date in a program mean the day it names, so a calendar can list its days off.
+
+### BL.1 What slice 61 adds
+
+| Added in slice 61 | Still waits |
+|---|---|
+| `calendar work: Monday to Friday, 9:00 to 17:00, except 2026-04-06 and 2026-12-25` | days off as data across units, changed without a deploy |
+| `the work time from ⟨Time⟩ to ⟨Time⟩`: a Duration | `25 working days` as a unit; showing working time in working days |
+| totals of durations | two spans of hours a day |
+
+### BL.2 Semantics that slice 61 settles
+
+1. **A calendar.**
+   - `calendar ⟨name⟩: ⟨days⟩[, ⟨H:MM⟩ to ⟨H:MM⟩][, except ⟨date⟩, … and ⟨date⟩]`. The name is a lower-case word, and it is declared once.
+   - The days are a range of weekdays (`Monday to Friday`, which may wrap round the week, as in `Sunday to Thursday`), a list (`Monday, Wednesday and Friday`), or `every day`.
+   - The hours are one span a day, in UTC, from `0:00` up to `24:00`, and must end after they start. Without hours, a calendar works whole days.
+   - The days off are dates. A date with a time is an error, since a day off is a whole day.
+2. **Working time.**
+   - `the ⟨calendar⟩ time from x to y` is a `Duration`: the seconds of the calendar's hours, on its working days that are not days off, that fall between x and y.
+   - An end at midnight takes that whole day, as `the days from` counts both ends (AN.2.1). So `from 2026-03-02 to 2026-03-06` is the whole working week, and a date given for both ends is that whole day.
+   - When y is before x it is none, never negative.
+   - It is computed by whole weeks, so a long span costs no more than a short one.
+   - Like `the days from`, it may be a formula or appear in a rule, each end is one value, and the read-back says `the work time from … to …`.
+3. **Totals of durations.** A total, a contribution, a take and `the total of … over …` may add up durations as they add up amounts and counts.
+4. **A deploy** that changes a calendar changes what is computed from then on. A formula keeps the value it had when its entity was created (as every formula does).
+
+### BL.3 Acceptance
+
+runtime/tests/calendar.rs:
+- A working week is 40 hours, a half day is 4, Easter week is 32 and an evening to the next morning is 4. 2026 is 2072 hours, and 2026 counted directly is 259 days of 8 hours.
+- A weekend is refused by `more than 0 seconds`, and a day over the allowance by the total.
+- Ranges that wrap, lists, `24:00`, and seven mistakes are each named.
+

@@ -98,6 +98,7 @@ fn show_num(n: &ast::Num) -> String {
         ast::Num::Taken { attr, from } => format!("the total {attr} taken from {}", show(from)),
         ast::Num::Run { of, .. } => format!("the days in a row of {}", show(of)),
         ast::Num::Days { from, to, weekdays } => format!("the {} from {} to {}", if *weekdays { "weekdays" } else { "days" }, show_num(from), show_num(to)),
+        ast::Num::Working { calendar, from, to } => format!("the {calendar} time from {} to {}", show_num(from), show_num(to)),
     }
 }
 
@@ -929,6 +930,30 @@ fn per_period(b: &Body) -> bool {
 }
 
 impl Checker {
+    /// The calendars, before anything that reads them (appendix BL.2.1).
+    fn calendars(&mut self, src: &Source, p: &mut Program) {
+        for c in &src.calendars {
+            if p.calendars.iter().any(|x| x.name == c.name) {
+                self.errors.push(err(&c.at, format!("calendar {} is declared twice", c.name)));
+                continue;
+            }
+            let (start, end) = c.hours.unwrap_or((0, 86_400));
+            if start >= end {
+                self.errors.push(err(&c.at, format!("calendar {}: a working day ends after it starts", c.name)));
+            }
+            let mut holidays = vec![];
+            for t in &c.except {
+                if t.rem_euclid(86_400) != 0 {
+                    self.errors.push(err(&c.at, format!("calendar {}: `{}` is not a date; a day off is a whole day, as in `2026-12-25`", c.name, crate::sentence::date_text(*t))));
+                }
+                holidays.push(t.div_euclid(86_400));
+            }
+            holidays.sort_unstable();
+            holidays.dedup();
+            p.calendars.push(ir::Calendar { name: c.name.clone(), days: c.days, start, end, holidays });
+        }
+    }
+
     fn program(&mut self, src: &Source) -> Program {
         let (module, version, currency) = match &src.module {
             Some(m) => (m.name.clone(), m.version, m.currency.clone()),
@@ -961,7 +986,9 @@ impl Checker {
             warnings: vec![],
             grants: vec![],
             personal_key: None,
+            calendars: vec![],
         };
+        self.calendars(src, &mut p);
         self.kinds(src, &mut p);
         self.slots(src, &mut p);
         self.lists(src, &mut p);
@@ -1580,7 +1607,7 @@ impl Checker {
                     };
                     let t = self.num(p, &u.at, &u.subject, n);
                     match (name, t) {
-                        (Some(name), Some((amount, ty @ (Ty::Money | Ty::Count)))) => Some(Some(Taking { name, amount, ty, period: None, span: None, group: vec![] })),
+                        (Some(name), Some((amount, ty @ (Ty::Money | Ty::Count | Ty::Duration)))) => Some(Some(Taking { name, amount, ty, period: None, span: None, group: vec![] })),
                         (None, Some(_)) => {
                             self.errors.push(err(&u.at, format!("`taking {}`: name the attribute taken, as in `taking the line's quantity`, or take a count, as in `taking 1`", show_num(n))));
                             None
@@ -2562,6 +2589,23 @@ impl Checker {
                     }
                 }
             }
+            ast::Num::Working { calendar, from: x, to: y } => {
+                let Some(i) = p.calendars.iter().position(|c| c.name == *calendar) else {
+                    let known: Vec<&str> = p.calendars.iter().map(|c| c.name.as_str()).collect();
+                    let known = if known.is_empty() { "none is declared: `calendar work: Monday to Friday, 9:00 to 17:00`".to_string() } else { format!("the calendars are {}", known.join(", ")) };
+                    self.errors.push(err(at, format!("`{}`: there is no calendar {calendar}; {known}", show_num(n))));
+                    return None;
+                };
+                let (l, lt) = self.num(p, at, from, x)?;
+                let (r, rt) = self.num(p, at, from, y)?;
+                if (lt, rt) != (Ty::Time, Ty::Time) {
+                    let what = if lt == Ty::Time { show_num(y) } else { show_num(x) };
+                    let ty = if lt == Ty::Time { rt } else { lt };
+                    self.errors.push(err(at, format!("`{}` measures the time between two times, and `{what}` is a {ty:?}", show_num(n))));
+                    return None;
+                }
+                Some((Num::Bin(Box::new(l), Arith::Working(i as u16), Box::new(r)), Ty::Duration))
+            }
             ast::Num::Days { from: x, to: y, weekdays } => {
                 let (l, lt) = self.num(p, at, from, x)?;
                 let (r, rt) = self.num(p, at, from, y)?;
@@ -2587,9 +2631,9 @@ impl Checker {
             ast::Num::Total { attr, of, filter } => {
                 if let Some((kind, by)) = across(p, from, of) {
                     let ty = match p.kind(&kind).and_then(|k| k.attr(attr)).map(|a| a.ty) {
-                        Some(t @ (Ty::Money | Ty::Count)) => t,
+                        Some(t @ (Ty::Money | Ty::Count | Ty::Duration)) => t,
                         _ => {
-                            self.errors.push(err(at, format!("`the total {attr} of {}`: {} has no amount or count `{attr}`", show(of), a(&kind))));
+                            self.errors.push(err(at, format!("`the total {attr} of {}`: {} has no amount, count or duration `{attr}`", show(of), a(&kind))));
                             return None;
                         }
                     };
@@ -2600,9 +2644,9 @@ impl Checker {
                 }
                 let (path, kind) = self.rel(p, at, from, of)?;
                 let ty = match p.kind(&kind).and_then(|k| k.attr(attr)).map(|a| a.ty) {
-                    Some(t @ (Ty::Money | Ty::Count)) => t,
+                    Some(t @ (Ty::Money | Ty::Count | Ty::Duration)) => t,
                     Some(t) => {
-                        self.errors.push(err(at, format!("`the total {attr} of {}`: {attr} is {t:?}; only amounts and counts add up", show(of))));
+                        self.errors.push(err(at, format!("`the total {attr} of {}`: {attr} is {t:?}; only amounts, counts and durations add up", show(of))));
                         return None;
                     }
                     None => {
@@ -2643,8 +2687,8 @@ impl Checker {
                 };
                 let names = l.singulars();
                 let (calc, ty) = self.over(p, at, from, &element, &names, calc)?;
-                if !matches!(ty, Ty::Money | Ty::Count) {
-                    self.errors.push(err(at, format!("`{}` is {ty:?}; only amounts and counts add up", show_num(n))));
+                if !matches!(ty, Ty::Money | Ty::Count | Ty::Duration) {
+                    self.errors.push(err(at, format!("`{}` is {ty:?}; only amounts, counts and durations add up", show_num(n))));
                     return None;
                 }
                 Some((Num::Sum { of: path, kind: element, calc: Box::new(calc), filter: None, ty }, ty))
@@ -2794,9 +2838,9 @@ impl Checker {
         }
         let attr = match attr {
             Some(x) => match p.kind(&kind).and_then(|k| k.attr(x)).map(|a| a.ty) {
-                Some(t @ (Ty::Money | Ty::Count)) => Some((x, t)),
+                Some(t @ (Ty::Money | Ty::Count | Ty::Duration)) => Some((x, t)),
                 _ => {
-                    self.errors.push(err(at, format!("`the total {x} of {}`: {} has no amount or count `{x}`", show(of), a(&kind))));
+                    self.errors.push(err(at, format!("`the total {x} of {}`: {} has no amount, count or duration `{x}`", show(of), a(&kind))));
                     return Some(None);
                 }
             },
