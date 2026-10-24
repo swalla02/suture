@@ -15,6 +15,11 @@ use suture_runtime::state::Val;
 
 const T0: u64 = 1_800_000_000;
 
+/// The runtime clock `n` seconds after T0: it counts from 2026-01-01.
+fn clock(n: u64) -> u64 {
+    T0 - suture_runtime::state::EPOCH_UNIX + n
+}
+
 fn tickets() -> Program {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../examples/tickets");
     suture_lang::compile_dir(&dir).unwrap_or_else(|e| panic!("{e:?}"))
@@ -68,7 +73,7 @@ fn inputs_apply_and_are_refused_with_the_trace() {
     assert!(a.refused.as_deref().is_some_and(|r| r.starts_with("refused at the gate")), "{a:?}");
     let a = s.input(answer("payments", "charged", "B1"), T0 + 7).unwrap();
     assert!(a.trace.iter().any(|l| l.contains("B1  Ticket → issue via mailer")), "{:?}", a.trace);
-    assert_eq!(s.host.now, 7, "the clock follows the inputs' times");
+    assert_eq!(s.host.now, clock(7), "the clock follows the inputs' times");
 }
 
 trait WithBy {
@@ -104,7 +109,7 @@ fn a_restart_replays_the_log_into_the_same_state() {
     assert_eq!(s.host.trace, trace);
     assert_eq!(["B1", "B3", "Fri"].iter().map(|l| s.host.unit(l)).collect::<Vec<_>>(), units);
     assert_eq!(s.host.pending().iter().map(|a| a.key.clone()).collect::<Vec<_>>(), pending);
-    assert_eq!(s.host.now, 9, "the clock stands where the log left it, until the next tick");
+    assert_eq!(s.host.now, clock(9), "the clock stands where the log left it, until the next tick");
 }
 
 #[test]
@@ -179,7 +184,7 @@ fn a_clock_that_steps_back_waits() {
     setup(&p, &mut s);
     s.input(booking(&p, "B1", "Ada", 2), T0 + 40).unwrap();
     assert_eq!(s.tick(T0 + 10).unwrap(), Vec::<String>::new());
-    assert_eq!(s.host.now, 40);
+    assert_eq!(s.host.now, clock(40));
 }
 
 const SHOP: &str = "module shop version 1, currency EUR
@@ -236,10 +241,10 @@ fn the_clock_fires_deadlines_and_downtime_fires_what_it_covered() {
     drop(s);
     // Down for an hour: the last two sends' deadlines ran out meanwhile.
     let mut s = Service::open(&p, &dir, T0 + 3600, |_| {}).unwrap();
-    assert_eq!(s.host.now, 31);
+    assert_eq!(s.host.now, clock(31));
     let fired = s.tick(T0 + 3600).unwrap();
     assert!(fired.iter().any(|l| l.contains("B1  Payment timed out after 3 sends")), "{fired:?}");
-    assert_eq!(s.host.now, 3600);
+    assert_eq!(s.host.now, clock(3600));
 }
 
 /// Answers each post with `reply`, and keeps the posts.
@@ -372,4 +377,24 @@ fn a_log_whose_inputs_asked_models_in_their_step_replays_so() {
     assert_eq!(s.host.unit("O1"), unit);
     assert!(s.host.model_asks().is_empty());
     assert!(s.host.defer_models);
+}
+
+#[test]
+fn a_served_clock_counts_from_the_day_dates_count_from() {
+    let p = tickets();
+    let dir = state("dates");
+    let mut s = Service::open(&p, &dir, T0, |_| {}).unwrap();
+    setup(&p, &mut s);
+    assert_eq!(suture_lang::sentence::rfc3339(s.host.now as i64), "2027-01-15T08:00:00Z", "T0 is that day");
+    drop(s);
+    // A log of format 1 counted from when it started, and still does.
+    let dir = state("format-1");
+    drop(Service::open(&p, &dir, T0, |_| {}).unwrap());
+    let log = dir.join("log.jsonl");
+    let text = std::fs::read_to_string(&log).unwrap();
+    assert!(text.starts_with(r#"{"suture":2,"#), "{text}");
+    std::fs::write(&log, text.replacen(r#"{"suture":2,"#, r#"{"suture":1,"#, 1)).unwrap();
+    let mut s = Service::open(&p, &dir, T0, |_| {}).unwrap();
+    setup(&p, &mut s);
+    assert_eq!(s.elapsed(T0 + 5), 5);
 }

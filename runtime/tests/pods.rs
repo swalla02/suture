@@ -88,8 +88,8 @@ fn two_pods_take_inputs_in_turn_and_come_to_the_same_state() {
         assert_eq!(a.host.unit(l), c.host.unit(l), "{l}");
         assert_eq!(b.host.unit(l), c.host.unit(l), "{l}");
     }
-    assert_eq!(a.host.now, 3);
-    assert_eq!(b.host.now, 3);
+    assert_eq!(a.host.now, T0 + 3 - suture_runtime::state::EPOCH_UNIX);
+    assert_eq!(b.host.now, a.host.now);
 }
 
 #[test]

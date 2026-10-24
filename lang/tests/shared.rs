@@ -109,8 +109,8 @@ rule floor: every Order's promo is at least -100 EUR
     assert_eq!(p.kind("Unit").unwrap().attr("share").unwrap().ty, Ty::Money);
     let floor = p.rules.iter().find(|r| r.name == "floor").unwrap();
     assert_eq!(floor.paraphrase, "each order on its own: its promo is at least -100 EUR");
-    let e = errors("kind T { a: Time = 2026-03-01 }\n");
-    assert!(e.iter().any(|e| e.contains("a date is written only in scenarios")), "{e:?}");
+    let t = prog("kind T { a: Time = 2026-03-01, b: Count = the days from 2026-03-01 to its a }\n");
+    assert_eq!(t.kind("T").unwrap().attr("a").unwrap().default, Some(suture_lang::ir::Lit::Time(59 * 86_400)));
     let e = errors("kind T { a: Money, b: Money, c: Money = a * b }\n");
     assert!(e.iter().any(|e| e.contains("cannot multiply a Money by a Money; for a share of an amount")), "{e:?}");
     let e = errors("kind T { a: Money, b: Money, c: Money = a * b / 2 }\n");

@@ -2642,3 +2642,28 @@ Since slice 52, a pool offers only candidates with room. Each choice still read 
 
 runtime/tests/work.rs: a Loan behind 50 sold-out Titles reads and steps as much as one behind 500. A Title restocked after it was found full is offered again, first in creation order.
 
+## Appendix BK. Prototype slice 60: one clock for every date (2026-10-24)
+
+A scenario's clock counted from 2026-01-01 (F.2.12), but a served program's counted from when its log started (L.2.4). Each date the runtime showed or computed from a served time was off by that much. An entity created on 2026-10-24 was sent to the API as created on 2026-01-01, and `the weekdays from` counted the wrong days. This was also why a program could not write a date (AB.2.3).
+
+### BK.1 What slice 60 adds
+
+| Added in slice 60 | Still waits |
+|---|---|
+| a served clock that counts from 2026-01-01, as a scenario's does | time zones in program text |
+| dates in programs: `opens: Time = 2026-03-01` | conditions that read the clock |
+
+### BK.2 Semantics that slice 60 settles
+
+1. **The clock.**
+   - The runtime clock counts whole seconds from 2026-01-01 00:00 UTC, in a scenario and on a service alike.
+   - A new log is of format 2. Its first input moves the clock from 0 to the present in one pass. No timer can be due before it, since none has been set yet.
+   - A log of format 1 counted from its header's `started`, and is still read that way, archives and snapshots included. It is never rewritten.
+   - A service run before 2026-01-01 stands at 0 until then.
+2. **Dates in programs.** `2026-03-01` and `2026-03-01 14:30` are `Time` literals wherever a value may be written, with the meaning they have in a scenario.
+
+### BK.3 Acceptance
+
+- runtime/tests/service.rs: a service opened at Unix time 1,800,000,000 has the clock at 2027-01-15T08:00:00Z. A log rewritten to format 1 still counts from when it started.
+- lang/tests/shared.rs: a default `2026-03-01` is day 59, and a formula may count days from a date.
+

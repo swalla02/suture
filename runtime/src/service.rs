@@ -20,7 +20,9 @@ use crate::host::Host;
 use crate::state::{Ask, Val};
 
 /// The log's format; its header says which (appendix L.2.1).
-pub const LOG_FORMAT: u32 = 1;
+/// Format 2 counts the clock from 2026-01-01, as dates do; a log of format
+/// 1 counted it from when it started, and is still read so (appendix BK.2.1).
+pub const LOG_FORMAT: u32 = 2;
 
 /// The longest an adapter's post may take, whatever its effect's deadline.
 const POST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -137,8 +139,11 @@ pub struct Applied {
 
 pub struct Service {
     pub host: Host,
-    /// The Unix time of the clock's zero.
+    /// The Unix time the log was started.
     pub started: u64,
+    /// The Unix time of the clock's zero: 2026-01-01, or for a log of
+    /// format 1 when it started (appendix BK.2.1).
+    pub origin: u64,
     log: Option<File>,
     adapters: BTreeMap<String, Adapter>,
     transport: Box<dyn Transport>,
@@ -341,6 +346,7 @@ impl Service {
         Service {
             host,
             started: now,
+            origin: crate::state::EPOCH_UNIX,
             log: None,
             adapters: BTreeMap::new(),
             transport: Box::new(backend::Curl),
@@ -483,7 +489,7 @@ impl Service {
             return Err("it was taken of another log".into());
         }
         let header: Header = serde_json::from_str(&snap.header).map_err(|e| format!("its log header: {e}"))?;
-        self.started = header.started;
+        self.clock_of(&header);
         self.host.restore(snap.host, Box::new(suture::NoJournal))?;
         self.read_to = snap.offset;
         self.read_on(&log, cut)?;
@@ -808,7 +814,7 @@ impl Service {
             self.apply_all(&earlier, &a)?;
         }
         self.read_to = read_to;
-        self.started = header.started;
+        self.clock_of(&header);
         self.apply_all(&records, path)
     }
 
@@ -828,7 +834,7 @@ impl Service {
         }
         let Some(((_, first), rest)) = lines.split_first() else { return Err(format!("{}: the log has no header", path.display())) };
         let header: Header = serde_json::from_str(first).map_err(|e| format!("{}: not a log header: {e}", at(0)))?;
-        if header.suture != LOG_FORMAT {
+        if !(1..=LOG_FORMAT).contains(&header.suture) {
             return Err(format!("{}: log format {} is not {LOG_FORMAT}", at(0), header.suture));
         }
         let mut records = vec![];
@@ -946,7 +952,13 @@ impl Service {
 
     /// The runtime clock at Unix time `now`.
     pub fn elapsed(&self, now: u64) -> u64 {
-        now.saturating_sub(self.started)
+        now.saturating_sub(self.origin)
+    }
+
+    /// Where a log's clock starts.
+    fn clock_of(&mut self, header: &Header) {
+        self.started = header.started;
+        self.origin = if header.suture == 1 { header.started } else { crate::state::EPOCH_UNIX };
     }
 
     /// Fires the timers that fell due by Unix time `now`, as one `pass` (appendix L.2.4).

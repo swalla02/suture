@@ -160,4 +160,4 @@ A higher version is deployed over the live units, once the deploy check finds no
 
 ## The clock
 
-The runtime clock counts whole seconds from the moment the log was started. Before an input applies, the clock moves to the current time, and once a second the service fires every timer that has fallen due. A scenario's `and 30 seconds pass` is, on a service, thirty seconds of waiting.
+The runtime clock counts whole seconds from 2026-01-01 00:00 UTC, as a scenario's does, so a date means the same day in a program, a scenario and the API. (A log written before slice 60 counts from when it was started, and is still read that way.) Before an input applies, the clock moves to the current time, and once a second the service fires every timer that has fallen due. A scenario's `and 30 seconds pass` is, on a service, thirty seconds of waiting.
