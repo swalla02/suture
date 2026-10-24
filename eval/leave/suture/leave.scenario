@@ -214,7 +214,7 @@ scenario "leave in a row across applications is no longer than its type allows (
   and    hr Admin applies a new Application M with employee E, type T, allocation AT, approver A, from 2026-02-05 and to 2026-02-05
   expect M is open
 
-scenario "a half day on a day off is refused (test_half_day_date_cannot_be_holiday)":
+scenario "a half day on a day off works no time and is refused (after test_half_day_date_cannot_be_holiday)":
   given  a Company C with name Test
   and    a Approver A with user "approver"
   and    a Employee E with user "emp", company C, joined 2010-01-01 and approver A

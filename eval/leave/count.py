@@ -39,8 +39,10 @@ def source(rel):
     return subprocess.run(["git", "-C", str(hrms), "show", f"{rev}:{rel}"], capture_output=True, text=True, check=True).stdout
 
 # Counting leave days less holidays and half days, which the port does since
-# slice 61 (its calendar): counted apart, without the line filter.
+# slice 61 (its calendar): counted apart, dropping messages as the main count
+# does, but keeping the lines about holidays and half days.
 DAYS = {"get_number_of_leave_days", "get_holidays", "validate_half_day_date"}
+MESSAGES = re.compile(r"notif|publish|msgprint|_\(\"|get_link_to_form|frappe\.bold|precision|title=|raise_exception", re.I)
 
 def python_logic(src, functions=FUNCTIONS, skip=SKIP_LINE):
     tree = ast.parse(src)
@@ -72,7 +74,7 @@ st = suture_logic("suture/leave.st")
 conds = sum(len(re.findall(SUTURE_CONDITIONS, l)) for l in st if l.startswith(("admit", "define", "rule")))
 print(f"{'suture':10} {len(st):5} lines  {conds:4} condition clauses and connectives (no control flow)")
 print(f"{'hrms':10} {len(py):5} lines  {sum(len(re.findall(PY_FLOW, l)) for l in py):4} control-flow statements, in {len(FUNCTIONS)} functions")
-days = python_logic(source(FILE), DAYS, None)
+days = python_logic(source(FILE), DAYS, MESSAGES)
 print(f"{'days':10} {len(days):5} lines of hrms counting leave days, in {len(DAYS)} functions; the port: its `calendar` line")
 sc = suture_logic("suture/leave.scenario")
 print(f"{'scenarios':10} {len(sc):5} lines  {sum(1 for l in sc if re.match(r'(when|and|expect|given)\b', l)):4} steps")

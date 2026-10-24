@@ -107,11 +107,11 @@ kind Application { …, days: Duration = the leave time from its from to its to,
 
 | | Suture | hrms |
 |---|---|---|
-| Leave days less holidays and half days | **+1**: the `calendar` line; `days` and `leaves` change type, and `more than 0` becomes `more than 0 days` | 41 lines: `get_number_of_leave_days`, `get_holidays`, `validate_half_day_date` (not counting the holiday list lookups in other files) |
-| After slice 61 | 42 lines of logic, 18 scenarios in 213 lines | 487 lines in 29 functions, plus those 41; 18 tests translated, 23 out of scope, 4 not expressible |
+| Leave days less holidays and half days | **+1**: the `calendar` line; `days` and `leaves` change type, and `more than 0` becomes `more than 0 days` | 39 lines: `get_number_of_leave_days`, `get_holidays`, `validate_half_day_date`, with messages dropped as in the main count (not counting the holiday list lookups in other files) |
+| After slice 61 | 42 lines of logic, 18 scenarios in 213 lines | 487 lines in 29 functions, plus those 39; 17 tests translated and 1 after its test, 23 out of scope, 4 not expressible |
 
 - **The two holiday tests are now scenarios.**
-  - `half_day_date_cannot_be_holiday`: a half day on a day off works no time, so `valid` refuses it at the gate. hrms needs its own check and message for this.
+  - `half_day_date_cannot_be_holiday`, translated as `after`: a half day on a day off works no time, so `valid` refuses it at the gate, as it refuses any leave that works no time. This is weaker than hrms. The port has no half-day date inside a longer leave, so a leave from 2026-06-30 to 2026-07-01 12:00 is accepted, as one day. hrms refuses it, because its half day falls on a holiday.
   - `leave_days_across_two_holiday_lists`: five days with two days off counts 3.
 - **No hours.** A calendar without hours works whole days, so a leave day is 24 hours of `Duration` and `leaves 30 days` reads as hrms's 30 leave days. A half day is half of one: `from 2026-07-02 to 2026-07-02 12:00` is 12 hours, shown as `12 hours`, not `0.5 days`. A company that counts by working hours writes `Monday to Friday, 9:00 to 17:00`, and a half day is then 4 hours.
 - **The scenarios changed in their units only.** `leaves 30` is now `leaves 30 days`, and `expect … is 4` is now `… is 4 days`. All 16 earlier scenarios pass without other changes.
