@@ -82,6 +82,11 @@ pub struct Facts {
     pub shield: i32,
     /// The squares beside the other side's king that this side attacks.
     pub pressure: i32,
+    /// The squares beside this side's king that the other side attacks.
+    pub peril: i32,
+    /// How far a knight, bishop or queen lands from the centre (0 to 3); 0
+    /// for other pieces.
+    pub rim: i32,
     /// This side's material minus the other's, before the move.
     pub balance: i32,
 }
@@ -275,6 +280,8 @@ pub fn facts(b: &Board, m: Move) -> Facts {
         loose: (0..64u8).filter(|&s| after.at(s).is_some_and(|q| q.color == us && !matches!(q.kind, Kind::Pawn | Kind::King)) && !after.attacked(s, us)).count() as i32,
         shield: shield(&after, ours, us),
         pressure: crate::KING.iter().filter_map(|&d| crate::step(theirs, d)).filter(|&t| after.attacked(t, us)).count() as i32,
+        peril: crate::KING.iter().filter_map(|&d| crate::step(ours, d)).filter(|&t| after.attacked(t, us.other())).count() as i32,
+        rim: if matches!(p.kind, Kind::Knight | Kind::Bishop | Kind::Queen) { edge(m.to) } else { 0 },
         balance: material(b, us) - material(b, us.other()),
     }
 }

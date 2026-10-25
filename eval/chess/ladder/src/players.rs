@@ -421,6 +421,8 @@ impl Player for Sutured {
                 ("loose".into(), count(f.loose)),
                 ("shield".into(), count(f.shield)),
                 ("pressure".into(), count(f.pressure)),
+                ("peril".into(), count(f.peril)),
+                ("rim".into(), count(f.rim)),
                 ("up".into(), count(balance)),
                 ("down".into(), count(-balance)),
                 ("ahead".into(), Val::Bool(balance >= 2)),
