@@ -126,7 +126,7 @@ impl Scorer for Lc0 {
             let Some(rest) = l.strip_prefix("info string ") else { continue };
             let Some(m) = rest.split_whitespace().next() else { continue };
             let Some(p) = rest.split("(P:").nth(1).and_then(|p| p.split('%').next()).and_then(|p| p.trim().parse::<f64>().ok()) else { continue };
-            if let Some(i) = moves.iter().position(|x| x.to_string() == castling(m)) {
+            if let Some(i) = moves.iter().position(|x| x.to_string() == castling(g.board(), m)) {
                 out[i] = (p * 10.0).round() as i64;
             }
         }
@@ -135,7 +135,11 @@ impl Scorer for Lc0 {
 }
 
 /// lc0 may write castling as the king taking its rook.
-fn castling(m: &str) -> &str {
+fn castling<'a>(b: &chess_engine::Board, m: &'a str) -> &'a str {
+    let king = b.parse_move(&m[..4.min(m.len())]).is_none() && b.at(if m.starts_with("e1") { 4 } else { 60 }).is_some_and(|p| p.kind == Kind::King);
+    if !king {
+        return m;
+    }
     match m {
         "e1h1" => "e1g1",
         "e1a1" => "e1c1",
@@ -201,16 +205,20 @@ pub struct Llm {
     pub model: String,
     pub scratch: std::path::PathBuf,
     misses: u32,
+    /// Its own request file, apart from other threads' players.
+    id: u64,
 }
+
+static LLMS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 impl Llm {
     pub fn new(via: Via, model: &str, scratch: std::path::PathBuf) -> Llm {
-        Llm { via, model: model.to_string(), scratch, misses: 0 }
+        Llm { via, model: model.to_string(), scratch, misses: 0, id: LLMS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) }
     }
 
     fn ask(&self, prompt: &str) -> Result<String, String> {
         let body = |v: serde_json::Value| -> Result<std::path::PathBuf, String> {
-            let p = self.scratch.join(format!("ask-{}.json", std::process::id()));
+            let p = self.scratch.join(format!("ask-{}-{}.json", std::process::id(), self.id));
             std::fs::write(&p, v.to_string()).map_err(|e| e.to_string())?;
             Ok(p)
         };
