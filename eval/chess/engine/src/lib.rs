@@ -4,6 +4,8 @@
 
 use std::fmt;
 
+pub mod facts;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum Color {
     White,

@@ -28,6 +28,16 @@ name = "chess-engine"
 version = "0.1.0"
 
 [[package]]
+name = "chess-ladder"
+version = "0.1.0"
+dependencies = [
+ "chess-engine",
+ "serde_json",
+ "suture-lang",
+ "suture-runtime",
+]
+
+[[package]]
 name = "claims-baseline"
 version = "0.1.0"
 
