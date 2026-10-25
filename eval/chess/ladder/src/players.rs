@@ -341,11 +341,14 @@ pub struct Sutured {
     pub rng: Rng,
     host: Option<Host>,
     overrides: u32,
+    /// The Move attributes the strategy declares, other than its formulas.
+    reads: Vec<String>,
 }
 
 impl Sutured {
     pub fn new(prog: Program, scorer: Box<dyn Scorer>, rng: Rng) -> Sutured {
-        Sutured { prog, scorer, rng, host: None, overrides: 0 }
+        let reads = prog.kind("Move").map(|k| k.attrs.iter().filter(|a| a.formula.is_none()).map(|a| a.name.clone()).collect()).unwrap_or_default();
+        Sutured { prog, scorer, rng, host: None, overrides: 0, reads }
     }
 }
 
@@ -381,6 +384,7 @@ impl Player for Sutured {
             let m = legal[i];
             let f = facts(b, m);
             let count = |v: i32| Val::Count(v.max(0) as i64);
+            let flag = |v: bool| Val::Count(v as i64);
             let attrs: Vec<(String, Val)> = vec![
                 ("ply".into(), Val::Count(n as i64)),
                 ("uci".into(), Val::Text(m.to_string())),
@@ -391,20 +395,62 @@ impl Player for Sutured {
                 ("stalemating".into(), Val::Bool(f.stalemate)),
                 ("hangs".into(), count(f.hangs)),
                 ("threat".into(), count(f.threat)),
+                ("fork".into(), count(f.fork)),
+                ("wins".into(), count(f.outcome)),
+                ("loses".into(), count(-f.outcome)),
+                ("gains".into(), count(f.outlook)),
+                ("drops".into(), count(-f.outlook)),
+                ("danger".into(), count(f.danger)),
+                ("cornered".into(), Val::Bool(f.cornered)),
+                ("luft".into(), count(f.luft)),
                 ("exposing".into(), Val::Bool(f.allows_mate)),
                 ("castling".into(), Val::Bool(f.castles)),
                 ("promoting".into(), Val::Bool(f.promotes)),
                 ("developing".into(), Val::Bool(f.develops)),
+                ("undeveloping".into(), Val::Bool(f.undevelops)),
                 ("central".into(), Val::Bool(f.center)),
                 ("pawnrank".into(), count(f.pawn_rank)),
+                ("passed".into(), Val::Bool(f.passed)),
+                ("trading".into(), Val::Bool(f.trades)),
+                ("boxed".into(), count(f.boxed)),
+                ("kings".into(), count(f.kings)),
+                ("kingedge".into(), count(f.king_edge)),
+                ("theiredge".into(), count(f.their_edge)),
+                ("replies".into(), count(f.replies)),
+                ("mobility".into(), count(f.mobility)),
+                ("loose".into(), count(f.loose)),
+                ("shield".into(), count(f.shield)),
+                ("pressure".into(), count(f.pressure)),
+                ("up".into(), count(balance)),
+                ("down".into(), count(-balance)),
                 ("ahead".into(), Val::Bool(balance >= 2)),
                 ("behind".into(), Val::Bool(balance <= -2)),
                 ("opening".into(), Val::Bool(n < 20)),
                 ("endgame".into(), Val::Bool(pieces <= 26)),
                 ("repeating".into(), Val::Bool(g.repeats(&b.play(m)))),
+                // The same facts as numbers, 1 or 0, for the strategy's formulas.
+                ("checks".into(), flag(f.check)),
+                ("castles".into(), flag(f.castles)),
+                ("centers".into(), flag(f.center)),
+                ("pawnmoves".into(), flag(f.piece == "pawn")),
+                ("develops".into(), flag(f.develops)),
+                ("undevelops".into(), flag(f.undevelops)),
+                ("kingmoves".into(), flag(f.piece == "king" && !f.castles)),
+                ("queenmoves".into(), flag(f.piece == "queen")),
+                ("pushes".into(), count(if f.passed { f.pawn_rank } else { 0 })),
+                ("trades".into(), flag(f.trades)),
+                ("nets".into(), flag(f.cornered)),
+                ("traps".into(), flag(f.trapped)),
+                ("stalemates".into(), flag(f.stalemate)),
+                ("repeats".into(), flag(g.repeats(&b.play(m)))),
+                ("early".into(), flag(n < 20)),
+                ("late".into(), flag(pieces <= 26)),
                 ("score".into(), Val::Count(scores[i])),
                 ("rank".into(), Val::Count(rank.iter().position(|&r| r == i).unwrap_or(0) as i64 + 1)),
             ];
+            // Only the facts the strategy's Move declares: a strategy names
+            // what it reads, and the rest is not entered.
+            let attrs: Vec<(String, Val)> = attrs.into_iter().filter(|(a, _)| self.reads.iter().any(|r| r == a)).collect();
             host.create("Move", &format!("M{n}x{i}"), &attrs)?;
         }
         let turn = format!("T{n}");

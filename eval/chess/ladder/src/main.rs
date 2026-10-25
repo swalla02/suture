@@ -17,7 +17,8 @@ fn main() {
     let r = match args.first().map(String::as_str) {
         Some("match") if args.len() >= 5 => run(&args[1], &args[2], args[3].parse().unwrap_or(2), &args[4], args.get(5).and_then(|t| t.parse().ok()).unwrap_or(1)),
         Some("elo") if args.len() >= 2 => ratings(&args[1..]),
-        _ => Err("usage: ladder match ⟨player⟩ ⟨player⟩ ⟨games⟩ ⟨out.jsonl⟩ [threads] | ladder elo ⟨results.jsonl⟩…".into()),
+        Some("facts") if args.len() >= 2 => show(&args[1]),
+        _ => Err("usage: ladder match ⟨player⟩ ⟨player⟩ ⟨games⟩ ⟨out.jsonl⟩ [threads] | ladder elo ⟨results.jsonl⟩… | ladder facts ⟨fen⟩".into()),
     };
     if let Err(e) = r {
         eprintln!("{e}");
@@ -67,6 +68,15 @@ fn run(a: &str, b: &str, games: usize, out: &str, threads: usize) -> Result<(), 
     }
     for h in handles {
         h.join().map_err(|_| "a game thread panicked")??;
+    }
+    Ok(())
+}
+
+/// Each legal move's facts in one position, as the strategy reads them.
+fn show(fen: &str) -> Result<(), String> {
+    let b = chess_engine::Board::from_fen(fen)?;
+    for m in b.legal() {
+        println!("{m} {:?}", chess_engine::facts::facts(&b, m));
     }
     Ok(())
 }
