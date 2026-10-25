@@ -488,6 +488,7 @@ pub fn attributes(g: &Game, m: Move, score: i64, rank: i64) -> Vec<(String, Val)
         ("trades".into(), flag(f.trades)),
         ("nets".into(), flag(f.cornered)),
         ("traps".into(), flag(f.trapped)),
+        ("trapped".into(), Val::Bool(f.trapped)),
         ("stalemates".into(), flag(f.stalemate)),
         ("repeats".into(), flag(g.repeats(&b.play(m)))),
         ("early".into(), flag(n < 20)),
