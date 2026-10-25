@@ -481,7 +481,10 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
             };
             if let Some((name, amount)) = taken {
                 let base = name.split_once('@').map_or(name.as_str(), |(b, _)| b);
-                let shares = shares(prog, name);
+                let shares = name.split_once('@').and_then(|(_, at)| work_span(at));
+                if shares.as_ref().is_some_and(|s| s.len() != periods.len()) {
+                    return refuse(format!("the take {} has a share for each of {} periods, not {}", take_text(name), shares.as_ref().map_or(0, Vec::len), periods.len()));
+                }
                 for (i, p) in periods.iter().enumerate() {
                     let total = p.as_ref().map_or_else(|| name.clone(), |p| format!("{base}@{p}"));
                     let before = totals.get(&total).cloned().unwrap_or_else(|| zero(amount.ty()));
@@ -515,7 +518,7 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
                     Some((base, at)) => periods_in(at).unwrap_or_default().into_iter().map(|p| format!("{base}@{p}")).collect(),
                     None => vec![name.clone()],
                 };
-                let shares = shares(prog, name);
+                let shares = name.split_once('@').and_then(|(_, at)| work_span(at));
                 for (i, total) in totals.into_iter().enumerate() {
                     let before = u.taken.get(&total).cloned().unwrap_or_else(|| zero(amount.ty()));
                     let amount = shares.as_ref().and_then(|s| s.get(i)).map_or_else(|| amount.clone(), |s| Val::Duration(*s));
@@ -839,9 +842,10 @@ fn decide_for(prog: &Program, u: &Unit, at: &[usize], id: &str, skip: Vec<String
                         Some(Val::Time(t)) => Some(t),
                         _ => None,
                     };
+                    let (from, to) = (time(start)?, time(end)?);
                     let key = match t.work {
-                        Some(cal) => work_span_key(per, time(start)?, time(end)?, cal),
-                        None => span_key(per, time(start)?, time(end)?),
+                        Some(cal) => work_span_key(per, from, to, &shares(prog.calendars.get(cal as usize)?, per, from, to)),
+                        None => span_key(per, from, to),
                     };
                     format!("{}@{key}", t.name)
                 }
@@ -2392,14 +2396,10 @@ fn weekdays(a: i64, b: i64) -> i64 {
     if b < a { 0 } else { upto(b) - upto(a - 1) }
 }
 
-/// The time a take with shares adds to each period it spans, in the order
-/// `periods_in` gives them (appendix BM.2.1); `None` for one amount to each.
-fn shares(prog: &Program, name: &str) -> Option<Vec<i64>> {
+/// The time calendar `c` works in each period from `from` to `to`, in the
+/// order `periods_in` gives them (appendix BM.2.1).
+fn shares(c: &suture_lang::ir::Calendar, per: &str, from: i64, to: i64) -> Vec<i64> {
     const DAY: i64 = 86_400;
-    let (_, at) = name.split_once('@')?;
-    let (from, to, cal) = work_span(at)?;
-    let c = prog.calendars.get(cal as usize)?;
-    let per = at.strip_prefix("span ")?.split(' ').next()?;
     let end = if to.rem_euclid(DAY) == 0 { to.saturating_add(DAY) } else { to };
     let mut out: Vec<(String, i64)> = vec![];
     for d in from.div_euclid(DAY)..=to.div_euclid(DAY) {
@@ -2410,7 +2410,7 @@ fn shares(prog: &Program, name: &str) -> Option<Vec<i64>> {
             _ => out.push((k, share)),
         }
     }
-    Some(out.into_iter().map(|(_, s)| s).collect())
+    out.into_iter().map(|(_, s)| s).collect()
 }
 
 /// The time calendar `c` works from `a` to `b`. An end at midnight takes

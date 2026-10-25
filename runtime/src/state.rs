@@ -147,19 +147,23 @@ pub fn span_key(period: &str, from: i64, to: i64) -> String {
     format!("span {period} {from} {to}")
 }
 
-/// A span whose share of each period is the time calendar `cal` works in it
-/// (appendix BM.2.1): `span day ⟨from⟩ ⟨to⟩ ⟨cal⟩`.
-pub fn work_span_key(period: &str, from: i64, to: i64, cal: u16) -> String {
-    format!("span {period} {from} {to} {cal}")
+/// A span with its share of each period, in seconds, first to last
+/// (appendix BM.2.1): `span day ⟨from⟩ ⟨to⟩ =⟨s⟩,⟨s⟩,…`. The shares are
+/// computed once, when the take is asked for, so its release gives back
+/// exactly what it took, whatever a later deploy makes of the calendar.
+pub fn work_span_key(period: &str, from: i64, to: i64, shares: &[i64]) -> String {
+    let shares: Vec<String> = shares.iter().map(i64::to_string).collect();
+    format!("span {period} {from} {to} ={}", shares.join(","))
 }
 
-/// The times and the calendar of a span with shares, if it is one.
-pub fn work_span(at: &str) -> Option<(i64, i64, u16)> {
-    let mut parts = at.strip_prefix("span ")?.split(' ').skip(1);
-    match (parts.next()?.parse().ok()?, parts.next()?.parse().ok()?, parts.next()?.parse().ok()?, parts.next()) {
-        (from, to, cal, None) => Some((from, to, cal)),
-        _ => None,
+/// The shares of a span that has them.
+pub fn work_span(at: &str) -> Option<Vec<i64>> {
+    let mut parts = at.strip_prefix("span ")?.split(' ').skip(3);
+    let shares = parts.next()?.strip_prefix('=')?;
+    if parts.next().is_some() {
+        return None;
     }
+    shares.split(',').map(|s| s.parse().ok()).collect()
 }
 
 /// A take's total as a trace shows it: a span by its dates,
@@ -189,8 +193,9 @@ pub fn periods_in(at: &str) -> Result<Vec<String>, String> {
     let (Some(per), Some(Ok(from)), Some(Ok(to))) = (parts.next(), parts.next().map(str::parse::<i64>), parts.next().map(str::parse::<i64>)) else {
         return Err(format!("not a span: {at}"));
     };
-    // A calendar after the times gives shares, not more periods.
-    if parts.next().is_some_and(|c| c.parse::<u16>().is_err()) || parts.next().is_some() {
+    // Shares after the times, one for each period (appendix BM.2.1).
+    let shares = parts.next();
+    if parts.next().is_some() || shares.is_some_and(|s| !s.starts_with('=')) {
         return Err(format!("not a span: {at}"));
     }
     let (first, last) = (from.div_euclid(86_400), to.div_euclid(86_400));

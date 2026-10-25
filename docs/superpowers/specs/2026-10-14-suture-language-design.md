@@ -2717,7 +2717,7 @@ A span rule (AD) counted the entities on each day, or added one amount to every 
 1. **Shares of a span.**
    - In `for each K and day|week|month|year from their a to their b`, `the total ⟨calendar⟩ time of their ⟨Kinds⟩` adds, to each period, the time the calendar works within that period between the entity's a and b.
    - The ends work as in `the ⟨calendar⟩ time from` (BL.2.2): an end at midnight takes that whole day.
-   - The take's name carries the calendar after the span's times (`span day ⟨from⟩ ⟨to⟩ ⟨calendar⟩`), so the candidate computes the same shares when it grants and when it releases.
+   - The requester computes the shares once and the take's name carries them after the span's times (`span day ⟨from⟩ ⟨to⟩ =⟨s⟩,⟨s⟩,…`). A release gives back exactly what the grant took, even after a deploy changes the calendar's hours, days off or order. A take whose shares do not match its periods is refused.
    - The trace shows the take's whole working time.
    - Outside a span rule this form is an error. A calendar name that does not exist is an error that names it.
 2. **The rule** compares each period's total, as before. So `is at most 8 hours` lets 9:00–13:00 and 13:00–17:00 share a date, and refuses a third half day there.
