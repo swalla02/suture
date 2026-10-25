@@ -67,7 +67,9 @@ pub fn statements(file: &str, src: &str) -> Result<Vec<Stmt>, Error> {
             continue;
         }
         let toks = tokens(text).map_err(|msg| Error { file: file.to_string(), line, msg })?;
-        let indented = text.starts_with(' ') || text.starts_with('\t');
+        // A `}` at the start of a line closes the statement above, so a kind
+        // may list its attributes one per line (appendix BN.2.4).
+        let indented = text.starts_with(' ') || text.starts_with('\t') || text.starts_with('}');
         match out.last_mut() {
             Some(s) if indented => {
                 s.lines.push(toks);

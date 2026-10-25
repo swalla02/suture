@@ -199,6 +199,8 @@ pub struct PreferDecl {
 pub enum Criterion {
     Lowest(Num),
     Highest(Num),
+    /// `highest ⟨n⟩ within ⟨t⟩`: those within `t` of the best tie (appendix BN.2.3).
+    Near { highest: bool, n: Num, within: Num },
     /// `those ⟨cond⟩`, `those whose ⟨attr⟩ …`: the candidate is `it`.
     Those(Cond),
 }

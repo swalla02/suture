@@ -303,6 +303,9 @@ pub enum Criterion {
     Lowest(Num),
     Highest(Num),
     Those(Cond),
+    /// `highest ⟨n⟩ within ⟨t⟩`: every candidate within `t` of the best ranks
+    /// as the best, so the next criterion decides among them (appendix BN.2.3).
+    Near { highest: bool, n: Num, within: Num },
 }
 
 /// `role customer is a Customer`: a caller's name is then a Customer unit.
@@ -614,6 +617,9 @@ pub enum Num {
     Path(Path),
     Lit(Lit),
     Bin(Box<Num>, Arith, Box<Num>),
+    /// A yes-or-no value inside arithmetic: 1 when the condition holds, 0
+    /// when it does not (appendix BN.2.5).
+    Flag(Box<Cond>),
     /// Every part of `kind` under the node at `of`, added up.
     Sum { of: Path, kind: String, calc: Box<Num>, filter: Option<Box<Cond>>, ty: Ty },
     /// How many parts of `kind` there are under the node at `of`.

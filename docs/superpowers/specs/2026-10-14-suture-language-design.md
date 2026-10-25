@@ -2731,3 +2731,37 @@ A span rule (AD) counted the entities on each day, or added one amount to every 
   - Using the form outside a span rule, and an unknown calendar, are errors.
 - eval/leave: the four `overlap_with_half_day` tests are scenarios.
 
+
+## Appendix BN. Prototype slice 63: a stronger `prefer` (2026-10-25)
+
+The chess ladder (eval/chess) ranks every legal move with one `prefer Move`. Its strategist listed ten things the language would not let it say (eval/chess/suture/STRATEGY.md). Slice 63 takes the five that fit `prefer` and kinds.
+
+### BN.1 What slice 63 adds
+
+| Added in slice 63 | Still waits |
+|---|---|
+| a candidate's `define` in a `prefer`: `those that are safe` | a define of another unit's kind outside a `prefer` |
+| `those whose a … or whose b …`, and `and` | mixing `and` and `or` in one clause |
+| `highest|lowest ⟨num⟩ within ⟨margin⟩` | a margin as a share of the best |
+| a `Bool` as 1 or 0 in arithmetic | signed numbers; `max`/`min`; named weights; pool aggregates such as "the best among the Turn's Moves" |
+| a kind over several lines, closed by `}` at the start of a line | |
+| a Money between -1 and 0 shown with its sign (`-0.57 EUR`) | |
+
+### BN.2 Semantics that slice 63 settles
+
+1. **A define in a `prefer`.** Where `it` is the candidate, `it is ⟨state⟩` (and `those that are ⟨state⟩`) may name a define of the candidate's kind. Its condition is read as written, with `it` the candidate; `not` negates it. A define that leads back to itself is an error after eight steps.
+2. **Joined `whose` clauses.** `those whose a … or whose b …` holds when either holds, and `and` when both hold. One clause uses one joiner; to mix them, split the clause with `then`.
+3. **A margin.** `highest ⟨num⟩ within ⟨margin⟩` ranks every candidate whose value is within the margin of the best as the best, so the next criterion decides among them. The others rank by value as before, and an unknown value still ranks last. The margin has the type of what it ranks; a Time ranks within a Duration. It is read at the best candidate.
+4. **Layout.** A line that starts with `}` continues the statement above it, so a kind may list one attribute per indented line.
+5. **A Bool in arithmetic** counts 1 for yes and 0 for no; an unknown Bool leaves the formula unknown. Comparisons and conditions still read it as yes or no.
+
+### BN.3 Acceptance
+
+- runtime/tests/prefer.rs:
+  - A define picks the safe move, and its negation picks the unsafe one.
+  - `or` and `and` between `whose` clauses pick as they should; mixing them is an error.
+  - With a margin, the model's favourite among near-best moves wins; a wide margin lets it win outright; a margin of the wrong type is an error.
+  - A Bool counts in a formula.
+  - A kind over several lines has its attributes.
+  - Small negative Money keeps its sign.
+- eval/chess: the strategist rewrites `bot.st` with these forms, and the ladder measures it.

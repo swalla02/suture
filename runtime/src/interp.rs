@@ -946,9 +946,28 @@ pub fn options(prog: &Program, u: &Unit, d: &Decide, candidates: impl Iterator<I
         let v = View { facts: &facts, cand: Some(&c.label), elem: elem.as_deref(), ..View::of(u) };
         if b.filter.iter().all(|f| eval(prog, v, &at, f) == T::Yes) && grants.is_none_or(|g| g(&c)) {
             let scores = b.prefer.iter().map(|cr| score(prog, v, &at, cr)).collect::<Vec<_>>();
-            gathered.push((c, scores));
+            let margins = b.prefer.iter().map(|cr| match cr {
+                Criterion::Near { within, .. } => match num(prog, v, &at, within) {
+                    Some(Val::Money(x) | Val::Count(x) | Val::Time(x) | Val::Duration(x)) => Some(i128::from(x).abs()),
+                    _ => None,
+                },
+                _ => None,
+            }).collect::<Vec<_>>();
+            gathered.push((c, scores, margins));
         }
     }
+    // `within`: those near the best rank as the best (appendix BN.2.3), the
+    // margin read at the best candidate.
+    for (j, cr) in b.prefer.iter().enumerate() {
+        if !matches!(cr, Criterion::Near { .. }) {
+            continue;
+        }
+        let Some((best, margin)) = gathered.iter().filter(|g| g.1[j].0 == 0).map(|g| (g.1[j].1, g.2[j])).min_by_key(|(s, _)| *s) else { continue };
+        for g in gathered.iter_mut().filter(|g| g.1[j].0 == 0 && g.1[j].1 <= best + margin.unwrap_or(0)) {
+            g.1[j].1 = best;
+        }
+    }
+    let gathered: Vec<_> = gathered.into_iter().map(|(c, s, _)| (c, s)).collect();
     let (mut slots, scores): (Vec<_>, Vec<_>) = gathered.into_iter().map(|(c, s)| (Some(c), s)).unzip();
     order(&scores).into_iter().filter_map(|i| slots[i].take()).collect()
 }
@@ -996,7 +1015,8 @@ fn score(prog: &Program, v: View, at: &[usize], c: &Criterion) -> (u8, i128) {
     };
     match c {
         Criterion::Lowest(n) => amount(n).map_or((1, 0), |x| (0, x)),
-        Criterion::Highest(n) => amount(n).map_or((1, 0), |x| (0, -x)),
+        Criterion::Highest(n) | Criterion::Near { highest: true, n, .. } => amount(n).map_or((1, 0), |x| (0, -x)),
+        Criterion::Near { n, .. } => amount(n).map_or((1, 0), |x| (0, x)),
         Criterion::Those(cond) => (u8::from(eval(prog, v, at, cond) != T::Yes), 0),
     }
 }
@@ -2277,6 +2297,11 @@ fn num(prog: &Program, v: View, at: &[usize], n: &Num) -> Option<Val> {
             _ => None,
         },
         Num::Bin(x, op, y) => arith(num(prog, v, at, x)?, *op, num(prog, v, at, y)?),
+        Num::Flag(c) => match eval(prog, v, at, c) {
+            T::Yes => Some(Val::Count(1)),
+            T::No => Some(Val::Count(0)),
+            T::Unknown => None,
+        },
         Num::Sum { of, kind, calc, filter, ty } => {
             let mut total = zero(*ty);
             for pos in relation(prog, v, at, of, kind, filter.as_deref())? {

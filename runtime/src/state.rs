@@ -62,7 +62,7 @@ impl Val {
             Val::Bool(true) => "yes".into(),
             Val::Bool(false) => "no".into(),
             Val::Money(c) if c % 100 == 0 => format!("{} {currency}", c / 100),
-            Val::Money(c) => format!("{}.{:02} {currency}", c / 100, (c % 100).abs()),
+            Val::Money(c) => format!("{}{}.{:02} {currency}", if *c < 0 { "-" } else { "" }, (c / 100).abs(), (c % 100).abs()),
             Val::Count(n) => n.to_string(),
             Val::Ref(l) => l.clone(),
             Val::Set(ls) => format!("{{{}}}", ls.join(", ")),

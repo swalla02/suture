@@ -148,6 +148,7 @@ fn num_formula(p: &Program, kind: &str, v: &str, n: &Num) -> String {
         Num::Path(x) => path_formula(p, kind, v, x),
         Num::Lit(l) => lit_text(p, l),
         Num::Bin(x, op, y) => bin(p, *op, x, y, |m| num_formula(p, kind, v, m)),
+        Num::Flag(c) => format!("({} ? 1 : 0)", cond_formula(p, kind, v, c)),
         Num::Sum { of, kind: k, calc, filter, .. } => {
             let e = element_var(k, v);
             let filter = filter.as_ref().map_or_else(String::new, |f| format!(" where {}", cond_formula(p, k, &e, f)));
@@ -224,6 +225,11 @@ fn num_words(p: &Program, kind: &str, n: &Num) -> String {
         Num::Path(x) => path_words(p, kind, x),
         Num::Lit(l) => lit_text(p, l),
         Num::Bin(x, op, y) => bin(p, *op, x, y, |m| num_words(p, kind, m)),
+        // Read back as written: the yes-or-no attribute's name.
+        Num::Flag(c) => match c.as_ref() {
+            Cond::Cmp { left, .. } => num_words(p, kind, left),
+            other => format!("(1 if {})", cond_words(p, kind, other)),
+        },
         Num::Sum { of, kind: k, calc, filter, .. } => match calc.as_ref() {
             Num::Path(Path { steps }) if steps.len() == 1 && matches!(steps[0], Step::Attr(_)) => {
                 let Step::Attr(a) = &steps[0] else { unreachable!("matched above") };
@@ -583,7 +589,7 @@ pub fn lit_text(p: &Program, l: &Lit) -> String {
         Lit::Duration(secs) => duration_text(*secs),
         Lit::Money(c) if *c < 0 => format!("-{}", lit_text(p, &Lit::Money(-c))),
         Lit::Money(c) if c % 100 == 0 => format!("{} {}", c / 100, p.currency),
-        Lit::Money(c) => format!("{}.{:02} {}", c / 100, (c % 100).abs(), p.currency),
+        Lit::Money(c) => format!("{}{}.{:02} {}", if *c < 0 { "-" } else { "" }, (c / 100).abs(), (c % 100).abs(), p.currency),
         Lit::Time(t) => crate::sentence::date_text(*t),
     }
 }

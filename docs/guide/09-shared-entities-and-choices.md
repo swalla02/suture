@@ -89,9 +89,19 @@ prefer ⟨Kind⟩ [for a ⟨element⟩]: ⟨criterion⟩[, then ⟨criterion⟩�
 |---|---|
 | `lowest ⟨num⟩` | the smallest value (an unknown value last) |
 | `highest ⟨num⟩` | the largest value |
+| `highest ⟨num⟩ within ⟨margin⟩`, `lowest … within …` | every candidate within the margin of the best, tied, so the next criterion decides among them |
 | `those ⟨condition⟩`, `those whose ⟨attr⟩ …` | candidates that meet the condition |
+| `those whose a … or whose b …` (or `and`) | candidates that meet either (or both); one joiner per clause |
+| `those that are ⟨defined⟩` | candidates that meet a `define` of their kind |
 
-In a `prefer`, `the Driver` and `it` are the candidate. A `uses … per item` is named `prefer Bin for a item`. With no `prefer`, creation order decides, and the build warns.
+In a `prefer`, `the Driver` and `it` are the candidate. A margin has the type of what it ranks: `highest value within 0.50 EUR`, `lowest distance within 2`.
+
+```text
+define: a Move is safe when its hangs is at most its captures and it is not exposing
+prefer Move: those that are safe, then highest material within 0.50 EUR, then highest score
+```
+
+Inside arithmetic a yes-or-no attribute counts 1 for yes and 0 for no: `plan: Count = score + castling * 50`. A `uses … per item` is named `prefer Bin for a item`. With no `prefer`, creation order decides, and the build warns.
 
 ## Taking
 

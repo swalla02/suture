@@ -5,7 +5,7 @@
 ⟨Slot⟩ is ⟨Kind⟩ or ⟨Kind⟩                                               one part, several kinds
 prefer ⟨Slot⟩: ⟨Kind⟩, then ⟨Kind⟩ [after ⟨duration⟩]
 ⟨Kind⟩ uses a ⟨Kind⟩ where ⟨cond⟩[, taking ⟨num⟩]                       take from a shared pool
-prefer ⟨Kind⟩: lowest ⟨num⟩ | highest ⟨num⟩ | those ⟨cond⟩[, then …]     how a pool is chosen
+prefer ⟨Kind⟩: lowest|highest ⟨num⟩ [within ⟨margin⟩] | those ⟨cond⟩ | those that are ⟨defined⟩ | those whose … or whose …[, then …]     how a pool is chosen
 effect ⟨verb⟩ ⟨Kind⟩ via ⟨adapter⟩ within ⟨duration⟩                      outside work, with a deadline
   sends    ⟨np⟩[, ⟨np⟩]
   [marks   ⟨state⟩]                                                      true once sent

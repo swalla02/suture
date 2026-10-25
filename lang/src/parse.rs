@@ -328,11 +328,28 @@ fn prefer(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
 fn criterion(c: &mut Cursor) -> Result<Criterion, Error> {
     if c.eat_word("those") {
         if c.eat_word("whose") {
-            let mut steps = vec![c.word()?];
-            while c.eat_poss() {
-                steps.push(c.word()?);
+            // `those whose a … or whose b …` (appendix BN.2.2): one joiner throughout.
+            let mut parts = vec![];
+            let mut joiner: Option<String> = None;
+            loop {
+                let mut steps = vec![c.word()?];
+                while c.eat_poss() {
+                    steps.push(c.word()?);
+                }
+                parts.push(predicate(c, Num::Np(NounPhrase { head: Head::It, steps }))?);
+                let next = if c.is_word("and") { "and" } else if c.is_word("or") { "or" } else { break };
+                if joiner.as_deref().is_some_and(|j| j != next) {
+                    return Err(c.error("`and` and `or` are mixed; write one of them, or split the clause with `then`"));
+                }
+                c.expect_word(next)?;
+                c.expect_word("whose")?;
+                joiner = Some(next.to_string());
             }
-            return Ok(Criterion::Those(predicate(c, Num::Np(NounPhrase { head: Head::It, steps }))?));
+            return Ok(Criterion::Those(match (parts.len(), joiner.as_deref()) {
+                (1, _) => parts.pop().expect("one part"),
+                (_, Some("and")) => Cond::And(parts),
+                _ => Cond::Or(parts),
+            }));
         }
         c.expect_word("that")?;
         return Ok(Criterion::Those(condition(c)?));
@@ -342,6 +359,9 @@ fn criterion(c: &mut Cursor) -> Result<Criterion, Error> {
         c.expect_word("highest")?;
     }
     let n = calc_formula(c)?;
+    if c.eat_word("within") {
+        return Ok(Criterion::Near { highest: !lowest, n, within: calc_formula(c)? });
+    }
     Ok(if lowest { Criterion::Lowest(n) } else { Criterion::Highest(n) })
 }
 

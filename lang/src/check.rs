@@ -13,7 +13,7 @@ use crate::readback;
 
 /// Checks a parsed module and compiles it, reporting every error it finds.
 pub fn check(src: &Source) -> Result<Program, Vec<Error>> {
-    let mut cx = Checker::default();
+    let mut cx = Checker { defines: src.defines.clone(), ..Checker::default() };
     let prog = cx.program(src);
     if cx.errors.is_empty() { Ok(prog) } else { Err(cx.errors) }
 }
@@ -109,6 +109,10 @@ fn not_known_at_creation(p: &Program, kind: &str, n: &Num) -> Option<String> {
     match n {
         Num::Lit(_) => None,
         Num::Bin(x, _, y) => not_known_at_creation(p, kind, x).or_else(|| not_known_at_creation(p, kind, y)),
+        Num::Flag(c) => match c.as_ref() {
+            Cond::Cmp { left, .. } => not_known_at_creation(p, kind, left),
+            _ => None,
+        },
         Num::Path(path) => {
             let (last, rest) = path.steps.split_last()?;
             let Step::Attr(attr) = last else { return None };
@@ -280,6 +284,7 @@ fn body_sums(b: &Body) -> bool {
         match n {
             Num::Sum { .. } | Num::Count { .. } | Num::Taken { .. } => true,
             Num::Bin(x, _, y) => num(x) || num(y),
+            Num::Flag(c) => cond(c),
             Num::Path(_) | Num::Lit(_) => false,
         }
     }
@@ -427,6 +432,10 @@ struct Checker {
     /// In an `admit` condition or an event's reaction: the data the event
     /// carries (appendix Q.2.2).
     data: Vec<(String, Ty)>,
+    /// Every `define` as written, so that a candidate's state in a
+    /// `prefer` can be one (appendix BN.2.1), and how deep one is inlined.
+    defines: Vec<ast::DefineDecl>,
+    inlining: u8,
 }
 
 /// A relation across units (appendix F.2.11): from a Customer, `their
@@ -756,6 +765,7 @@ fn changeable_formulas(p: &Program) -> Vec<String> {
             }
             Num::Lit(_) => false,
             Num::Bin(a, _, b) => reads(a, ch) || reads(b, ch),
+            Num::Flag(c) => matches!(c.as_ref(), Cond::Cmp { left, .. } if reads(left, ch)),
             Num::Sum { .. } | Num::Count { .. } | Num::Taken { .. } => true,
         }
     }
@@ -851,6 +861,7 @@ fn fixed_rule(p: &Program, r: &Rule) -> bool {
             Num::Path(x) => path(x),
             Num::Lit(_) => true,
             Num::Bin(a, _, b) => num(a, path) && num(b, path),
+            Num::Flag(c) => matches!(c.as_ref(), Cond::Cmp { left, .. } if num(left, path)),
             Num::Sum { .. } | Num::Count { .. } | Num::Taken { .. } => false,
         }
     }
@@ -1703,6 +1714,17 @@ impl Checker {
                         None => None,
                     },
                     ast::Criterion::Those(cond) => self.cond(p, &pr.at, &subject, cond).map(Criterion::Those),
+                    ast::Criterion::Near { highest, n, within } => match (self.num(p, &pr.at, &subject, n), self.num(p, &pr.at, &subject, within)) {
+                        (Some((num, ty)), Some((w, wty))) if ordered(ty) && (wty == ty || (ty == Ty::Time && wty == Ty::Duration)) => {
+                            Some(Criterion::Near { highest: *highest, n: num, within: w })
+                        }
+                        (Some((_, ty)), Some((_, wty))) => {
+                            let why = if ordered(ty) { format!("`{}` is {wty:?}; a margin is {ty:?}, as what it ranks is", show_num(within)) } else { format!("`{}` is {ty:?}; `lowest` and `highest` rank amounts, counts, times and durations", show_num(n)) };
+                            self.errors.push(err(&pr.at, why));
+                            None
+                        }
+                        _ => None,
+                    },
                 };
                 criteria.extend(done);
             }
@@ -2618,8 +2640,13 @@ impl Checker {
                 Some((Num::Bin(Box::new(l), if *weekdays { Arith::Weekdays } else { Arith::Days }, Box::new(r)), Ty::Count))
             }
             ast::Num::Bin(x, op, y) => {
-                let (l, lt) = self.num(p, at, from, x)?;
-                let (r, rt) = self.num(p, at, from, y)?;
+                // In arithmetic, a Bool counts 1 for yes and 0 for no (appendix BN.2.5).
+                let flag = |(n, ty): (Num, Ty)| match ty {
+                    Ty::Bool => (Num::Flag(Box::new(Cond::Cmp { left: n, op: Op::Eq, right: Num::Lit(Lit::Bool(true)) })), Ty::Count),
+                    _ => (n, ty),
+                };
+                let (l, lt) = flag(self.num(p, at, from, x)?);
+                let (r, rt) = flag(self.num(p, at, from, y)?);
                 match arith_type(*op, lt, rt) {
                     Ok((arith, ty)) => Some((Num::Bin(Box::new(l), arith, Box::new(r)), ty)),
                     Err(what) => {
@@ -3252,6 +3279,22 @@ impl Checker {
                         let bools = shared_states(p, &k);
                         match right {
                             Term::Word(s) if bools.contains(s) => Some(Cond::State { node: path, state: s.clone(), negated: *negated }),
+                            // In a `prefer`, `it` is the candidate: its define reads as written (appendix BN.2.1).
+                            Term::Word(s)
+                                if self.scope.as_ref().is_some_and(|sc| sc.it_is_cand && sc.cand == k)
+                                    && matches!(left, NounPhrase { head: Head::It, steps } if steps.is_empty())
+                                    && self.defines.iter().any(|d| d.kind == k && d.state == *s) =>
+                            {
+                                if self.inlining >= 8 {
+                                    self.errors.push(err(at, format!("`{s}` is defined in terms of itself")));
+                                    return None;
+                                }
+                                let d = self.defines.iter().find(|d| d.kind == k && d.state == *s)?.cond.clone();
+                                self.inlining += 1;
+                                let c = self.cond(p, at, from, &d);
+                                self.inlining -= 1;
+                                c.map(|c| if *negated { negate(c) } else { c })
+                            }
                             _ => {
                                 let states = if bools.is_empty() { String::new() } else { format!(", or a state: {}", bools.join(", ")) };
                                 self.errors.push(err(at, format!("`{}` is a shared {k}; compare its attributes{states}", show(left))));
@@ -3370,6 +3413,28 @@ impl Checker {
 
 /// The states a shared entity is read in: its Bool attributes and the
 /// states of its state attributes (appendix F.2.3, Z.2.2).
+/// The opposite of a condition: what `not` makes of an inlined define.
+fn negate(c: Cond) -> Cond {
+    match c {
+        Cond::Cmp { left, op, right } => {
+            let op = match op {
+                Op::Eq => Op::Ne,
+                Op::Ne => Op::Eq,
+                Op::Lt => Op::Ge,
+                Op::Ge => Op::Lt,
+                Op::Le => Op::Gt,
+                Op::Gt => Op::Le,
+            };
+            Cond::Cmp { left, op, right }
+        }
+        Cond::State { node, state, negated } => Cond::State { node, state, negated: !negated },
+        Cond::Has { node, part, state, negated } => Cond::Has { node, part, state, negated: !negated },
+        Cond::Contains { set, item, negated } => Cond::Contains { set, item, negated: !negated },
+        Cond::And(cs) => Cond::Or(cs.into_iter().map(negate).collect()),
+        Cond::Or(cs) => Cond::And(cs.into_iter().map(negate).collect()),
+    }
+}
+
 fn shared_states(p: &Program, k: &str) -> Vec<String> {
     let Some(x) = p.kind(k) else { return vec![] };
     x.attrs.iter().filter(|a| a.ty == Ty::Bool).map(|a| a.name.clone()).chain(x.attrs.iter().flat_map(|a| a.states.iter().cloned())).collect()
