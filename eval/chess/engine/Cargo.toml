@@ -1,0 +1,8 @@
+[package]
+name = "chess-engine"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Chess rules for the chess eval: legal moves and their facts, which Suture's strategy reads"
+
+[dependencies]
