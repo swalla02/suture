@@ -283,14 +283,18 @@ impl Scorer for Decider {
         let f = request_file(&self.scratch, self.id, serde_json::json!({"model": self.model, "state": state, "questions": {"move": question}}))?;
         let mut tries = 0;
         let v = loop {
-            let v = post("https://openrouter.ai/api/alpha/decisions", format!("authorization: Bearer {}", key("OPENROUTER_API_KEY")?), &f)?;
-            let code = v["error"]["code"].as_i64();
-            if tries < 6 && matches!(code, Some(429 | 502 | 503)) {
+            // A gateway may answer an outage with a page that is not JSON.
+            let v = post("https://openrouter.ai/api/alpha/decisions", format!("authorization: Bearer {}", key("OPENROUTER_API_KEY")?), &f);
+            let busy = match &v {
+                Ok(v) => matches!(v["error"]["code"].as_i64(), Some(429 | 502 | 503)),
+                Err(_) => true,
+            };
+            if tries < 6 && busy {
                 tries += 1;
                 std::thread::sleep(std::time::Duration::from_secs(10 * tries));
                 continue;
             }
-            break v;
+            break v?;
         };
         let out = decided(&v, moves)?;
         if out.iter().all(|&x| x == 0) {
