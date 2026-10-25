@@ -158,7 +158,7 @@ impl Board {
             let mut f = 0u8;
             for c in row.chars() {
                 if let Some(n) = c.to_digit(10) {
-                    f += n as u8;
+                    f = f.checked_add(n as u8).filter(|&v| v <= 8).ok_or(format!("rank {} is too long", r + 1))?;
                 } else {
                     let kind = Kind::of(c).ok_or(format!("`{c}` is not a piece"))?;
                     let color = if c.is_ascii_uppercase() { Color::White } else { Color::Black };
@@ -188,6 +188,13 @@ impl Board {
                 '-' => 0,
                 _ => return Err(format!("`{c}` is not a castling right")),
             };
+        }
+        // A right whose king or rook is not at home cannot be used.
+        let home = |s: u8, color, kind| sq[s as usize] == Some(Piece { color, kind });
+        for (bit, king, rook, color) in [(WK, 4, 7, Color::White), (WQ, 4, 0, Color::White), (BK, 60, 63, Color::Black), (BQ, 60, 56, Color::Black)] {
+            if !(home(king, color, Kind::King) && home(rook, color, Kind::Rook)) {
+                castle &= !bit;
+            }
         }
         let ep = match parts.next().unwrap_or("-") {
             "-" => None,
@@ -393,7 +400,11 @@ impl Board {
                 _ => !0,
             };
         }
-        b.ep = (p.kind == Kind::Pawn && m.from.abs_diff(m.to) == 16).then(|| (m.from + m.to) / 2);
+        // The square behind a double push, only when a pawn could take there,
+        // so that positions compare equal for repetition.
+        let them = Piece { color: p.color.other(), kind: Kind::Pawn };
+        let beside = |df| step(m.to, (df, 0)).is_some_and(|t| b.sq[t as usize] == Some(them));
+        b.ep = (p.kind == Kind::Pawn && m.from.abs_diff(m.to) == 16 && (beside(-1) || beside(1))).then(|| (m.from + m.to) / 2);
         b.halfmove = if p.kind == Kind::Pawn || captured { 0 } else { self.halfmove + 1 };
         if self.turn == Color::Black {
             b.fullmove += 1;

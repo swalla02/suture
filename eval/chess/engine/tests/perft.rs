@@ -41,6 +41,17 @@ fn fen_reads_back_and_moves_parse() {
     let b = Board::start();
     assert_eq!(b.fen(), START);
     let e4 = b.parse_move("e2e4").unwrap();
-    assert_eq!(b.play(e4).fen(), "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1");
+    assert_eq!(b.play(e4).fen(), "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1");
+    let b = Board::from_fen("4k3/8/8/8/3p4/8/4P3/4K3 w - - 0 1").unwrap();
+    assert_eq!(b.play(b.parse_move("e2e4").unwrap()).fen(), "4k3/8/8/8/3pP3/8/8/4K3 b - e3 0 1");
     assert!(b.parse_move("e2e5").is_none());
+}
+
+#[test]
+fn rights_without_their_pieces_and_bad_fens() {
+    for fen in ["4k3/8/8/8/8/8/8/4K3 w K - 0 1", "4k3/8/8/8/8/8/8/5K2 w K - 0 1"] {
+        let b = Board::from_fen(fen).unwrap();
+        assert!(b.legal().iter().all(|m| m.to_string() != "e1g1"), "{fen}");
+    }
+    assert!(Board::from_fen("9999999999999999999999999999/8/8/8/8/8/8/8 w - - 0 1").is_err());
 }
