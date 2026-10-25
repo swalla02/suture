@@ -956,15 +956,22 @@ pub fn options(prog: &Program, u: &Unit, d: &Decide, candidates: impl Iterator<I
             gathered.push((c, scores, margins));
         }
     }
-    // `within`: those near the best rank as the best (appendix BN.2.3), the
-    // margin read at the best candidate.
+    // `within`: those near the best of their tier, the candidates tied on
+    // every criterion before it, rank as that best (appendix BN.2.3); the
+    // margin is read at that best candidate.
     for (j, cr) in b.prefer.iter().enumerate() {
         if !matches!(cr, Criterion::Near { .. }) {
             continue;
         }
-        let Some((best, margin)) = gathered.iter().filter(|g| g.1[j].0 == 0).map(|g| (g.1[j].1, g.2[j])).min_by_key(|(s, _)| *s) else { continue };
-        for g in gathered.iter_mut().filter(|g| g.1[j].0 == 0 && g.1[j].1 <= best + margin.unwrap_or(0)) {
-            g.1[j].1 = best;
+        let mut best: std::collections::BTreeMap<Vec<(u8, i128)>, (i128, i128)> = Default::default();
+        for g in gathered.iter().filter(|g| g.1[j].0 == 0) {
+            let (s, m) = (g.1[j].1, g.2[j].unwrap_or(0));
+            best.entry(g.1[..j].to_vec()).and_modify(|e| if s < e.0 { *e = (s, m) }).or_insert((s, m));
+        }
+        for g in gathered.iter_mut().filter(|g| g.1[j].0 == 0) {
+            if let Some(&(top, margin)) = best.get(&g.1[..j]) && g.1[j].1 <= top + margin {
+                g.1[j].1 = top;
+            }
         }
     }
     let gathered: Vec<_> = gathered.into_iter().map(|(c, s, _)| (c, s)).collect();

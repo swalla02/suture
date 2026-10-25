@@ -2751,7 +2751,7 @@ The chess ladder (eval/chess) ranks every legal move with one `prefer Move`. Its
 
 1. **A define in a `prefer`.** Where `it` is the candidate, `it is ⟨state⟩` (and `those that are ⟨state⟩`) may name a define of the candidate's kind. Its condition is read as written, with `it` the candidate; `not` negates it. A define that leads back to itself is an error after eight steps.
 2. **Joined `whose` clauses.** `those whose a … or whose b …` holds when either holds, and `and` when both hold. One clause uses one joiner; to mix them, split the clause with `then`.
-3. **A margin.** `highest ⟨num⟩ within ⟨margin⟩` ranks every candidate whose value is within the margin of the best as the best, so the next criterion decides among them. The others rank by value as before, and an unknown value still ranks last. The margin has the type of what it ranks; a Time ranks within a Duration. It is read at the best candidate.
+3. **A margin.** `highest ⟨num⟩ within ⟨margin⟩` ranks every candidate whose value is within the margin of the best in its tier (the candidates tied on every criterion before it) as that best, so the next criterion decides among them. The others rank by value as before, and an unknown value still ranks last. The margin has the type of what it ranks; a Time ranks within a Duration. It is read at the tier's best candidate.
 4. **Layout.** A line that starts with `}` continues the statement above it, so a kind may list one attribute per indented line.
 5. **A Bool in arithmetic** counts 1 for yes and 0 for no; an unknown Bool leaves the formula unknown. Comparisons and conditions still read it as yes or no.
 

@@ -122,3 +122,11 @@ fn a_kind_may_list_its_attributes_one_per_line() {
     let prog = suture_lang::compile(&[("t.st".to_string(), src.to_string())]).unwrap_or_else(|e| panic!("{:?}", e.iter().map(|e| &e.msg).collect::<Vec<_>>()));
     assert_eq!(prog.kind("Move").unwrap().attrs.len(), 2);
 }
+
+#[test]
+fn a_margin_is_measured_within_the_tier_the_criteria_before_it_leave() {
+    // The best value overall belongs to a move that is not safe; among the
+    // safe ones, 2.00 and 1.70 EUR are within 0.50 EUR, so score decides.
+    let moves: &[M] = &[("unsafe", 9, 0, false, 500, 0), ("top", 0, 0, false, 200, 100), ("near", 0, 0, false, 170, 900), ("low", 0, 0, false, 0, 1000)];
+    assert_eq!(pick("prefer Move: those that are safe, then highest value within 0.50 EUR, then highest score", moves), "near");
+}
