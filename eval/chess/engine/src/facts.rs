@@ -239,10 +239,12 @@ pub fn facts(b: &Board, m: Move) -> Facts {
     // The other side passing, to see what this side would then threaten.
     let mut pass = after.clone();
     pass.turn = us;
+    pass.ep = None;
     let quiet = !(mate || check);
     let (threat, fork) = if quiet { (best_capture(&pass), targets(&pass, us).1) } else { (0, 0) };
     let mut before = b.clone();
     before.turn = us.other();
+    before.ep = None;
     let danger = if b.in_check(us) { 0 } else { best_capture(&before) };
     let rank = if us == Color::White { (m.to / 8) as i32 + 1 } else { 8 - (m.to / 8) as i32 };
     let home = if us == Color::White { 0 } else { 7 };

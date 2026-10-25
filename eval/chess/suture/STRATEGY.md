@@ -53,7 +53,7 @@ Score = points share against the Stockfish level, 40 games unless noted.
 | v5 | v4 + the plan at 1/4 weight inside `value` | @1500: 0.475 and 0.537 | dropped: even a quarter-weight plan costs Maia |
 | n2 | `none`: material + a positional plan | none @1320: 0.400 (v3a material alone: 0.062) | the plan is everything without a model |
 | n3 | n2 + traps, king peril, rim, trades when ahead, no draw seeking | none @1320: 0.613; on maia1100 @1500: 0.487 | good for `none`, bad for Maia |
-| v6 | v4 + n3's plan as a *tiebreak after* `value` | see the Elo table | **final**: v4 for any model, n3 for none |
+| v6 | v4 + n3's plan as a *tiebreak after* `value` | see the Elo table | **final**: one file, `bot.st`, for every model |
 
 Ideas tried and not kept:
 - Seeking a draw by repetition or stalemate when behind by 3: it fired in
