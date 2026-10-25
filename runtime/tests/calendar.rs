@@ -101,3 +101,38 @@ fn a_long_span_counts_as_fast_as_a_short_one() {
     assert!(century > 26_000 * 8 * 3_600 && century < 26_100 * 8 * 3_600, "{century}");
     assert_eq!(suture_runtime::interp::working(c, 10 * day, 3 * day), 0, "an end before the start");
 }
+
+const ROTA: &str = "module rota version 1, currency EUR
+role staff
+calendar work: Monday to Friday, 9:00 to 17:00, except 2026-04-06
+kind Employee { name: Text }
+kind Leave { employee: Employee, from: Time, to: Time }
+rule apart: for each Employee and day from their from to their to, the total work time of their Leaves is at most 8 hours
+admit file a new Leave by staff
+";
+
+#[test]
+fn a_span_rule_totals_the_working_time_of_each_day() {
+    let r = runs(
+        ROTA,
+        "  given  a Employee E with name Ann
+  when   staff Sam files a new Leave L1 with employee E, from 2026-03-02 and to 2026-03-04 13:00
+  and    staff Sam files a new Leave L2 with employee E, from 2026-03-04 13:00 and to 2026-03-06
+  and    staff Sam files a new Leave L3 with employee E, from 2026-03-06 12:00 and to 2026-03-06 14:00
+  and    staff Sam files a new Leave L4 with employee E, from 2026-04-03 13:00 and to 2026-04-07 13:00
+  and    staff Sam files a new Leave L5 with employee E, from 2026-04-06 and to 2026-04-06
+",
+    );
+    assert!(r.passed(), "{:?}\n{}", r.failures, r.host.trace.join("\n"));
+    // Friday is full, so L3 waits for room; L4 takes Friday and Tuesday
+    // afternoons, around Easter Monday, which L5 then has to itself.
+    let t = r.host.trace.join("\n");
+    assert!(r.host.trace.iter().any(|l| l.contains("refused L3") && l.contains("rule apart on 2026-03-06")), "{t}");
+    for l in ["L4", "L5"] {
+        assert!(!r.host.trace.iter().any(|x| x.contains(&format!("refused {l}"))), "{l}\n{t}");
+    }
+    let errs = errors("module m version 1, currency EUR\ncalendar work: every day\nkind E { name: Text }\nkind L { e: E, from: Time, to: Time }\nrule r: the total work time of each E's Ls is at most 8 hours\n");
+    assert!(errs.iter().any(|e| e.contains("is read only in a rule `for each … and day from their … to their …`")), "{errs:?}");
+    let errs = errors("module m version 1, currency EUR\nkind E { name: Text }\nkind L { e: E, from: Time, to: Time }\nrule r: for each E and day from their from to their to, the total shop time of their Ls is at most 8 hours\n");
+    assert!(errs.iter().any(|e| e.contains("there is no calendar shop")), "{errs:?}");
+}

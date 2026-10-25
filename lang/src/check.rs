@@ -1607,7 +1607,7 @@ impl Checker {
                     };
                     let t = self.num(p, &u.at, &u.subject, n);
                     match (name, t) {
-                        (Some(name), Some((amount, ty @ (Ty::Money | Ty::Count | Ty::Duration)))) => Some(Some(Taking { name, amount, ty, period: None, span: None, group: vec![] })),
+                        (Some(name), Some((amount, ty @ (Ty::Money | Ty::Count | Ty::Duration)))) => Some(Some(Taking { name, amount, ty, period: None, span: None, group: vec![], work: None })),
                         (None, Some(_)) => {
                             self.errors.push(err(&u.at, format!("`taking {}`: name the attribute taken, as in `taking the line's quantity`, or take a count, as in `taking 1`", show_num(n))));
                             None
@@ -2632,6 +2632,12 @@ impl Checker {
                 if let Some((kind, by)) = across(p, from, of) {
                     let ty = match p.kind(&kind).and_then(|k| k.attr(attr)).map(|a| a.ty) {
                         Some(t @ (Ty::Money | Ty::Count | Ty::Duration)) => t,
+                        None if attr.strip_suffix(" time").is_some_and(|cal| p.calendars.iter().any(|c| c.name == cal)) => Ty::Duration,
+                        None if attr.ends_with(" time") => {
+                            let cal = attr.trim_end_matches(" time");
+                            self.errors.push(err(at, format!("`the total {attr} of {}`: there is no calendar {cal}, and {} has no attribute `{attr}`", show(of), a(&kind))));
+                            return None;
+                        }
                         _ => {
                             self.errors.push(err(at, format!("`the total {attr} of {}`: {} has no amount, count or duration `{attr}`", show(of), a(&kind))));
                             return None;
@@ -2738,9 +2744,24 @@ impl Checker {
             None => None,
         };
         let that = held.as_ref().map_or_else(String::new, |c| readback::that_words(p, kind, Some(c)));
-        let (what, amount, ty) = match attr {
+        // `the total leave time of their Applications`: in a span rule, each
+        // adds the time calendar `leave` works within each period (appendix BM.2.1).
+        let work = attr.and_then(|(a, _)| a.strip_suffix(" time")).map(|cal| (cal, p.calendars.iter().position(|c| c.name == cal)));
+        let (what, mut amount, ty) = match attr {
             Some((a, ty)) => (format!("{a} of {plural}{that}"), Num::Path(Path { steps: vec![Step::Attr(a.clone())] }), ty),
             None => (format!("number of {plural}{that}"), Num::Lit(Lit::Count(1)), Ty::Count),
+        };
+        let work = match work {
+            None => None,
+            Some((cal, None)) => {
+                self.errors.push(err(at, format!("`the total {cal} time of …`: there is no calendar {cal}")));
+                return None;
+            }
+            Some((cal, Some(_))) if self.span.is_none() => {
+                self.errors.push(err(at, format!("`the total {cal} time of …` is read only in a rule `for each … and day from their … to their …`, which gives the times it spans")));
+                return None;
+            }
+            Some((_, Some(i))) => Some(i as u16),
         };
         let name = match (&self.period, &self.span) {
             (Some(per), Some((start, end))) => format!("{what} per {per} from its {start} to its {end}"),
@@ -2756,6 +2777,9 @@ impl Checker {
                     }
                 }
                 let attr = |a: &String| Num::Path(Path { steps: vec![Step::Attr(a.clone())] });
+                if let Some(i) = work {
+                    amount = Num::Bin(Box::new(attr(start)), Arith::Working(i), Box::new(attr(end)));
+                }
                 Some((attr(start), attr(end)))
             }
             None => None,
@@ -2777,7 +2801,7 @@ impl Checker {
             key_member: false,
             key,
             filter: vec![],
-            taking: Some(Taking { name: name.clone(), amount, ty, period: self.period.clone(), span, group: vec![] }),
+            taking: Some(Taking { name: name.clone(), amount, ty, period: self.period.clone(), span, group: vec![], work }),
             prefer: vec![],
             source,
             held,

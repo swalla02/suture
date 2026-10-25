@@ -147,6 +147,21 @@ pub fn span_key(period: &str, from: i64, to: i64) -> String {
     format!("span {period} {from} {to}")
 }
 
+/// A span whose share of each period is the time calendar `cal` works in it
+/// (appendix BM.2.1): `span day ⟨from⟩ ⟨to⟩ ⟨cal⟩`.
+pub fn work_span_key(period: &str, from: i64, to: i64, cal: u16) -> String {
+    format!("span {period} {from} {to} {cal}")
+}
+
+/// The times and the calendar of a span with shares, if it is one.
+pub fn work_span(at: &str) -> Option<(i64, i64, u16)> {
+    let mut parts = at.strip_prefix("span ")?.split(' ').skip(1);
+    match (parts.next()?.parse().ok()?, parts.next()?.parse().ok()?, parts.next()?.parse().ok()?, parts.next()) {
+        (from, to, cal, None) => Some((from, to, cal)),
+        _ => None,
+    }
+}
+
 /// A take's total as a trace shows it: a span by its dates,
 /// `… per day from its from to its to, 2026-01-05 to 2026-01-08`.
 pub fn take_text(name: &str) -> String {
@@ -171,9 +186,13 @@ pub fn take_text(name: &str) -> String {
 pub fn periods_in(at: &str) -> Result<Vec<String>, String> {
     let Some(span) = at.strip_prefix("span ") else { return Ok(vec![at.to_string()]) };
     let mut parts = span.split(' ');
-    let (Some(per), Some(Ok(from)), Some(Ok(to)), None) = (parts.next(), parts.next().map(str::parse::<i64>), parts.next().map(str::parse::<i64>), parts.next()) else {
+    let (Some(per), Some(Ok(from)), Some(Ok(to))) = (parts.next(), parts.next().map(str::parse::<i64>), parts.next().map(str::parse::<i64>)) else {
         return Err(format!("not a span: {at}"));
     };
+    // A calendar after the times gives shares, not more periods.
+    if parts.next().is_some_and(|c| c.parse::<u16>().is_err()) || parts.next().is_some() {
+        return Err(format!("not a span: {at}"));
+    }
     let (first, last) = (from.div_euclid(86_400), to.div_euclid(86_400));
     if last - first >= SPAN_DAYS {
         return Err(format!("a span covers at most {SPAN_DAYS} days, and this one covers {}", last - first + 1));

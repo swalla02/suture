@@ -288,6 +288,10 @@ pub struct Taking {
     /// `number of Reviews with the same reviewer#Bo` (appendix AP.2.2).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub group: Vec<Num>,
+    /// With `span`: the calendar whose time within each period the entity
+    /// adds there, not one amount to each (appendix BM.2.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work: Option<u16>,
 }
 
 /// The periods of `for each K and ⟨period⟩`, in UTC (appendix F.2.12).

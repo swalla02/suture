@@ -133,6 +133,14 @@ rule enough: the total length of each Employee's Leaves is at most its allowed
 
 Durations add up in totals like amounts and counts, so the allowance is a Duration too: `allowed 200 hours` is 25 working days. The days of the week can also be a range that wraps around the week (`Sunday to Thursday`), a list (`Monday, Wednesday and Friday`) or `every day`. Without hours, a calendar works whole days. Days off are dates in the program, so a new year's holidays come with a deploy (chapter 18).
 
+In a rule over the days a leave spans, `the total work time of their Leaves` counts each leave's working time within that day:
+
+```text
+rule apart: for each Employee and day from their from to their to, the total work time of their Leaves is at most 8 hours
+```
+
+A morning (9:00–13:00) and an afternoon (13:00–17:00) can share a date. A third half day that date is refused, and so is a half day on a date already taken whole. `the number of their Leaves is at most 1` would refuse the afternoon too.
+
 ## References
 
 An attribute whose type is a kind holds a reference to one entity of that kind:

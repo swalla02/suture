@@ -305,23 +305,23 @@
                 "of": {
                   "steps": []
                 },
-                "name": "number of Applications that are held per day from its from to its to",
-                "ty": "Count",
+                "name": "leave time of Applications that are held per day from its from to its to",
+                "ty": "Duration",
                 "period": "day"
               }
             },
             "op": "Le",
             "right": {
               "Lit": {
-                "Count": 1
+                "Duration": 28800
               }
             }
           }
         }
       },
-      "source": "for each Employee and day from their from to their to, the number of their Applications that are held is at most 1",
-      "formula": "for each Employee e: count(a in Application where a.employee = e and a is held, per day from a.from to a.to) ≤ 1",
-      "paraphrase": "each employee on its own: the number of its Applications that are held on any one day they span is at most 1",
+      "source": "for each Employee and day from their from to their to, the total leave time of their Applications that are held is at most 8 hours",
+      "formula": "for each Employee e: sum(a in Application where a.employee = e and a is held, per day from a.from to a.to: the leave time from a.from to a.to) ≤ 8 hours",
+      "paraphrase": "each employee on its own: the total leave time of its Applications that are held on any one day they span is at most 8 hours",
       "tier": "per-group",
       "period": "day",
       "fixed": false,
@@ -1062,7 +1062,7 @@
       "shared": true
     },
     {
-      "id": "Employee(number of Applications that are held per day from its from to its to)",
+      "id": "Employee(leave time of Applications that are held per day from its from to its to)",
       "subject": "Application",
       "target": "Employee",
       "per": null,
@@ -1079,13 +1079,33 @@
       },
       "filter": [],
       "taking": {
-        "name": "number of Applications that are held per day from its from to its to",
+        "name": "leave time of Applications that are held per day from its from to its to",
         "amount": {
-          "Lit": {
-            "Count": 1
-          }
+          "Bin": [
+            {
+              "Path": {
+                "steps": [
+                  {
+                    "Attr": "from"
+                  }
+                ]
+              }
+            },
+            {
+              "Working": 0
+            },
+            {
+              "Path": {
+                "steps": [
+                  {
+                    "Attr": "to"
+                  }
+                ]
+              }
+            }
+          ]
         },
-        "ty": "Count",
+        "ty": "Duration",
         "period": "day",
         "span": [
           {
@@ -1106,10 +1126,11 @@
               ]
             }
           }
-        ]
+        ],
+        "work": 0
       },
       "prefer": [],
-      "source": "each Application adds to its employee's total number of Applications that are held per day from its from to its to",
+      "source": "each Application adds to its employee's total leave time of Applications that are held per day from its from to its to",
       "held": {
         "State": {
           "node": {
@@ -1845,8 +1866,8 @@
         true,
         true
       ],
-      "start": 0,
-      "end": 86400,
+      "start": 32400,
+      "end": 61200,
       "holidays": [
         181,
         220,

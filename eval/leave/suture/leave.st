@@ -9,8 +9,9 @@ role approver is a Approver
 role hr
 
 -- hrms takes days off from a holiday list. Weekends are in that list too,
--- and the tests give none, so the calendar works every day.
-calendar leave: every day, except 2026-07-01, 2026-08-09 and 2026-08-10
+-- and the tests give none, so the calendar works every day. A leave day is
+-- its 8 hours, so a half day is 9:00 to 13:00 or 13:00 to 17:00.
+calendar leave: every day, 9:00 to 17:00, except 2026-07-01, 2026-08-09 and 2026-08-10
 
 kind Company  { name: Text, selfish: Bool = no, backdating: Bool = yes }
 kind Approver { user: Text }
@@ -29,13 +30,13 @@ define: an Application is affordable when its days is at most its allocation's l
 define: an Application is entitled when its type's after is 0 days or its from is less than its employee's joined or its from - its employee's joined is at least its type's after
 define: an Application is timely when its from is more than its created - 1 day or its employee's company is backdating
 define: an Application is sound when it is fitting and it is affordable and it is entitled
-define: an Application is valid when its to is at least its from and its days is more than 0 days and it is sound
+define: an Application is valid when its to is at least its from and its days is more than 0 hours and it is sound
 define: an Application is permitted when its employee's company is selfish
 
 keep the total days of each Allocation's Applications that are open
 keep the total days of each Allocation's Applications that are approved
 
-rule apart: for each Employee and day from their from to their to, the number of their Applications that are held is at most 1
+rule apart: for each Employee and day from their from to their to, the total leave time of their Applications that are held is at most 8 hours
 rule balance: the total days of each Allocation's Applications that are counted is at most its leaves
 rule consecutive: for each Allocation and day from their from to their to, the days in a row of their Applications that are held is at most its type's longest or its type's longest is 0
 

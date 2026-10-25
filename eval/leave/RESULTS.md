@@ -25,7 +25,7 @@ hrms's count drops, by pattern, its lines about holidays and half days, attendan
 | `block_list`, `optional_leave` | out of scope |
 | 12 carry-forward, expiry and ledger tests (`separate_leave_ledger_entry_for_boundary_applications`, `leave_balance_near_allocaton_expiry`, `ledger_entry_creation_on_intermediate_allocation_expiry`, `leave_application_creation_after_expiry`, `leave_details_with_…cf_expiry` ×4, `get_leave_allocation_records`, `filtered_old_cf_entries_…`, `leave_balance_when_allocation_is_expired_manually`, `backdated_application_after_expiry`) | out of scope |
 | `leave_approver_with_restricted_employee_access`, `leave_access_for_workflow_reviewer_without_employee_permission` | out of scope: read permissions |
-| `overlap_with_half_day_1`…`_3`, `overlap_with_half_day_on_today` | **not expressible**: two half days may share a day |
+| `overlap_with_half_day_1`…`_3`, `overlap_with_half_day_on_today` | translated, since slice 62 (below); `_1` as `after` |
 | `max_consecutive_leaves_across_leave_applications` | translated, since slice 32 (below) |
 | `half_day_date_cannot_be_holiday`, `leave_days_across_two_holiday_lists` | translated, since slice 61 (below) |
 
@@ -123,4 +123,22 @@ kind Application { …, days: Duration = the leave time from its from to its to,
 1. Days off as data (a holiday list as entities, read by a calendar), so they change without a deploy and can differ per employee.
 2. A per-day total of working time in span rules (`for each Employee and day from … to …, the total leave time of their Applications … is at most 1 day`). This would make the four half-day overlap tests expressible.
 3. Showing a whole-day calendar's durations in days (`0.5 days`).
+
+## After slice 62: working time per day
+
+Slice 62 lets a span rule add each leave's working time within the day, not one per leave (spec appendix BM). `apart` becomes:
+
+```text
+rule apart: for each Employee and day from their from to their to, the total leave time of their Applications that are held is at most 8 hours
+```
+
+The four `overlap_with_half_day` tests are now scenarios. That makes every hrms test either translated or out of scope: **20 translated, 2 as `after`, 23 out of scope, none not expressible.** The rule's line only changes, so the port is still 42 lines.
+
+- **The calendar has hours now.** A half day has to be a span of the date. With a calendar of whole days, an afternoon would end at midnight, and an end at midnight takes the whole day. So `leave` works 9:00 to 17:00, a half day is 9:00–13:00 or 13:00–17:00, and a leave day is 8 hours. The cost is in the units: `leaves 30` became `leaves 240 hours`, and `expect … is 4` became `… is 32 hours`. HR counts in days. This is the strongest case yet for gap 3 below, a working day as a unit.
+- **A half day is at a span's end, not in its middle.** hrms puts `half_day_date` anywhere from the first date to the last. The port's leave is one span, so a half day can only be its first afternoon or its last morning. `_3` keeps its outcomes: its second leave, 4–7 with a half day on the 5th, is refused for the 4th either way, so the port gives it as whole days. `_1` has a leave from the 1st to the 5th with a half day on the 3rd, which is not one span. It is translated `after`: two half days on the 3rd are accepted, and a third is refused.
+
+## Next, from this round
+
+1. A working day as a unit (`30 leave days`, shown as days): the units above are the friction now.
+2. Days off as data across units, changed without a deploy.
 

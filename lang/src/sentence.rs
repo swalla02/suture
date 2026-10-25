@@ -429,6 +429,16 @@ fn atom_in(c: &mut Cursor, bare: bool) -> Result<Num, Error> {
         c.expect_word("from")?;
         return Ok(Num::Taken { attr, from: noun_phrase(c)? });
     }
+    // `the total leave time of their Applications`: a calendar's time (appendix BM.2.1).
+    if word_at(c, 0, "the") && word_at(c, 1, "total") && word_at(c, 3, "time") && word_at(c, 4, "of") {
+        c.expect_word("the")?;
+        c.expect_word("total")?;
+        let attr = format!("{} time", c.word()?);
+        c.expect_word("time")?;
+        c.expect_word("of")?;
+        let of = noun_phrase(c)?;
+        return Ok(Num::Total { attr, of, filter: that(c)? });
+    }
     if word_at(c, 0, "the") && word_at(c, 1, "total") && word_at(c, 3, "of") {
         c.expect_word("the")?;
         c.expect_word("total")?;

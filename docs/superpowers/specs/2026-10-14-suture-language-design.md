@@ -2702,3 +2702,32 @@ runtime/tests/calendar.rs:
 - A weekend is refused by `more than 0 seconds`, and a day over the allowance by the total.
 - Ranges that wrap, lists, `24:00`, and seven mistakes are each named.
 
+## Appendix BM. Prototype slice 62: working time per day (2026-10-25)
+
+A span rule (AD) counted the entities on each day, or added one amount to every day an entity spans. Two half days on one date were therefore two leaves that day. Four of hrms's tests need them to share it.
+
+### BM.1 What slice 62 adds
+
+| Added in slice 62 | Still waits |
+|---|---|
+| `the total ⟨calendar⟩ time of their ⟨Kinds⟩ [that …]` in a span rule | the same per week or month in a rule that reads it outside a span |
+
+### BM.2 Semantics that slice 62 settles
+
+1. **Shares of a span.**
+   - In `for each K and day|week|month|year from their a to their b`, `the total ⟨calendar⟩ time of their ⟨Kinds⟩` adds, to each period, the time the calendar works within that period between the entity's a and b.
+   - The ends work as in `the ⟨calendar⟩ time from` (BL.2.2): an end at midnight takes that whole day.
+   - The take's name carries the calendar after the span's times (`span day ⟨from⟩ ⟨to⟩ ⟨calendar⟩`), so the candidate computes the same shares when it grants and when it releases.
+   - The trace shows the take's whole working time.
+   - Outside a span rule this form is an error. A calendar name that does not exist is an error that names it.
+2. **The rule** compares each period's total, as before. So `is at most 8 hours` lets 9:00–13:00 and 13:00–17:00 share a date, and refuses a third half day there.
+
+### BM.3 Acceptance
+
+- runtime/tests/calendar.rs:
+  - Leaves that end and start at 13:00 share a Wednesday.
+  - A leave that overfills a full Friday is held by rule `apart` on that date.
+  - A leave over Easter Monday takes only the working afternoons, so Easter Monday itself is still free.
+  - Using the form outside a span rule, and an unknown calendar, are errors.
+- eval/leave: the four `overlap_with_half_day` tests are scenarios.
+

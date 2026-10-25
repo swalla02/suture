@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use suture_lang::ir::{Action, Arith, Body, Cond, Criterion, Decision, Effect, Num, Op, Otherwise, Path, Program, Rule, Slot, Source, Step, Ty, CREATED, PASSES, TIMED_OUT};
 
 use crate::choice::order;
-use crate::state::{period_key, periods_in, span_key, take_text, time_text, SPAN_DAYS, Ask, Bind, Decide, Fact, Facts, Fetch, Msg, Node, Status, Unit, Val};
+use crate::state::{period_key, periods_in, span_key, take_text, work_span, work_span_key, time_text, SPAN_DAYS, Ask, Bind, Decide, Fact, Facts, Fetch, Msg, Node, Status, Unit, Val};
 
 static NO_TOTALS: BTreeMap<String, Val> = BTreeMap::new();
 
@@ -481,10 +481,12 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
             };
             if let Some((name, amount)) = taken {
                 let base = name.split_once('@').map_or(name.as_str(), |(b, _)| b);
-                for p in &periods {
+                let shares = shares(prog, name);
+                for (i, p) in periods.iter().enumerate() {
                     let total = p.as_ref().map_or_else(|| name.clone(), |p| format!("{base}@{p}"));
                     let before = totals.get(&total).cloned().unwrap_or_else(|| zero(amount.ty()));
-                    let Some(after) = arith(before, Arith::Add, amount.clone()) else { return refuse(format!("the total {total} would overflow")) };
+                    let amount = shares.as_ref().and_then(|s| s.get(i)).map_or_else(|| amount.clone(), |s| Val::Duration(*s));
+                    let Some(after) = arith(before, Arith::Add, amount) else { return refuse(format!("the total {total} would overflow")) };
                     totals.insert(total, after);
                 }
             }
@@ -513,9 +515,11 @@ pub fn step_at(prog: &Program, unit: &Unit, msg: &Msg, now: i64) -> Outcome {
                     Some((base, at)) => periods_in(at).unwrap_or_default().into_iter().map(|p| format!("{base}@{p}")).collect(),
                     None => vec![name.clone()],
                 };
-                for total in totals {
+                let shares = shares(prog, name);
+                for (i, total) in totals.into_iter().enumerate() {
                     let before = u.taken.get(&total).cloned().unwrap_or_else(|| zero(amount.ty()));
-                    if let Some(after) = arith(before, Arith::Sub, amount.clone()) {
+                    let amount = shares.as_ref().and_then(|s| s.get(i)).map_or_else(|| amount.clone(), |s| Val::Duration(*s));
+                    if let Some(after) = arith(before, Arith::Sub, amount) {
                         u.taken.insert(total, after);
                     }
                 }
@@ -835,7 +839,11 @@ fn decide_for(prog: &Program, u: &Unit, at: &[usize], id: &str, skip: Vec<String
                         Some(Val::Time(t)) => Some(t),
                         _ => None,
                     };
-                    format!("{}@{}", t.name, span_key(per, time(start)?, time(end)?))
+                    let key = match t.work {
+                        Some(cal) => work_span_key(per, time(start)?, time(end)?, cal),
+                        None => span_key(per, time(start)?, time(end)?),
+                    };
+                    format!("{}@{key}", t.name)
                 }
                 (Some(per), None) => format!("{}@{}", t.name, period_key(per, node_at(&u.root, at).created)),
                 (None, _) if !t.group.is_empty() => {
@@ -2384,12 +2392,38 @@ fn weekdays(a: i64, b: i64) -> i64 {
     if b < a { 0 } else { upto(b) - upto(a - 1) }
 }
 
+/// The time a take with shares adds to each period it spans, in the order
+/// `periods_in` gives them (appendix BM.2.1); `None` for one amount to each.
+fn shares(prog: &Program, name: &str) -> Option<Vec<i64>> {
+    const DAY: i64 = 86_400;
+    let (_, at) = name.split_once('@')?;
+    let (from, to, cal) = work_span(at)?;
+    let c = prog.calendars.get(cal as usize)?;
+    let per = at.strip_prefix("span ")?.split(' ').next()?;
+    let end = if to.rem_euclid(DAY) == 0 { to.saturating_add(DAY) } else { to };
+    let mut out: Vec<(String, i64)> = vec![];
+    for d in from.div_euclid(DAY)..=to.div_euclid(DAY) {
+        let k = period_key(per, d * DAY);
+        let share = between(c, from.max(d * DAY), end.min((d + 1) * DAY));
+        match out.last_mut() {
+            Some((last, s)) if *last == k => *s += share,
+            _ => out.push((k, share)),
+        }
+    }
+    Some(out.into_iter().map(|(_, s)| s).collect())
+}
+
 /// The time calendar `c` works from `a` to `b`. An end at midnight takes
 /// that whole day, as `the days from` counts it; none when `b` is before `a`
 /// (appendix BL.2.2).
 pub fn working(c: &suture_lang::ir::Calendar, a: i64, b: i64) -> i64 {
     const DAY: i64 = 86_400;
-    let b = if b.rem_euclid(DAY) == 0 { b.saturating_add(DAY) } else { b };
+    between(c, a, if b.rem_euclid(DAY) == 0 { b.saturating_add(DAY) } else { b })
+}
+
+/// The time calendar `c` works from `a` up to, not including, `b`.
+fn between(c: &suture_lang::ir::Calendar, a: i64, b: i64) -> i64 {
+    const DAY: i64 = 86_400;
     if b <= a {
         return 0;
     }
