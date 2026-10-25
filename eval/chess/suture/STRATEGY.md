@@ -10,7 +10,10 @@ Round 1 (v6, written before slice 63) is the first part. Round 2 (v8, the
 current `bot.st`, written in slice 63's forms) is the last section, and its
 Elo table supersedes round 1's.
 
-## The strategy, in coach's terms
+## Round 1 (v6), in coach's terms
+
+This is the round 1 strategy. Round 2 (v8, the current `bot.st`) replaced
+items 2, 6, 7 and 8; see "Round 2" below.
 
 1. **Mate when you can.** `those that are mating`.
 2. **Never allow a mate in one.** `those that are not exposing`.
@@ -57,7 +60,7 @@ Score = points share against the Stockfish level, 40 games unless noted.
 | v5 | v4 + the plan at 1/4 weight inside `value` | @1500: 0.475 and 0.537 | dropped: even a quarter-weight plan costs Maia |
 | n2 | `none`: material + a positional plan | none @1320: 0.400 (v3a material alone: 0.062) | the plan is everything without a model |
 | n3 | n2 + traps, king peril, rim, trades when ahead, no draw seeking | none @1320: 0.613; on maia1100 @1500: 0.487 | good for `none`, bad for Maia |
-| v6 | v4 + n3's plan as a *tiebreak after* `value` | see the Elo table | **final**: one file, `bot.st`, for every model |
+| v6 | v4 + n3's plan as a *tiebreak after* `value` | see the Elo table | round 1 final, superseded by v8 |
 
 Ideas tried and not kept:
 - Seeking a draw by repetition or stalemate when behind by 3: it fired in
@@ -76,7 +79,7 @@ endgames that need counting.
 
 ## Elo
 
-Final strategy (v6), fitted with `chess-ladder elo` over every file below,
+Round 1 final strategy (v6), fitted with `chess-ladder elo` over every file below,
 Stockfish levels as anchors. CI is the fit's 95% interval. Each arm has 40
 games against each of two levels (Stockfish 100 ms per move, `UCI_Elo`).
 
@@ -274,7 +277,7 @@ Reading it:
    loss at 3 pawns. Workaround: the adapter computes it.
 6. **Named weights.** *"a pawn is 1 EUR; the trap is worth 3 pawns"*. The
    weights are bare literals in two formulas.
-7. **The 4096-byte unit.** v8's 40 attributes fit, but a strategy can't
+7. **The 4096-byte unit.** v8's 34 attributes and 2 formulas fit, but a strategy can't
    read all ~60 facts at once. Workaround: the harness enters only the
    attributes the kind declares.
 8. **Mixing `and` and `or` in one clause.** Not needed in v8: defines
