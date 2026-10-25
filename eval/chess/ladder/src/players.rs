@@ -287,7 +287,17 @@ impl Scorer for Llm {
         self.model.clone()
     }
     fn scores(&mut self, g: &Game, moves: &[Move]) -> Result<Vec<i64>, String> {
-        let answer = self.ask(&prompt(g, moves))?;
+        // A rate limit is a wait, not a lost game.
+        let mut tries = 0;
+        let answer = loop {
+            match self.ask(&prompt(g, moves)) {
+                Err(e) if tries < 6 && (e.contains("429") || e.contains("rate")) => {
+                    tries += 1;
+                    std::thread::sleep(std::time::Duration::from_secs(10 * tries));
+                }
+                r => break r?,
+            }
+        };
         let picks = named(&answer, moves);
         if picks.is_empty() {
             self.misses += 1;
