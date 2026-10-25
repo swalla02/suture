@@ -18,7 +18,8 @@ fn main() {
         Some("match") if args.len() >= 5 => run(&args[1], &args[2], args[3].parse().unwrap_or(2), &args[4], args.get(5).and_then(|t| t.parse().ok()).unwrap_or(1)),
         Some("elo") if args.len() >= 2 => ratings(&args[1..]),
         Some("facts") if args.len() >= 2 => show(&args[1]),
-        _ => Err("usage: ladder match ⟨player⟩ ⟨player⟩ ⟨games⟩ ⟨out.jsonl⟩ [threads] | ladder elo ⟨results.jsonl⟩… | ladder facts ⟨fen⟩".into()),
+        Some("dump") if args.len() >= 4 => dump(&args[1], &args[2], &args[3]),
+        _ => Err("usage: ladder match ⟨player⟩ ⟨player⟩ ⟨games⟩ ⟨out.jsonl⟩ [threads] | ladder elo ⟨results.jsonl⟩… | ladder facts ⟨fen⟩ | ladder dump ⟨scorer⟩ ⟨results.jsonl⟩ ⟨out.jsonl⟩".into()),
     };
     if let Err(e) = r {
         eprintln!("{e}");
@@ -68,6 +69,55 @@ fn run(a: &str, b: &str, games: usize, out: &str, threads: usize) -> Result<(), 
     }
     for h in handles {
         h.join().map_err(|_| "a game thread panicked")??;
+    }
+    Ok(())
+}
+
+/// For each position where the non-Stockfish side moved in `games`, every
+/// legal move with what the strategy reads about it, `scorer` giving the
+/// scores: one JSON line per position, for studying a strategy offline.
+fn dump(spec: &str, games: &str, out: &str) -> Result<(), String> {
+    let scratch = PathBuf::from(env("CHESS_SCRATCH", &std::env::temp_dir().display().to_string()));
+    let mut scorer = chess_ladder::scorer(spec, &scratch)?;
+    let mut file = std::fs::File::create(out).map_err(|e| format!("{out}: {e}"))?;
+    let text = std::fs::read_to_string(games).map_err(|e| format!("{games}: {e}"))?;
+    for (k, l) in text.lines().filter(|l| !l.trim().is_empty()).enumerate() {
+        let v: serde_json::Value = serde_json::from_str(l).map_err(|e| e.to_string())?;
+        let ours = if v["white"].as_str().unwrap_or("").starts_with("stockfish") { chess_engine::Color::Black } else { chess_engine::Color::White };
+        let mut g = game::Game::new(game::opening(v["opening"].as_u64().unwrap_or(0) as usize));
+        for played in v["moves"].as_str().unwrap_or("").split_whitespace() {
+            let b = g.board().clone();
+            let m = b.parse_move(played).ok_or(format!("game {k}: {played} is not legal"))?;
+            if b.turn == ours {
+                let legal = b.legal();
+                let scores = scorer.scores(&g, &legal)?;
+                let mut rank: Vec<usize> = (0..legal.len()).collect();
+                rank.sort_by_key(|&i| -scores[i]);
+                let moves: Vec<serde_json::Value> = legal
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &mv)| {
+                        let mut o = serde_json::Map::new();
+                        o.insert("uci".into(), mv.to_string().into());
+                        for (a, val) in chess_ladder::players::attributes(&g, mv, scores[i], rank.iter().position(|&r| r == i).unwrap_or(0) as i64 + 1) {
+                            let j = match val {
+                                suture_runtime::state::Val::Count(c) => c.into(),
+                                suture_runtime::state::Val::Bool(x) => x.into(),
+                                suture_runtime::state::Val::Text(t) => t.into(),
+                                _ => serde_json::Value::Null,
+                            };
+                            o.insert(a, j);
+                        }
+                        serde_json::Value::Object(o)
+                    })
+                    .collect();
+                let line = serde_json::json!({"game": k, "ply": g.ply(), "fen": b.fen(), "history": g.uci_moves(), "start": g.start.fen(), "played": played, "moves": moves});
+                writeln!(file, "{line}").map_err(|e| e.to_string())?;
+            }
+            g.moves.push(m);
+            g.boards.push(b.play(m));
+        }
+        eprintln!("game {k} dumped");
     }
     Ok(())
 }
