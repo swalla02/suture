@@ -110,3 +110,14 @@ fn a_decision_answer_scores_each_move_by_its_probability() {
     assert_eq!(chess_ladder::players::decided(&v, &moves).unwrap(), vec![610, 390, 0]);
     assert!(chess_ladder::players::decided(&serde_json::json!({"error": {"code": 400}}), &moves).is_err());
 }
+
+#[test]
+fn a_decider_plays_a_forced_move_without_asking() {
+    // No key and no network: a single legal move needs no request.
+    let b = Board::from_fen("k7/2R5/8/8/8/8/8/R6K b - - 0 1").unwrap();
+    let moves = b.legal();
+    assert_eq!(moves.len(), 1);
+    let mut d = chess_ladder::players::Decider::new("none/none", std::env::temp_dir());
+    let g = game::Game::new(b);
+    assert_eq!(chess_ladder::players::Scorer::scores(&mut d, &g, &moves).unwrap(), vec![1000]);
+}

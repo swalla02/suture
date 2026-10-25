@@ -269,6 +269,10 @@ impl Scorer for Decider {
         self.model.clone()
     }
     fn scores(&mut self, g: &Game, moves: &[Move]) -> Result<Vec<i64>, String> {
+        // A choice needs two options at least (Clef refuses one).
+        if moves.len() < 2 {
+            return Ok(vec![1000; moves.len()]);
+        }
         let b = g.board();
         let side = if b.turn == Color::White { "White" } else { "Black" };
         let criteria: serde_json::Map<String, serde_json::Value> = moves.iter().map(|m| (m.to_string(), serde_json::Value::String(described(b, *m)))).collect();
