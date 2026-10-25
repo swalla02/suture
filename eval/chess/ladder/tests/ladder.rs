@@ -101,3 +101,12 @@ fn ratings_hold_the_anchor_and_order_the_rest() {
     assert!(r["weak"].elo < 1450.0 && r["weak"].elo > 1250.0, "{}", r["weak"].elo);
     assert!(r["strong"].ci > 50.0 && r["strong"].ci < 200.0);
 }
+
+#[test]
+fn a_decision_answer_scores_each_move_by_its_probability() {
+    let b = Board::start();
+    let moves: Vec<Move> = ["e2e4", "d2d4", "g1f3"].iter().map(|m| b.parse_move(m).unwrap()).collect();
+    let v = serde_json::json!({"answers": {"move": {"type": "choice", "choice": "e2e4", "probabilities": {"e2e4": 0.61, "d2d4": 0.39}}}});
+    assert_eq!(chess_ladder::players::decided(&v, &moves).unwrap(), vec![610, 390, 0]);
+    assert!(chess_ladder::players::decided(&serde_json::json!({"error": {"code": 400}}), &moves).is_err());
+}

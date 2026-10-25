@@ -8,7 +8,7 @@ pub mod players;
 pub mod uci;
 
 use game::Player;
-use players::{Flat, Lc0, Llm, Naked, Nnue, Random, Rng, Scorer, Stockfish, Sutured, Via};
+use players::{Decider, Flat, Lc0, Llm, Naked, Nnue, Random, Rng, Scorer, Stockfish, Sutured, Via};
 use std::path::{Path, PathBuf};
 
 /// Where the engines and networks are: `CHESS_TOOLS`, else ~/chess-tools.
@@ -32,7 +32,8 @@ fn windows(p: &Path) -> Result<String, String> {
 
 pub const NETS: &[(&str, &str)] = &[("maia1100", "maia-1100.pb.gz"), ("maia1500", "maia-1500.pb.gz"), ("maia1900", "maia-1900.pb.gz"), ("leela256", "t1-256x10.pb.gz"), ("leela512", "t1-512x15.pb.gz")];
 
-/// `none`, `nnue`, a net from NETS, or `llm:anthropic|cli|openrouter:⟨model⟩`.
+/// `none`, `nnue`, a net from NETS, `llm:anthropic|cli|openrouter:⟨model⟩`,
+/// or `decide:⟨model⟩`, a decision model on OpenRouter.
 pub fn scorer(spec: &str, scratch: &Path) -> Result<Box<dyn Scorer>, String> {
     if spec == "none" {
         return Ok(Box::new(Flat));
@@ -52,6 +53,9 @@ pub fn scorer(spec: &str, scratch: &Path) -> Result<Box<dyn Scorer>, String> {
             v => return Err(format!("`{v}` is not anthropic, cli or openrouter")),
         };
         return Ok(Box::new(Llm::new(via, model, scratch.to_path_buf())));
+    }
+    if let Some(model) = spec.strip_prefix("decide:") {
+        return Ok(Box::new(Decider::new(model, scratch.to_path_buf())));
     }
     Err(format!("`{spec}` is not a scorer"))
 }

@@ -211,25 +211,106 @@ pub struct Llm {
 
 static LLMS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+fn key(var: &str) -> Result<String, String> {
+    std::env::var(var).map_err(|_| format!("{var} is not set"))
+}
+
+/// A request body in its own file, for curl to send.
+fn request_file(scratch: &std::path::Path, id: u64, v: serde_json::Value) -> Result<std::path::PathBuf, String> {
+    let p = scratch.join(format!("ask-{}-{id}.json", std::process::id()));
+    std::fs::write(&p, v.to_string()).map_err(|e| e.to_string())?;
+    Ok(p)
+}
+
+/// POSTs `file` to `url`. The key goes to curl on stdin, in its config,
+/// never in its arguments.
+fn post(url: &str, header: String, file: &std::path::Path) -> Result<serde_json::Value, String> {
+    let mut c = Command::new("curl").args(["-s", "-m", "120", "--config", "-", "--data-binary"]).arg(format!("@{}", file.display())).arg(url).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
+    c.stdin.take().ok_or("no stdin")?.write_all(format!("header = \"{header}\"\nheader = \"content-type: application/json\"\n").as_bytes()).map_err(|e| e.to_string())?;
+    let out = c.wait_with_output().map_err(|e| e.to_string())?;
+    serde_json::from_slice(&out.stdout).map_err(|e| format!("{e}: {}", String::from_utf8_lossy(&out.stdout)))
+}
+
+/// A decision model on OpenRouter's Decisions API (Jev, Clef, Mammoth, the
+/// Perplexity Decider, …): one `choice` question whose options are the
+/// legal moves, scored by the probability it gives each.
+pub struct Decider {
+    pub model: String,
+    pub scratch: std::path::PathBuf,
+    id: u64,
+    misses: u32,
+}
+
+impl Decider {
+    pub fn new(model: &str, scratch: std::path::PathBuf) -> Decider {
+        Decider { model: model.to_string(), scratch, id: LLMS.fetch_add(1, std::sync::atomic::Ordering::SeqCst), misses: 0 }
+    }
+}
+
+/// Each move's probability in a Decisions answer, in thousandths; a move
+/// the answer leaves out scores 0.
+pub fn decided(v: &serde_json::Value, moves: &[Move]) -> Result<Vec<i64>, String> {
+    let probs = v["answers"]["move"]["probabilities"].as_object().ok_or(format!("no answer: {v}"))?;
+    Ok(moves.iter().map(|m| probs.get(&m.to_string()).and_then(|p| p.as_f64()).map_or(0, |p| (p * 1000.0).round() as i64)).collect())
+}
+
+/// What the option for a move says, e.g. `pawn from e2 to e4` for `e2e4`.
+fn described(b: &chess_engine::Board, m: Move) -> String {
+    let piece = b.at(m.from).map_or("piece", |p| p.kind.name());
+    let mut s = format!("{piece} from {} to {}", chess_engine::square_name(m.from), chess_engine::square_name(m.to));
+    if let Some(k) = m.promo {
+        s.push_str(&format!(", promoting to a {}", k.name()));
+    }
+    s
+}
+
+impl Scorer for Decider {
+    fn name(&self) -> String {
+        self.model.clone()
+    }
+    fn scores(&mut self, g: &Game, moves: &[Move]) -> Result<Vec<i64>, String> {
+        let b = g.board();
+        let side = if b.turn == Color::White { "White" } else { "Black" };
+        let criteria: serde_json::Map<String, serde_json::Value> = moves.iter().map(|m| (m.to_string(), serde_json::Value::String(described(b, *m)))).collect();
+        let state = serde_json::json!({
+            "game": "chess",
+            "to_move": side,
+            "position_fen": b.fen(),
+            "start_fen": g.start.fen(),
+            "moves_so_far_uci": g.uci_moves().join(" "),
+        });
+        let question = serde_json::json!({"type": "choice", "instructions": format!("You are {side}. Which legal move is the strongest in this chess position?"), "criteria": criteria});
+        let f = request_file(&self.scratch, self.id, serde_json::json!({"model": self.model, "state": state, "questions": {"move": question}}))?;
+        let mut tries = 0;
+        let v = loop {
+            let v = post("https://openrouter.ai/api/alpha/decisions", format!("authorization: Bearer {}", key("OPENROUTER_API_KEY")?), &f)?;
+            let code = v["error"]["code"].as_i64();
+            if tries < 6 && matches!(code, Some(429 | 502 | 503)) {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_secs(10 * tries));
+                continue;
+            }
+            break v;
+        };
+        let out = decided(&v, moves)?;
+        if out.iter().all(|&x| x == 0) {
+            self.misses += 1;
+        }
+        Ok(out)
+    }
+    fn misses(&self) -> u32 {
+        self.misses
+    }
+}
+
 impl Llm {
     pub fn new(via: Via, model: &str, scratch: std::path::PathBuf) -> Llm {
         Llm { via, model: model.to_string(), scratch, misses: 0, id: LLMS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) }
     }
 
     fn ask(&self, prompt: &str) -> Result<String, String> {
-        let body = |v: serde_json::Value| -> Result<std::path::PathBuf, String> {
-            let p = self.scratch.join(format!("ask-{}-{}.json", std::process::id(), self.id));
-            std::fs::write(&p, v.to_string()).map_err(|e| e.to_string())?;
-            Ok(p)
-        };
-        // The key goes to curl on stdin, in its config, never in its arguments.
-        let curl = |url: &str, header: String, file: &std::path::Path| -> Result<serde_json::Value, String> {
-            let mut c = Command::new("curl").args(["-s", "-m", "120", "--config", "-", "--data-binary"]).arg(format!("@{}", file.display())).arg(url).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
-            c.stdin.take().ok_or("no stdin")?.write_all(format!("header = \"{header}\"\nheader = \"content-type: application/json\"\n").as_bytes()).map_err(|e| e.to_string())?;
-            let out = c.wait_with_output().map_err(|e| e.to_string())?;
-            serde_json::from_slice(&out.stdout).map_err(|e| format!("{e}: {}", String::from_utf8_lossy(&out.stdout)))
-        };
-        let key = |var: &str| std::env::var(var).map_err(|_| format!("{var} is not set"));
+        let body = |v: serde_json::Value| request_file(&self.scratch, self.id, v);
+        let curl = post;
         match self.via {
             Via::Anthropic => {
                 let f = body(serde_json::json!({"model": self.model, "max_tokens": 400, "thinking": {"type": "disabled"}, "messages": [{"role": "user", "content": prompt}]}))?;
@@ -237,7 +318,8 @@ impl Llm {
                 v["content"].as_array().map(|c| c.iter().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join(" ")).ok_or(format!("no answer: {v}"))
             }
             Via::OpenRouter => {
-                let f = body(serde_json::json!({"model": self.model, "max_tokens": 2000, "messages": [{"role": "user", "content": prompt}]}))?;
+                // Without reasoning, as the Claude players are asked.
+                let f = body(serde_json::json!({"model": self.model, "max_tokens": 2000, "reasoning": {"enabled": false}, "messages": [{"role": "user", "content": prompt}]}))?;
                 let v = curl("https://openrouter.ai/api/v1/chat/completions", format!("authorization: Bearer {}", key("OPENROUTER_API_KEY")?), &f)?;
                 v["choices"][0]["message"]["content"].as_str().map(str::to_string).ok_or(format!("no answer: {v}"))
             }
