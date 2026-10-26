@@ -1,0 +1,133 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="474" viewBox="0 0 920 474" role="img" aria-labelledby="t d">
+<title id="t">With Suture, compared with Suture's rules and no model</title><desc id="d">Maia 1900: +439 ± 115; NNUE, 1 ply: +392 ± 124; Maia 1100: +287 ± 112; Maia 1500: +240 ± 112; Jev 1.14 (TypeSafe): +12 ± 120; Decider V1.2 (Perplexity): −49 ± 122; Clef (Cloudflare): −109 ± 126; GPT-6 Luna Decisions (OpenAI): −138 ± 128; Laguna S 2.1 (Poolside): −158 ± 229; Gemma 4 31B (Google): −211 ± 137; Nemotron 3 Ultra (NVIDIA): −335 ± 161</desc>
+<style>
+:root { --surface: #fcfcfb; --ink: #0b0b0b; --ink2: #52514e; --muted: #898781; --grid: #e1e0d9; --axis: #c3c2b7; --band: #ecebe6;
+  --chess: #2a78d6; --decision: #eb6834; --llm: #1baf7a; }
+@media (prefers-color-scheme: dark) { :root { --surface: #1a1a19; --ink: #f0efec; --ink2: #c3c2b7; --grid: #2c2c2a; --axis: #383835; --band: #2a2a28;
+  --chess: #3987e5; --decision: #d95926; --llm: #199e70; } }
+text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 12px; fill: var(--ink); }
+.title { font-size: 16px; font-weight: 600; }
+.sub { fill: var(--ink2); }
+.muted { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.val { font-weight: 600; font-variant-numeric: tabular-nums; }
+.halo { paint-order: stroke; stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round; }
+.bg { fill: var(--surface); }
+.grid { stroke: var(--grid); }
+.rung { stroke: var(--axis); }
+.zero { stroke: var(--ink2); }
+.goal { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.band { fill: var(--band); }
+.alone { fill: var(--surface); stroke: var(--ink2); stroke-width: 1.5; }
+.key { fill: var(--ink2); }
+.ring { stroke: var(--surface); stroke-width: 2; }
+.wash { stroke-width: 8; stroke-linecap: round; stroke-opacity: .25; }
+.link { stroke-width: 2; stroke-linecap: round; fill: none; }
+.lost { stroke-dasharray: 3 4; }
+.keyline { stroke: var(--ink2); stroke-width: 2; }
+.f-chess { fill: var(--chess); } .s-chess { stroke: var(--chess); }
+.f-decision { fill: var(--decision); } .s-decision { stroke: var(--decision); }
+.f-llm { fill: var(--llm); } .s-llm { stroke: var(--llm); }
+</style>
+<rect class="bg" width="920" height="474" rx="8"/>
+<text x="24.0" y="30.0" class="title">Do the model's scores add anything to the rules?</text>
+<text x="24.0" y="50.0" class="sub">Elo with Suture minus Suture's rules with no model (1355 ± 79), with 95% intervals.</text>
+<circle cx="29.0" cy="74.0" r="5" class="f-chess"/>
+<text x="38.0" y="78.0" class="sub">Chess-trained models</text>
+<circle cx="192.8" cy="74.0" r="5" class="f-decision"/>
+<text x="201.8" y="78.0" class="sub">General decision models</text>
+<circle cx="367.4" cy="74.0" r="5" class="f-llm"/>
+<text x="376.4" y="78.0" class="sub">LLMs</text>
+<line x1="221.2" y1="98.0" x2="221.2" y2="416.0" class="grid"/>
+<text x="221.2" y="432.0" class="muted" text-anchor="middle">−600</text>
+<line x1="302.7" y1="98.0" x2="302.7" y2="416.0" class="grid"/>
+<text x="302.7" y="432.0" class="muted" text-anchor="middle">−400</text>
+<line x1="384.1" y1="98.0" x2="384.1" y2="416.0" class="grid"/>
+<text x="384.1" y="432.0" class="muted" text-anchor="middle">−200</text>
+<line x1="465.6" y1="98.0" x2="465.6" y2="416.0" class="zero"/>
+<text x="465.6" y="432.0" class="muted" text-anchor="middle">0</text>
+<line x1="547.1" y1="98.0" x2="547.1" y2="416.0" class="grid"/>
+<text x="547.1" y="432.0" class="muted" text-anchor="middle">+200</text>
+<line x1="628.5" y1="98.0" x2="628.5" y2="416.0" class="grid"/>
+<text x="628.5" y="432.0" class="muted" text-anchor="middle">+400</text>
+<line x1="710.0" y1="98.0" x2="710.0" y2="416.0" class="grid"/>
+<text x="710.0" y="432.0" class="muted" text-anchor="middle">+600</text>
+<text x="455.6" y="454.0" class="muted" text-anchor="end">← the scores hurt the rules</text>
+<text x="475.6" y="454.0" class="muted">the scores help the rules →</text>
+<text x="207.2" y="122.0" text-anchor="end">Maia 1900</text>
+<line x1="597.4" y1="118.0" x2="691.4" y2="118.0" class="link s-chess"/>
+<line x1="597.4" y1="114.0" x2="597.4" y2="122.0" class="link s-chess"/>
+<line x1="691.4" y1="114.0" x2="691.4" y2="122.0" class="link s-chess"/>
+<circle cx="644.4" cy="118.0" r="5.5" class="f-chess ring"/>
+<text x="734.0" y="122.0" class="val">+439</text>
+<text x="780.0" y="122.0" class="sub">helps</text>
+<text x="207.2" y="150.0" text-anchor="end">NNUE, 1 ply</text>
+<line x1="574.9" y1="146.0" x2="675.6" y2="146.0" class="link s-chess"/>
+<line x1="574.9" y1="142.0" x2="574.9" y2="150.0" class="link s-chess"/>
+<line x1="675.6" y1="142.0" x2="675.6" y2="150.0" class="link s-chess"/>
+<circle cx="625.3" cy="146.0" r="5.5" class="f-chess ring"/>
+<text x="734.0" y="150.0" class="val">+392</text>
+<text x="780.0" y="150.0" class="sub">helps</text>
+<text x="207.2" y="178.0" text-anchor="end">Maia 1100</text>
+<line x1="536.7" y1="174.0" x2="628.3" y2="174.0" class="link s-chess"/>
+<line x1="536.7" y1="170.0" x2="536.7" y2="178.0" class="link s-chess"/>
+<line x1="628.3" y1="170.0" x2="628.3" y2="178.0" class="link s-chess"/>
+<circle cx="582.5" cy="174.0" r="5.5" class="f-chess ring"/>
+<text x="734.0" y="178.0" class="val">+287</text>
+<text x="780.0" y="178.0" class="sub">helps</text>
+<text x="207.2" y="206.0" text-anchor="end">Maia 1500</text>
+<line x1="517.9" y1="202.0" x2="608.9" y2="202.0" class="link s-chess"/>
+<line x1="517.9" y1="198.0" x2="517.9" y2="206.0" class="link s-chess"/>
+<line x1="608.9" y1="198.0" x2="608.9" y2="206.0" class="link s-chess"/>
+<circle cx="563.4" cy="202.0" r="5.5" class="f-chess ring"/>
+<text x="734.0" y="206.0" class="val">+240</text>
+<text x="780.0" y="206.0" class="sub">helps</text>
+<text x="207.2" y="234.0" text-anchor="end">Jev 1.14 (TypeSafe)</text>
+<line x1="421.7" y1="230.0" x2="519.3" y2="230.0" class="link s-decision"/>
+<line x1="421.7" y1="226.0" x2="421.7" y2="234.0" class="link s-decision"/>
+<line x1="519.3" y1="226.0" x2="519.3" y2="234.0" class="link s-decision"/>
+<circle cx="470.5" cy="230.0" r="5.5" class="f-decision ring"/>
+<text x="734.0" y="234.0" class="val">+12</text>
+<text x="780.0" y="234.0" class="sub">no clear difference</text>
+<text x="207.2" y="262.0" text-anchor="end">Decider V1.2 (Perplexity)</text>
+<line x1="395.9" y1="258.0" x2="495.3" y2="258.0" class="link s-decision"/>
+<line x1="395.9" y1="254.0" x2="395.9" y2="262.0" class="link s-decision"/>
+<line x1="495.3" y1="254.0" x2="495.3" y2="262.0" class="link s-decision"/>
+<circle cx="445.6" cy="258.0" r="5.5" class="f-decision ring"/>
+<text x="734.0" y="262.0" class="val">−49</text>
+<text x="780.0" y="262.0" class="sub">no clear difference</text>
+<text x="207.2" y="290.0" text-anchor="end">Clef (Cloudflare)</text>
+<line x1="369.9" y1="286.0" x2="472.5" y2="286.0" class="link s-decision"/>
+<line x1="369.9" y1="282.0" x2="369.9" y2="290.0" class="link s-decision"/>
+<line x1="472.5" y1="282.0" x2="472.5" y2="290.0" class="link s-decision"/>
+<circle cx="421.2" cy="286.0" r="5.5" class="f-decision ring"/>
+<text x="734.0" y="290.0" class="val">−109</text>
+<text x="780.0" y="290.0" class="sub">no clear difference</text>
+<text x="207.2" y="318.0" text-anchor="end">GPT-6 Luna Decisions (OpenAI)</text>
+<line x1="357.2" y1="314.0" x2="461.6" y2="314.0" class="link s-decision"/>
+<line x1="357.2" y1="310.0" x2="357.2" y2="318.0" class="link s-decision"/>
+<line x1="461.6" y1="310.0" x2="461.6" y2="318.0" class="link s-decision"/>
+<circle cx="409.4" cy="314.0" r="5.5" class="f-decision ring"/>
+<text x="734.0" y="318.0" class="val">−138</text>
+<text x="780.0" y="318.0" class="sub">hurts</text>
+<text x="207.2" y="346.0" text-anchor="end">Laguna S 2.1 (Poolside)</text>
+<line x1="307.9" y1="342.0" x2="494.5" y2="342.0" class="link s-llm"/>
+<line x1="307.9" y1="338.0" x2="307.9" y2="346.0" class="link s-llm"/>
+<line x1="494.5" y1="338.0" x2="494.5" y2="346.0" class="link s-llm"/>
+<circle cx="401.2" cy="342.0" r="5.5" class="f-llm ring"/>
+<text x="734.0" y="346.0" class="val">−158</text>
+<text x="780.0" y="346.0" class="sub">no clear difference</text>
+<text x="207.2" y="374.0" text-anchor="end">Gemma 4 31B (Google)</text>
+<line x1="323.8" y1="370.0" x2="435.5" y2="370.0" class="link s-llm"/>
+<line x1="323.8" y1="366.0" x2="323.8" y2="374.0" class="link s-llm"/>
+<line x1="435.5" y1="366.0" x2="435.5" y2="374.0" class="link s-llm"/>
+<circle cx="379.7" cy="370.0" r="5.5" class="f-llm ring"/>
+<text x="734.0" y="374.0" class="val">−211</text>
+<text x="780.0" y="374.0" class="sub">hurts</text>
+<text x="207.2" y="402.0" text-anchor="end">Nemotron 3 Ultra (NVIDIA)</text>
+<line x1="263.7" y1="398.0" x2="394.6" y2="398.0" class="link s-llm"/>
+<line x1="263.7" y1="394.0" x2="263.7" y2="402.0" class="link s-llm"/>
+<line x1="394.6" y1="394.0" x2="394.6" y2="402.0" class="link s-llm"/>
+<circle cx="329.1" cy="398.0" r="5.5" class="f-llm ring"/>
+<text x="734.0" y="402.0" class="val">−335</text>
+<text x="780.0" y="402.0" class="sub">hurts</text>
+</svg>

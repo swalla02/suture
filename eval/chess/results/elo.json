@@ -1,0 +1,198 @@
+[
+  {
+    "ci": 286.0,
+    "elo": 732.0,
+    "games": 80,
+    "player": "cloudflare/clef alone",
+    "score": 0.5
+  },
+  {
+    "ci": 98.0,
+    "elo": 1246.0,
+    "games": 80,
+    "player": "cloudflare/clef with Suture",
+    "score": 18.0
+  },
+  {
+    "ci": 348.0,
+    "elo": 660.0,
+    "games": 80,
+    "player": "google/gemma-4-31b-it alone",
+    "score": 0.0
+  },
+  {
+    "ci": 112.0,
+    "elo": 1144.0,
+    "games": 80,
+    "player": "google/gemma-4-31b-it with Suture",
+    "score": 11.5
+  },
+  {
+    "ci": 79.0,
+    "elo": 1360.0,
+    "games": 80,
+    "player": "maia1100 alone",
+    "score": 34.5
+  },
+  {
+    "ci": 80.0,
+    "elo": 1642.0,
+    "games": 80,
+    "player": "maia1100 with Suture",
+    "score": 44.5
+  },
+  {
+    "ci": 81.0,
+    "elo": 1516.0,
+    "games": 80,
+    "player": "maia1500 alone",
+    "score": 31.0
+  },
+  {
+    "ci": 79.0,
+    "elo": 1595.0,
+    "games": 80,
+    "player": "maia1500 with Suture",
+    "score": 39.5
+  },
+  {
+    "ci": 90.0,
+    "elo": 1663.0,
+    "games": 80,
+    "player": "maia1900 alone",
+    "score": 22.5
+  },
+  {
+    "ci": 84.0,
+    "elo": 1794.0,
+    "games": 80,
+    "player": "maia1900 with Suture",
+    "score": 34.5
+  },
+  {
+    "ci": 120.0,
+    "elo": 1039.0,
+    "games": 80,
+    "player": "nnue alone",
+    "score": 8.5
+  },
+  {
+    "ci": 95.0,
+    "elo": 1747.0,
+    "games": 80,
+    "player": "nnue with Suture",
+    "score": 60.0
+  },
+  {
+    "ci": 491.0,
+    "elo": 557.0,
+    "games": 40,
+    "player": "none alone",
+    "score": 0.0
+  },
+  {
+    "ci": 79.0,
+    "elo": 1355.0,
+    "games": 80,
+    "player": "none with Suture",
+    "score": 34.0
+  },
+  {
+    "ci": 348.0,
+    "elo": 660.0,
+    "games": 80,
+    "player": "nvidia/nemotron-3-ultra-550b-a55b alone",
+    "score": 0.0
+  },
+  {
+    "ci": 140.0,
+    "elo": 1020.0,
+    "games": 80,
+    "player": "nvidia/nemotron-3-ultra-550b-a55b with Suture",
+    "score": 6.0
+  },
+  {
+    "ci": 348.0,
+    "elo": 660.0,
+    "games": 80,
+    "player": "openai/gpt-6-luna-decisions alone",
+    "score": 0.0
+  },
+  {
+    "ci": 101.0,
+    "elo": 1217.0,
+    "games": 80,
+    "player": "openai/gpt-6-luna-decisions with Suture",
+    "score": 16.0
+  },
+  {
+    "ci": 348.0,
+    "elo": 660.0,
+    "games": 80,
+    "player": "perplexity/pplx-decider-v1.2 alone",
+    "score": 0.0
+  },
+  {
+    "ci": 93.0,
+    "elo": 1306.0,
+    "games": 80,
+    "player": "perplexity/pplx-decider-v1.2 with Suture",
+    "score": 22.5
+  },
+  {
+    "ci": 371.0,
+    "elo": 898.0,
+    "games": 20,
+    "player": "poolside/laguna-s-2.1:free alone",
+    "score": 0.0
+  },
+  {
+    "ci": 215.0,
+    "elo": 1197.0,
+    "games": 16,
+    "player": "poolside/laguna-s-2.1:free with Suture",
+    "score": 3.0
+  },
+  {
+    "ci": 0.0,
+    "elo": 1320.0,
+    "games": 700,
+    "player": "stockfish 1320",
+    "score": 519.5
+  },
+  {
+    "ci": 0.0,
+    "elo": 1500.0,
+    "games": 240,
+    "player": "stockfish 1500",
+    "score": 145.5
+  },
+  {
+    "ci": 0.0,
+    "elo": 1700.0,
+    "games": 736,
+    "player": "stockfish 1700",
+    "score": 615.5
+  },
+  {
+    "ci": 0.0,
+    "elo": 2000.0,
+    "games": 80,
+    "player": "stockfish 2000",
+    "score": 61.5
+  },
+  {
+    "ci": 348.0,
+    "elo": 660.0,
+    "games": 80,
+    "player": "typesafe/jev-1.14 alone",
+    "score": 0.0
+  },
+  {
+    "ci": 90.0,
+    "elo": 1367.0,
+    "games": 80,
+    "player": "typesafe/jev-1.14 with Suture",
+    "score": 27.5
+  }
+]
