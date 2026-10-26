@@ -36,7 +36,7 @@ pub fn p1_answer(text: &str) -> Option<i64> {
 pub fn p3_program(text: &str) -> Option<String> {
     let parts: Vec<&str> = text.split("```").collect();
     // Fenced blocks are the odd-numbered parts.
-    let block = parts.iter().skip(1).step_by(2).last()?;
+    let block = parts.iter().skip(1).step_by(2).next_back()?;
     let block = block.strip_prefix("python").or_else(|| block.strip_prefix("py")).unwrap_or(block);
     Some(block.trim_start_matches(['\r', '\n']).to_string())
 }

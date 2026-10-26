@@ -13,7 +13,7 @@ const KEY: (u64, u64) = (0x2026_1026, 0xa1_6c1e);
 pub fn is_dev(id: &str) -> bool {
     let mut h = SipHasher24::new_with_keys(KEY.0, KEY.1);
     h.write(id.as_bytes());
-    h.finish() % 5 == 0
+    h.finish().is_multiple_of(5)
 }
 
 const SAMPLE_KEY: (u64, u64) = (0x2026_1026, 0x5a_3b1e);
@@ -21,7 +21,7 @@ const SAMPLE_KEY: (u64, u64) = (0x2026_1026, 0x5a_3b1e);
 pub fn in_sample(id: &str) -> bool {
     let mut h = SipHasher24::new_with_keys(SAMPLE_KEY.0, SAMPLE_KEY.1);
     h.write(id.as_bytes());
-    !is_dev(id) && h.finish() % 4 == 0
+    !is_dev(id) && h.finish().is_multiple_of(4)
 }
 
 #[cfg(test)]

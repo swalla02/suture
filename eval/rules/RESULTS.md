@@ -39,7 +39,9 @@ By level (items per case 5 / 8 / 11):
 | P1 | 26 of 82 | 18 of 86 | 8 of 76 |
 | P3 | 26 of 82 | 21 of 86 | 21 of 76 |
 
-Dev (56 cases, all three runs on every case) gave the same picture: S1 extracted 100%, P1 12.5%, P3 26.8%.
+Dev (56 cases, all three runs on every case) gave the same picture: S1 extracted 100%, the same answer on all 56; P1 12.5%, the same answer on 6; P3 26.8%, the same answer on 9.
+
+An answer that was expected and never recorded (an API failure, the budget stop) would count as wrong. None happened: every setup has every case.
 
 Extraction misread the direction of 2 test trips (and 1 dev trip), all to or from regions whose fees are the same both ways, so no answer changed. It misread nothing else: no class, region, ticket, count, dimension or weight. P3's programs ran in 242 of 244 cases. One printed no number, and one raised an `IndexError`.
 
@@ -48,7 +50,7 @@ The whole of Stage 1 cost $0.70 at OpenRouter: dev $0.23 and test $0.47.
 ## The hypotheses
 
 - **H1, accuracy: holds for airline**, against P1 and P3. The intervals are far from zero. P2, the reasoning model, is not run until Stage 2, so the claim is about a cheap model.
-- **H2, error source: holds.** S1 equals R on all 300 cases and on 400 random trips that reach the parts of the policy the cases leave untried (`sutured.rs`). With extracted facts S1 is still exact, so the extraction error that remains, 2 misread directions, never changes an answer.
+- **H2, error source: holds.** S1 equals R on all 300 cases and on 400 random trips that reach the parts of the policy the cases leave untried (`sutured.rs`): every region and class, bags from 30 to 130 lbs and 45 to 145 in. Where the policy text says "Not accepted" (over 70 lbs to Europe, Israel, Qatar, Australia and New Zealand; over 100 lbs; over 115 in), RuleArena's script charges the highest fee anyway. S1's rows follow the script, since its answers are the ground truth. The generator never makes such a bag, but an extraction error could. With extracted facts S1 is still exact, so the extraction error that remains, 2 misread directions, never changes an answer.
 - **H4, consistency: holds across runs, untested across rewordings.** Suture's answer was the same on every run because the extraction answers were. P1 gave three equal answers on 3 of 57 cases, P3 on 12. The reworded variants are not made yet.
 - H3, H5, H6: later stages.
 

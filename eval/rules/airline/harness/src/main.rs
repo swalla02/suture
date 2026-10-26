@@ -63,10 +63,10 @@ fn spent() -> f64 {
             let p = e.path();
             if p.is_dir() {
                 walk(&p, sum);
-            } else if p.extension().is_some_and(|x| x == "json") {
-                if let Ok(v) = std::fs::read_to_string(&p).map(|t| serde_json::from_str::<Value>(&t).unwrap_or_default()) {
-                    *sum += v["cost"].as_f64().unwrap_or(0.0);
-                }
+            } else if p.extension().is_some_and(|x| x == "json")
+                && let Ok(v) = std::fs::read_to_string(&p).map(|t| serde_json::from_str::<Value>(&t).unwrap_or_default())
+            {
+                *sum += v["cost"].as_f64().unwrap_or(0.0);
             }
         }
     }
@@ -129,13 +129,16 @@ fn extract_one(c: &Case, run: u32) -> Result<Facts, String> {
     extract::facts(&trip["picks"], &items["picks"])
 }
 
-/// The recorded extraction, without asking.
+/// The recorded extraction, without asking: none when the trip was never
+/// read, an error when the rest is missing or makes no facts.
 fn extracted(c: &Case, run: u32) -> Option<Result<Facts, String>> {
-    let read = |p: PathBuf| std::fs::read_to_string(p).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok());
-    let trip = read(answer_path("extract", run, &c.id, ".trip"))?;
-    let count = extract::count(&trip["picks"]).ok()?;
-    let items = if count >= 2 { read(answer_path("extract", run, &c.id, ".items"))? } else { serde_json::json!({"picks": {}}) };
-    Some(extract::facts(&trip["picks"], &items["picks"]))
+    let trip = read_json(&answer_path("extract", run, &c.id, ".trip"))?;
+    let items = || -> Result<Facts, String> {
+        let count = extract::count(&trip["picks"])?;
+        let items = if count >= 2 { read_json(&answer_path("extract", run, &c.id, ".items")).ok_or("forfeit: no items recorded")? } else { serde_json::json!({"picks": {}}) };
+        extract::facts(&trip["picks"], &items["picks"])
+    };
+    Some(items())
 }
 
 fn p3_one(c: &Case, run: u32, rules: &str) -> Result<Value, String> {
@@ -176,6 +179,11 @@ fn score(which: &str) -> Result<(), String> {
     let prog = sutured::compile(&sutured::module_dir())?;
     let mut s1 = sutured::Run::new(prog, &t, &charges)?;
     let mut rows = vec![];
+    // Every case is asked once; dev cases and the test sample three times.
+    // An answer expected and not recorded counts as a forfeit, never as a
+    // case left out.
+    let expected = |run: u32, id: &str| run == 1 || which == "dev" || split::in_sample(id);
+    const FORFEIT: &str = "forfeit: no answer recorded";
     for c in &cases {
         let truth = reference::total(&c.facts, &t).ok_or(format!("{}: no reference answer", c.id))?;
         let mut push = |setup: &str, run: u32, answer: Result<i64, String>, cost: f64, seconds: f64| {
@@ -187,7 +195,7 @@ fn score(which: &str) -> Result<(), String> {
         let start = std::time::Instant::now();
         let a = s1.total(&format!("{}t", c.id), &c.facts);
         push("S1 true", 1, a, 0.0, start.elapsed().as_secs_f64());
-        for run in 1..=3 {
+        for run in (1..=3).filter(|r| expected(*r, &c.id)) {
             if let Some(f) = extracted(c, run) {
                 let trip = read_json(&answer_path("extract", run, &c.id, ".trip")).unwrap_or_default();
                 let items = read_json(&answer_path("extract", run, &c.id, ".items")).unwrap_or_default();
@@ -205,10 +213,15 @@ fn score(which: &str) -> Result<(), String> {
                         push("S1 extracted", run, Err(e), cost, secs);
                     }
                 }
+            } else {
+                push("R extracted", run, Err(FORFEIT.into()), 0.0, 0.0);
+                push("S1 extracted", run, Err(FORFEIT.into()), 0.0, 0.0);
             }
             if let Some(v) = read_json(&answer_path("p1", run, &c.id, "")) {
                 let a = prompts::p1_answer(v["text"].as_str().unwrap_or("")).ok_or("no total in the answer".to_string());
                 push("P1", run, a, v["cost"].as_f64().unwrap_or(0.0), v["seconds"].as_f64().unwrap_or(0.0));
+            } else {
+                push("P1", run, Err(FORFEIT.into()), 0.0, 0.0);
             }
             if let (Some(v), Some(out)) = (read_json(&answer_path("p3", run, &c.id, "")), read_json(&answer_path("p3", run, &c.id, ".out"))) {
                 let a = match out["stdout"].as_str() {
@@ -216,6 +229,8 @@ fn score(which: &str) -> Result<(), String> {
                     None => Err(out["error"].as_str().unwrap_or("?").to_string()),
                 };
                 push("P3", run, a, v["cost"].as_f64().unwrap_or(0.0), v["seconds"].as_f64().unwrap_or(0.0) + out["seconds"].as_f64().unwrap_or(0.0));
+            } else {
+                push("P3", run, Err(FORFEIT.into()), 0.0, 0.0);
             }
         }
     }
@@ -244,21 +259,33 @@ fn summary(cases: &[Case], rows: &[Row]) {
     }
     let first = |s: &'static str| by.get(&(s, 1));
     println!("{} cases\n", cases.len());
-    println!("| setup | answered (run 1) | right (run 1) | accuracy | right on all 3 runs | $ per case | s per case |");
-    println!("|---|---|---|---|---|---|---|");
+    println!("| setup | answered (run 1) | right (run 1) | accuracy | right on all 3 runs | same answer on all 3 runs | $ per case | s per case |");
+    println!("|---|---|---|---|---|---|---|---|");
     for s in SETUPS {
         let Some(m) = first(s) else { continue };
         let right = m.values().filter(|r| r.right).count();
         let answered = m.values().filter(|r| r.answer.is_some()).count();
         let three: Vec<&str> = cases.iter().map(|c| c.id.as_str()).filter(|id| (1..=3).all(|run| by.get(&(s, run)).is_some_and(|m| m.contains_key(id)))).collect();
         let all3 = three.iter().filter(|id| (1..=3).all(|run| by[&(s, run)][*id].right)).count();
-        let n = m.len().max(1) as f64;
+        let same3 = three.iter().filter(|id| by[&(s, 1)][*id].answer.is_some() && (2..=3).all(|run| by[&(s, run)][*id].answer == by[&(s, 1)][*id].answer)).count();
+        let n = cases.len().max(1) as f64;
         let cost: f64 = m.values().map(|r| r.cost).sum::<f64>() / n;
         let secs: f64 = m.values().map(|r| r.seconds).sum::<f64>() / n;
-        let consistency = if three.is_empty() || matches!(s, "R true" | "S1 true") { "—".to_string() } else { format!("{all3} of {}", three.len()) };
-        println!("| {s} | {answered} of {} | {right} | {:.1}% | {consistency} | {cost:.5} | {secs:.2} |", m.len(), 100.0 * right as f64 / n);
+        let (consistency, same) = if three.is_empty() || matches!(s, "R true" | "S1 true") { ("—".to_string(), "—".to_string()) } else { (format!("{all3} of {}", three.len()), format!("{same3} of {}", three.len())) };
+        println!("| {s} | {answered} of {} | {right} | {:.1}% | {consistency} | {same} | {cost:.5} | {secs:.2} |", cases.len(), 100.0 * right as f64 / n);
     }
-    println!("\nPaired, run 1, on the cases both setups answered or forfeited:\n");
+    println!("\nRight in run 1, by level (5, 8 or 11 items):\n");
+    println!("| setup | level 0 | level 1 | level 2 |");
+    println!("|---|---|---|---|");
+    for s in SETUPS {
+        let Some(m) = first(s) else { continue };
+        let cell = |level: u8| {
+            let of: Vec<&Case> = cases.iter().filter(|c| c.level == level).collect();
+            format!("{} of {}", of.iter().filter(|c| m.get(c.id.as_str()).is_some_and(|r| r.right)).count(), of.len())
+        };
+        println!("| {s} | {} | {} | {} |", cell(0), cell(1), cell(2));
+    }
+    println!("\nPaired, run 1, every case (a forfeit is wrong):\n");
     println!("| comparison | only first right | only second right | difference | 95% interval | McNemar p |");
     println!("|---|---|---|---|---|---|");
     for (a, b) in [("S1 extracted", "P1"), ("S1 extracted", "P3"), ("S1 extracted", "R extracted"), ("S1 true", "R true"), ("P3", "P1")] {

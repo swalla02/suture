@@ -13,6 +13,7 @@ What `suture/airline.st` could not say directly, and how it says it instead. Eac
 | 7 | A unit holds at most 4096 bytes, and a granted row is carried with everything it refers to. | One row per region, not a set of regions; each bag picks its own fee row; one Allowance per free place; the Waiver's pool leaves out bags that save nothing. | Four changes of shape for size alone, each found by a fault at run time, not by the compiler. |
 | 8 | A pool cannot rank by a computed difference (what the allowance saves). | Three hand-derived tiers: heavy and snug, heavy and close, plump and snug. | The tiers hold for these tables only; a new fee could reorder them, and nothing would say so. |
 | 9 | A pool gathers 8 candidates by default before ranking. | `candidates 16`. | With 8, a 10-bag case could silently miss its best bag. |
-| 10 | Signed numbers, shares and margins (from the spec's known list). | Not needed here. | — |
+| 10 | The policy text says "Not accepted" where RuleArena's script charges the highest fee. | `charges.csv` follows the script, the ground truth. Suture could say "not accepted" (no row, so the part waits), but then S1 and R would differ on bags the generator never makes. | A refusal the text asks for is not modelled. |
+| 11 | Signed numbers, shares and margins (from the spec's known list). | Not needed here. | — |
 
 Items 3, 5 and 7 are the most serious. Item 3 puts the last step of the answer outside the language. Item 5 makes correctness depend on input order. Item 7 turned a size limit into four redesigns, and the compiler caught none of them.

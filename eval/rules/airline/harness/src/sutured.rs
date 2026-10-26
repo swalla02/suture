@@ -177,7 +177,8 @@ mod tests {
 
     /// The cases leave most of the policy untried (every checked bag in
     /// them is oversize), so random trips cross-check the rest: every
-    /// region and class, bags of any size and weight the policy accepts.
+    /// region and class, and bags of any size and weight, including those
+    /// the policy text does not accept and the script charges anyway.
     #[test]
     fn suture_matches_the_reference_on_random_trips() {
         let t = Tables::load(&crate::data_dir()).unwrap();
@@ -191,12 +192,11 @@ mod tests {
         for i in 0..400 {
             let region = REGIONS[next(21) as usize];
             let class = data::CLASSES[next(6) as usize];
-            let refuses_heavy = ["Europe", "Israel", "Qatar", "Australia", "New Zealand"].contains(&region);
             let n = if region == "Cuba" { 1 + next(2) } else { 1 + next(10) };
             let bags = (0..n)
                 .map(|_| {
-                    let weight = 30 + next(if refuses_heavy { 41 } else { 71 }) as i64;
-                    let size = 45 + next(71) as i64;
+                    let weight = 30 + next(101) as i64;
+                    let size = 45 + next(101) as i64;
                     data::Bag { length: size / 2, width: size / 3, height: size - size / 2 - size / 3, weight }
                 })
                 .collect();
