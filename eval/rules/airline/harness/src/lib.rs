@@ -2,8 +2,12 @@
 //! experiment (docs/superpowers/specs/2026-10-26-rule-decisions-experiment.md).
 
 pub mod data;
+pub mod extract;
+pub mod models;
+pub mod prompts;
 pub mod reference;
 pub mod split;
+pub mod stats;
 pub mod sutured;
 
 /// `eval/rules/airline/data`, from this crate.
