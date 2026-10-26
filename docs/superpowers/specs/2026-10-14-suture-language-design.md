@@ -2765,3 +2765,35 @@ The chess ladder (eval/chess) ranks every legal move with one `prefer Move`. Its
   - A kind over several lines has its attributes.
   - Small negative Money keeps its sign.
 - eval/chess: the strategist rewrites `bot.st` with these forms, and the ladder measures it.
+
+## Appendix BO. Prototype slice 64: calculations that decide (2026-10-27)
+
+RuleArena's airline fees (eval/rules) are a calculation: a fee table's row, the higher of two fees, an allowance given where it saves the most, and a sum. Suture v0 had no comparison inside a calculation, so `airline.st` turned every fee into a row of a table that a pool picks, ranked the free allowance by hand-made tiers, and left the sum to the harness (eval/rules/airline/GAPS.md). Slice 64 lets a calculation decide.
+
+### BO.1 What slice 64 adds
+
+| Added in slice 64 | Still waits |
+|---|---|
+| `⟨calc⟩ if ⟨cond⟩, otherwise ⟨calc⟩`, chained | |
+| `the larger of a and b`, `the smaller of a and b` | more than two at once (nest them) |
+| `define: a Bag's fee is ⟨calc⟩`: a value computed whenever it is read | reading it through a reference, a candidate or another unit; a running total of it across units |
+| a formula that can be known only after a grant or a new part is set then | |
+| a unit holds 64 KiB | a size the compiler can bound |
+
+### BO.2 Semantics that slice 64 settles
+
+1. **A conditional.** `a if c, otherwise b` is `a` when `c` holds, `b` when it does not, and unknown when `c` is unknown. Chains read in order: `0 USD if its size is at most 62, otherwise 30 USD if its size is at most 65, otherwise 200 USD`. Every branch has the same type, which is the result's. A conditional is a whole calculation, so inside a larger one it is put in brackets: `its base + (a if c, otherwise b)`. Its condition is written as in a rule (`its weight`, never a bare `weight`).
+2. **Larger and smaller.** `the larger of a and b` and `the smaller of a and b` take two values of one type: amounts, counts, durations or times. Either unknown makes the result unknown. Each side is one value, as in `the days from a to b`; a calculated side is put in brackets.
+3. **A defined value.** `define: a Bag's fee is ⟨calc⟩` names a calculation about a Bag. Unlike a formula attribute, it is never stored: it is computed whenever it is read, so it always follows what it reads (a grant, a taken total, a state). It is read as `its fee` wherever its kind's own attributes can be read in its unit: by rules, needs, `uses` conditions, `prefer`, other defines, formulas, a scenario's `expect` and `Host::value`. The compiler puts the calculation in place of each reading, so every check (fixed facts, watches, sources) sees what it really reads. A definition may use only definitions above it. A value cannot be read through a reference or a candidate, since the unit that would compute it is another one; the error says so.
+4. **Formulas known late.** A formula attribute is set once it can be known (appendix Y.2.2). Before slice 64 that happened at creation and when a fetched value came, so a formula that read a grant, such as `fee: Money = its Base's Rate's amount`, stayed unknown for good, without a word. Now each pass of a unit sets the formulas it can, so a grant or a new part sets them too. A formula still never changes once set.
+5. **Unit size.** A unit, and a message, holds at most 65,536 bytes, up from 4,096. The kernel's own default is unchanged; the runtime sets the limit for its programs. A log written before slice 64 replays under the new limit, so an input once refused for size alone would now be taken.
+
+### BO.3 Acceptance
+
+- runtime/tests/calc.rs:
+  - A chained conditional picks the right branch at each bound; an unknown condition leaves the value unknown; branches of different types are an error; a conditional without `otherwise` is an error.
+  - `the larger of` and `the smaller of` pick, with an unknown side unknown and mixed types an error.
+  - A defined value follows a grant and a taken total; a rule and a `prefer` read it; reading one through a reference is an error; a definition that reads a later one is an error.
+  - A formula that reads a grant is set when the grant comes.
+  - A unit of 10,000 bytes is taken; one of 70,000 is refused, naming 65536.
+- eval/rules/airline: `airline.st` rewritten with these forms. The fee tables stay data, and the overweight and oversize fees become formulas. The free allowance is ranked by its saving, and each bag's fee is a defined value. S1 still equals R on every case and on the random trips, and the rewrite is measured against the first version.
