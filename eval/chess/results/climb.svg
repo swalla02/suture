@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="920" height="538" viewBox="0 0 920 538" role="img" aria-labelledby="t d">
-<title id="t">Each model alone, then with Suture</title><desc id="d">Maia 1900: alone 1663, with Suture 1794; NNUE, 1 ply: alone 1039, with Suture 1747; Maia 1100: alone 1360, with Suture 1642; Maia 1500: alone 1516, with Suture 1595; Jev 1.14 (TypeSafe): alone lost every game, with Suture 1367; Decider V1.2 (Perplexity): alone lost every game, with Suture 1306; Clef (Cloudflare): alone 732, with Suture 1246; GPT-6 Luna Decisions (OpenAI): alone lost every game, with Suture 1217; Laguna S 2.1 (Poolside): alone lost every game, with Suture 1197; Gemma 4 31B (Google): alone lost every game, with Suture 1144; Nemotron 3 Ultra (NVIDIA): alone lost every game, with Suture 1020; Suture's rules with no model 1355.</desc>
+<title id="t">Each model alone, then with Suture</title><desc id="d">Maia 1900: alone 1663, with Suture 1794; NNUE, 1 ply: alone 1039, with Suture 1747; Maia 1100: alone 1360, with Suture 1642; Maia 1500: alone 1516, with Suture 1595; Jev 1.14 (TypeSafe): alone lost all 80, with Suture 1367; Decider V1.2 (Perplexity): alone lost all 80, with Suture 1306; Clef (Cloudflare): alone 1 draw in 80, with Suture 1246; GPT-6 Luna Decisions (OpenAI): alone lost all 80, with Suture 1217; Laguna S 2.1 (Poolside): alone lost all 20, with Suture 1197; Gemma 4 31B (Google): alone lost all 80, with Suture 1144; Nemotron 3 Ultra (NVIDIA): alone lost all 80, with Suture 1020; Suture's rules with no model 1355.</desc>
 <style>
 :root { --surface: #fcfcfb; --ink: #0b0b0b; --ink2: #52514e; --muted: #898781; --grid: #e1e0d9; --axis: #c3c2b7; --band: #ecebe6;
   --chess: #2a78d6; --decision: #eb6834; --llm: #1baf7a; }
@@ -42,9 +42,9 @@ text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size:
 <circle cx="95.0" cy="96.0" r="5" class="key"/>
 <text x="104.0" y="100.0" class="sub">with Suture (shaded: its 95% range)</text>
 <line x1="334.2" y1="96.0" x2="354.2" y2="96.0" class="keyline lost"/>
-<text x="360.2" y="100.0" class="sub">lost every game alone</text>
-<rect x="509.4" y="90.0" width="16" height="12" rx="2" class="band"/>
-<text x="531.4" y="100.0" class="sub">Suture's rules, no model (95% range)</text>
+<text x="360.2" y="100.0" class="sub">alone, too few points to rate</text>
+<rect x="553.2" y="90.0" width="16" height="12" rx="2" class="band"/>
+<text x="575.2" y="100.0" class="sub">Suture's rules, no model (95% range)</text>
 <rect x="509.7" y="140.0" width="58.7" height="340.0" class="band"/>
 <line x1="258.4" y1="140.0" x2="258.4" y2="480.0" class="grid"/>
 <text x="258.4" y="496.0" class="muted" text-anchor="middle">600</text>
@@ -101,44 +101,44 @@ text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size:
 <text x="207.2" y="285.0" text-anchor="end">Jev 1.14 (TypeSafe)</text>
 <line x1="510.0" y1="281.0" x2="577.0" y2="281.0" class="wash s-decision"/>
 <line x1="221.2" y1="281.0" x2="536.5" y2="281.0" class="link lost s-decision" marker-end="url(#head-decision)"/>
-<text x="225.2" y="274.0" class="muted">lost every game</text>
+<text x="225.2" y="274.0" class="muted">lost all 80</text>
 <circle cx="543.5" cy="281.0" r="5.5" class="f-decision ring"/>
 <text x="554.5" y="285.0" class="val halo">1367</text>
 <text x="207.2" y="315.0" text-anchor="end">Decider V1.2 (Perplexity)</text>
 <line x1="486.3" y1="311.0" x2="555.4" y2="311.0" class="wash s-decision"/>
 <line x1="221.2" y1="311.0" x2="513.8" y2="311.0" class="link lost s-decision" marker-end="url(#head-decision)"/>
-<text x="225.2" y="304.0" class="muted">lost every game</text>
+<text x="225.2" y="304.0" class="muted">lost all 80</text>
 <circle cx="520.8" cy="311.0" r="5.5" class="f-decision ring"/>
 <text x="531.8" y="315.0" class="val halo">1306</text>
 <text x="207.2" y="345.0" text-anchor="end">Clef (Cloudflare)</text>
 <line x1="462.1" y1="341.0" x2="535.0" y2="341.0" class="wash s-decision"/>
-<line x1="313.4" y1="341.0" x2="491.5" y2="341.0" class="link s-decision" marker-end="url(#head-decision)"/>
-<circle cx="307.4" cy="341.0" r="4.5" class="alone"/>
+<line x1="221.2" y1="341.0" x2="491.5" y2="341.0" class="link lost s-decision" marker-end="url(#head-decision)"/>
+<text x="225.2" y="334.0" class="muted">1 draw in 80</text>
 <circle cx="498.5" cy="341.0" r="5.5" class="f-decision ring"/>
 <text x="509.5" y="345.0" class="val halo">1246</text>
 <text x="207.2" y="375.0" text-anchor="end">GPT-6 Luna Decisions (OpenAI)</text>
 <line x1="450.2" y1="371.0" x2="525.3" y2="371.0" class="wash s-decision"/>
 <line x1="221.2" y1="371.0" x2="480.7" y2="371.0" class="link lost s-decision" marker-end="url(#head-decision)"/>
-<text x="225.2" y="364.0" class="muted">lost every game</text>
+<text x="225.2" y="364.0" class="muted">lost all 80</text>
 <circle cx="487.7" cy="371.0" r="5.5" class="f-decision ring"/>
 <text x="498.7" y="375.0" class="val halo">1217</text>
 <text x="207.2" y="405.0" text-anchor="end">Laguna S 2.1 (Poolside)</text>
 <line x1="400.4" y1="401.0" x2="560.2" y2="401.0" class="wash s-llm"/>
 <line x1="221.2" y1="401.0" x2="473.3" y2="401.0" class="link lost s-llm" marker-end="url(#head-llm)"/>
-<text x="225.2" y="394.0" class="muted">lost every game</text>
+<text x="225.2" y="394.0" class="muted">lost all 20</text>
 <circle cx="480.3" cy="401.0" r="5.5" class="f-llm ring"/>
 <text x="491.3" y="405.0" class="val halo">1197</text>
 <text x="524.5" y="405.0" class="muted halo">· 16 games</text>
 <text x="207.2" y="435.0" text-anchor="end">Gemma 4 31B (Google)</text>
 <line x1="419.0" y1="431.0" x2="502.2" y2="431.0" class="wash s-llm"/>
 <line x1="221.2" y1="431.0" x2="453.6" y2="431.0" class="link lost s-llm" marker-end="url(#head-llm)"/>
-<text x="225.2" y="424.0" class="muted">lost every game</text>
+<text x="225.2" y="424.0" class="muted">lost all 80</text>
 <circle cx="460.6" cy="431.0" r="5.5" class="f-llm ring"/>
 <text x="471.6" y="435.0" class="val halo">1144</text>
 <text x="207.2" y="465.0" text-anchor="end">Nemotron 3 Ultra (NVIDIA)</text>
 <line x1="362.5" y1="461.0" x2="466.6" y2="461.0" class="wash s-llm"/>
 <line x1="221.2" y1="461.0" x2="407.5" y2="461.0" class="link lost s-llm" marker-end="url(#head-llm)"/>
-<text x="225.2" y="454.0" class="muted">lost every game</text>
+<text x="225.2" y="454.0" class="muted">lost all 80</text>
 <circle cx="414.5" cy="461.0" r="5.5" class="f-llm ring"/>
 <text x="425.5" y="465.0" class="val halo">1020</text>
 </svg>

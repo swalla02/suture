@@ -2,8 +2,8 @@
 
 ELO.json is what `chess-ladder elo RECORDS/*.jsonl` prints. Both default to
 the files beside this script: elo.json and 269e2871/, the records of the
-frozen strategy. It writes climb.svg and beyond.svg beside itself and prints
-the results table as Markdown.
+frozen strategy. It writes climb.svg and beyond.svg beside itself, over the
+committed ones, and prints the results table as Markdown.
 """
 import glob, json, math, os, sys
 from xml.sax.saxutils import escape
@@ -70,24 +70,47 @@ def width(s, size=12):
 
 
 def signed(n):
-    return ("+" if n > 0 else "−" if n < 0 else "") + str(abs(round(n)))
+    n = round(n)
+    return ("+" if n > 0 else "−" if n < 0 else "") + str(abs(n))
+
+
+def below(a, levels, draws):
+    """What an arm alone scored, in words, when that is too little for a rating.
+
+    The fit gives each arm one virtual draw per level it met, half a point
+    each. An arm that scored less than those is rated mostly by them."""
+    if not a or a["score"] >= 0.5 * len(levels):
+        return None
+    if a["score"] == 0:
+        return f"lost all {a['games']}"
+    if a["score"] == draws / 2:
+        return f"{draws} draw{'s' if draws > 1 else ''} in {a['games']}"
+    return f"{a['score']:g} points in {a['games']}"
 
 
 def load(elo_path, records):
     fit = {r["player"]: r for r in json.load(open(elo_path))}
-    levels = {}
+    levels, draws = {}, {}
     for f in glob.glob(os.path.join(records, "*.jsonl")):
         for line in open(f):
+            if not line.strip():
+                continue
             g = json.loads(line)
             for me, them in ((g["white"], g["black"]), (g["black"], g["white"])):
                 if them.startswith("stockfish "):
                     levels.setdefault(me, set()).add(int(them.split()[1]))
+                    draws[me] = draws.get(me, 0) + (g["result"] == "1/2-1/2")
     rows = []
     for key, name, fam in SCORERS:
         a, s = fit.get(f"{key} alone"), fit.get(f"{key} with Suture")
         if s:
-            rows.append({"name": name, "fam": fam, "alone": a, "suture": s, "lost": bool(a) and a["score"] == 0,
-                         "levels": (sorted(levels.get(f"{key} alone", ())), sorted(levels.get(f"{key} with Suture", ())))})
+            lv = (sorted(levels.get(f"{key} alone", ())), sorted(levels.get(f"{key} with Suture", ())))
+            rows.append({"name": name, "fam": fam, "alone": a, "suture": s, "levels": lv,
+                         "below": below(a, lv[0], draws.get(f"{key} alone", 0))})
+    drawn = {f"{key} {arm}" for key, _, _ in SCORERS for arm in ("alone", "with Suture")} | {f"{RULES} with Suture"}
+    for p in sorted(set(fit) - drawn):
+        if not p.startswith("stockfish ") and p != f"{RULES} alone":
+            print(f"figures.py: {p} is not in SCORERS, so it is left out", file=sys.stderr)
     rules = fit[f"{RULES} with Suture"]
     rules["levels"] = sorted(levels.get(f"{RULES} with Suture", ()))
     for r in rows:
@@ -150,7 +173,7 @@ def climb(rows, rules):
     b = [text(24, 30, "The climb: each model alone, then with Suture", "title"),
          text(24, 50, f"Elo against Stockfish with 95% intervals. Strategy 269e2871, {rows[0]['suture']['games']} games per arm.", "sub")]
     b += legend(24, 78, [(f, label + "s" if f != "llm" else "LLMs") for f, label in FAMILIES.items()])
-    b += legend(24, 100, [("alone", "alone"), ("suture", "with Suture (shaded: its 95% range)"),("lost", "lost every game alone"), ("band", "Suture's rules, no model (95% range)")])
+    b += legend(24, 100, [("alone", "alone"), ("suture", "with Suture (shaded: its 95% range)"), ("lost", "alone, too few points to rate"), ("band", "Suture's rules, no model (95% range)")])
     lo_r, hi_r = rules["elo"] - rules["ci"], rules["elo"] + rules["ci"]
     b.append(f'<rect x="{x(lo_r):.1f}" y="{top - 6:.1f}" width="{x(hi_r) - x(lo_r):.1f}" height="{bottom - top + 6:.1f}" class="band"/>')
     for t in range(600, GOAL + 1, 200):
@@ -171,19 +194,20 @@ def climb(rows, rules):
         e = x(s["elo"])
         b.append(text(x0 - 14, y + 4, r["name"], None, "end"))
         b.append(line(x(s["elo"] - s["ci"]), y, x(s["elo"] + s["ci"]), y, f"wash s-{f}"))
-        if r["alone"] and not r["lost"]:
+        if r["below"]:
+            b.append(line(x0, y, e - 7, y, f"link lost s-{f}", f' marker-end="url(#head-{f})"'))
+            b.append(text(x0 + 4, y - 7, r["below"], "muted"))
+        elif r["alone"]:
             a = x(r["alone"]["elo"])
             step = 1 if e > a else -1
             b.append(line(a + 6 * step, y, e - 7 * step, y, f"link s-{f}", f' marker-end="url(#head-{f})"'))
             b.append(f'<circle cx="{a:.1f}" cy="{y:.1f}" r="4.5" class="alone"/>')
-        elif r["lost"]:
-            b.append(line(x0, y, e - 7, y, f"link lost s-{f}", f' marker-end="url(#head-{f})"'))
-            b.append(text(x0 + 4, y - 7, "lost every game", "muted"))
         b.append(f'<circle cx="{e:.1f}" cy="{y:.1f}" r="5.5" class="f-{f} ring"/>')
         b.append(text(e + 11, y + 4, f"{s['elo']:.0f}", "val halo"))
         if s["games"] < rows[0]["suture"]["games"]:
             b.append(text(e + 13 + width(f"{s['elo']:.0f}"), y + 4, f"· {s['games']} games", "muted halo"))
-    desc = "; ".join(f"{r['name']}: alone {'lost every game' if r['lost'] else int(r['alone']['elo'])}, with Suture {int(r['suture']['elo'])}" for r in rows)
+    alone = lambda r: r["below"] or (f"{r['alone']['elo']:.0f}" if r["alone"] else "not played")
+    desc = "; ".join(f"{r['name']}: alone {alone(r)}, with Suture {r['suture']['elo']:.0f}" for r in rows)
     return svg(w, h, "Each model alone, then with Suture", desc + f"; Suture's rules with no model {int(rules['elo'])}.", b)
 
 
@@ -227,8 +251,8 @@ def table(rows, rules):
            f"| Suture's rules, no model | – | – | **{rules['elo']:.0f} ± {rules['ci']:.0f}** | – | – | – / {rules['games']} | – / {lv(rules['levels'])} |"]
     for r in rows:
         a, s = r["alone"], r["suture"]
-        alone = "–" if not a else f"lost all {a['games']}" if r["lost"] else f"{a['elo']:.0f} ± {a['ci']:.0f}"
-        lift = "–" if not a or r["lost"] else f"{signed(s['elo'] - a['elo'])} ± {math.hypot(s['ci'], a['ci']):.0f}"
+        alone = "–" if not a else r["below"] or f"{a['elo']:.0f} ± {a['ci']:.0f}"
+        lift = "–" if not a or r["below"] else f"{signed(s['elo'] - a['elo'])} ± {math.hypot(s['ci'], a['ci']):.0f}"
         out.append(f"| {r['name']} | {FAMILIES[r['fam']]} | {alone} | **{s['elo']:.0f} ± {s['ci']:.0f}** | {lift} | "
                    f"{signed(r['over'])} ± {r['noise']:.0f} | {a['games'] if a else 0} / {s['games']} | {lv(r['levels'][0])} / {lv(r['levels'][1])} |")
     return "\n".join(out)

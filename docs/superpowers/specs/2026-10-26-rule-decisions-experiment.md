@@ -6,7 +6,7 @@ Status: design, agreed 2026-10-26. Replaces chess as the main evidence for Sutur
 
 The chess ladder showed that a model plus Suture rules beats the model alone for chess-trained models (NNUE 1039 → 1747, Maia 1100 1360 → 1642, 80 games each, ±80). But:
 
-- most of the strength is in the facts the Rust harness computes (`mating`, `sound`, `wasteful`), not in the language;
+- much of the strength is in the facts the Rust harness computes (`mating`, `exposing`, `gains`, `drops`); Suture combines and orders them, and the language's own share is not measured;
 - general decision models with Suture land at or below Suture's rules with no model (1355);
 - the top gain is small (Maia 1900 1663 → 1794), and 1794 is weak for chess;
 - the strategist tuned on the same opponents it was tested against.

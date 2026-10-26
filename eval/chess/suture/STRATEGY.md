@@ -9,8 +9,8 @@ where the language got in the way.
 Round 1 (v6, written before slice 63) is the first part. Round 2 (v8, the
 current `bot.st`, written in slice 63's forms) is the last section, and its
 Elo table supersedes round 1's. Both are superseded by `../RESULTS.md`: every
-arm replayed on the final `bot.st`, 80 games each, with the decision models
-and LLMs added.
+arm with Suture replayed on the final `bot.st`, most to 80 games, with the
+decision models and LLMs added.
 
 ## Round 1 (v6), in coach's terms
 
@@ -216,10 +216,11 @@ for the 0.5 margin, and plays no worse.
 
 ### Elo, round 2
 
-**Superseded by `../RESULTS.md`.** Some of the games below started before
-the final `bot.st` was saved. Every arm was replayed on the final file: maia1900
-with Suture is 1794 ± 84 there, not 1887 ± 73. The table is kept as it was
-measured.
+**Superseded by `../RESULTS.md`, with the tables and the reading below.**
+Some of these games started before the final `bot.st` was saved. Every arm
+with Suture was replayed on the final file. There maia1900 with Suture is
+1794 ± 84, not 1887 ± 73, and scores 13 of 40 (0.325) against Stockfish 2000,
+not 0.40. The tables are kept as they were measured.
 
 The final strategy (v8). Naked arms as in round 1, plus maia1900. 40 games
 per arm per level; maia1500 with Suture has 80 games at 1700. Fitted
