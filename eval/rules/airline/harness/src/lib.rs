@@ -4,6 +4,7 @@
 pub mod data;
 pub mod reference;
 pub mod split;
+pub mod sutured;
 
 /// `eval/rules/airline/data`, from this crate.
 pub fn data_dir() -> std::path::PathBuf {

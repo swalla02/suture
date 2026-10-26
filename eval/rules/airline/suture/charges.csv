@@ -1,0 +1,22 @@
+table,regions,lowsize,highsize,lowweight,highweight,amount
+# The overweight and oversize tables of reference_rules.txt, one row per fee and group of regions.
+# A row applies over its low bound, up to its high one. "Not accepted" has no row.
+# Charges: bags that are paid for, with the 50 lbs allowance.
+Charge,all,0,62,0,1000,0
+Charge,all,62,65,0,1000,30
+Charge,Panama|Colombia|Ecuador|Peru|South America|Europe|Israel|Qatar,65,115,0,1000,150
+Charge,U.S.|Puerto Rico|Canada|Mexico|Cuba|Haiti|India|China|Japan|South Korea|Hong Kong|Australia|New Zealand,65,115,0,1000,200
+Charge,all,0,1000,0,50,0
+Charge,all,0,1000,50,53,30
+Charge,Cuba,0,1000,53,70,200
+Charge,U.S.|Puerto Rico|Canada|Mexico|Haiti|Panama|Colombia|Ecuador|Peru|South America|Israel|Qatar|Europe|India|China|Japan|South Korea|Hong Kong|Australia|New Zealand,0,1000,53,70,100
+Charge,U.S.|Puerto Rico|Canada|Mexico|Cuba|Haiti|Panama|Colombia|Ecuador|Peru|South America,0,1000,70,100,200
+Charge,India|China|Japan|South Korea|Hong Kong,0,1000,70,100,450
+# Graces: bags on a free allowance of 70 lbs; the size rows are the same.
+Grace,all,0,62,0,1000,0
+Grace,all,62,65,0,1000,30
+Grace,Panama|Colombia|Ecuador|Peru|South America|Europe|Israel|Qatar,65,115,0,1000,150
+Grace,U.S.|Puerto Rico|Canada|Mexico|Cuba|Haiti|India|China|Japan|South Korea|Hong Kong|Australia|New Zealand,65,115,0,1000,200
+Grace,all,0,1000,0,70,0
+Grace,U.S.|Puerto Rico|Canada|Mexico|Cuba|Haiti|Panama|Colombia|Ecuador|Peru|South America,0,1000,70,100,200
+Grace,India|China|Japan|South Korea|Hong Kong,0,1000,70,100,450
