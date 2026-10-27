@@ -82,6 +82,21 @@ pub fn noise_prompt(text: &str) -> String {
     )
 }
 
+/// `text` with each Unicode space and hyphen a plain one: the model writes
+/// `San Francisco` with a narrow no-break space, and `Port-au-Prince` with
+/// no-break hyphens, as often as not.
+pub fn plain(text: &str) -> String {
+    text.trim()
+        .chars()
+        .map(|c| match c {
+            '\n' => c,
+            '\u{2010}' | '\u{2011}' => '-',
+            c if c.is_whitespace() => ' ',
+            c => c,
+        })
+        .collect()
+}
+
 /// Every fact of the case in `text`, or what is missing: each item's
 /// numbers in order (others may come between), the ticket as the one
 /// dollar amount, one weight in lbs per item, the class, the cities and
@@ -192,6 +207,9 @@ mod tests {
         assert!(check(&p, &format!("{t} Her taxi cost $20.")).is_err());
         assert!(check(&p, &format!("{t} She also has a coat of 3 lbs.")).is_err());
         assert!(check(&p, &t.replace("Main Cabin Class", "Main Cabin")).is_err());
+        assert!(check(&p, &t.replace("Main Cabin", "Main\u{202f}Cabin")).is_err());
+        assert_eq!(check(&p, &plain(&t.replace("Main Cabin", "Main\u{202f}Cabin"))), Ok(()));
+        assert_eq!(plain("Port\u{2011}au\u{2011}Prince"), "Port-au-Prince");
         assert!(check(&p, &format!("{t} Her flight, AA 1432, leaves at 7:45 from the center, past a background of hills.")).is_ok());
     }
 }

@@ -117,7 +117,7 @@ fn vary_one(c: &Case, kind: &str) -> Result<String, String> {
     let mut why = String::new();
     for attempt in 1..=3 {
         let v = models::recorded(&answer_path("variants", kind, &c.id, &format!(".{attempt}")), || models::chat_at(variants::SYSTEM, &prompt, if attempt == 1 { 0.0 } else { 0.7 }))?;
-        let text = v["text"].as_str().unwrap_or("").trim().to_string();
+        let text = variants::plain(v["text"].as_str().unwrap_or(""));
         match variants::check(&p, &text) {
             Ok(()) => return Ok(text),
             Err(e) => why = format!("attempt {attempt}: {e}"),
