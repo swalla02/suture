@@ -11,6 +11,8 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const LLM: &str = "openai/gpt-oss-120b";
+/// P2's reasoning model (the spec, stage 2 step 2).
+pub const REASONER: &str = "deepseek/deepseek-v4-pro";
 pub const EXTRACTOR: &str = "typesafe/jev-1.14";
 
 pub fn runs_dir() -> PathBuf {
@@ -58,7 +60,7 @@ pub fn post(url: &str, body: &Value) -> Result<Value, String> {
 
 fn curl(url: &str, key: &str, file: &Path) -> Result<Value, String> {
     let mut c = Command::new("curl")
-        .args(["-s", "-m", "300", "--config", "-", "--data-binary"])
+        .args(["-s", "-m", "900", "--config", "-", "--data-binary"])
         .arg(format!("@{}", file.display()))
         .arg(url)
         .stdin(Stdio::piped())
@@ -95,11 +97,20 @@ pub fn chat(system: &str, user: &str) -> Result<Value, String> {
 /// The same at another temperature: a variant written again after one
 /// that failed its check.
 pub fn chat_at(system: &str, user: &str, temperature: f64) -> Result<Value, String> {
+    complete(LLM, "low", 12000, system, user, temperature)
+}
+
+/// A chat completion from P2's reasoning model, reasoning effort high.
+pub fn reason(system: &str, user: &str) -> Result<Value, String> {
+    complete(REASONER, "high", 32000, system, user, 0.0)
+}
+
+fn complete(model: &str, effort: &str, max_tokens: u32, system: &str, user: &str, temperature: f64) -> Result<Value, String> {
     let body = json!({
-        "model": LLM,
+        "model": model,
         "temperature": temperature,
-        "max_tokens": 12000,
-        "reasoning": {"effort": "low"},
+        "max_tokens": max_tokens,
+        "reasoning": {"effort": effort},
         "usage": {"include": true},
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
     });

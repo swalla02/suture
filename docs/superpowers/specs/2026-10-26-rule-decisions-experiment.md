@@ -116,3 +116,14 @@ Fixed before any setup reads a variant.
   - the share with the same answer on all four;
   - for S1 against P1 and P3, the paired difference on "right on all four".
 - **Budget:** $1.50 for this step, over the $0.70 already spent.
+
+## Stage 2, step 2: airline P2, a reasoning model
+
+Fixed before P2 answers any test case.
+
+- **Model:** `deepseek/deepseek-v4-pro` through OpenRouter, reasoning effort high, temperature 0, at most 32,000 tokens out. It is the one reasoning model the spec asks for. We chose it because it is a frontier open reasoning model whose output is cheap, and reasoning makes output the bulk of the cost.
+- **Prompt:** P1's, which is RuleArena's own zero-shot prompt, unchanged. The answer is read the same way.
+- **Cases:** the 100 test cases with the smallest keyed SipHash under a third key, listed in `p2.txt`. A test checks that the list matches the hash. One run each, on the original text only.
+- **Pricing first:** the 8 dev cases with the smallest hash under the same key are asked before any test case. If the measured cost puts the 100 cases over the Stage 2 budget of $4, the user is asked before the test cases run. Nothing about P2 is tuned.
+- **Measures:** on those 100 cases, the accuracy of S1 (extracted facts), P1, P3 and P2, and the paired difference S1 − P2 and P2 − P1, with McNemar and the bootstrap interval.
+- **What it answers:** whether the gap in H1 is only a cheap model's. If P2 closes most of it, H1 is reported as holding against cheap models only.

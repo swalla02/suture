@@ -1,10 +1,10 @@
 //! `cargo run -p rules-airline -- ⟨command⟩`:
 //!
-//! - `split`, `sample`: print the dev cases, and the test cases asked three
-//!   times, for `split.txt` and `sample.txt`;
+//! - `split`, `sample`, `p2`: print the dev cases, the test cases asked
+//!   three times, and P2's cases, for `split.txt`, `sample.txt` and `p2.txt`;
 //! - `vary ⟨dev|test⟩`: writes the variants of each case not yet kept
 //!   (`variants.rs`), and keeps those that pass the check;
-//! - `ask ⟨extract|p1|p3⟩ ⟨dev|test|sample⟩ ⟨slot⟩`: asks the models for each
+//! - `ask ⟨extract|p1|p2|p3⟩ ⟨dev|test|sample|p2-dev|p2⟩ ⟨slot⟩`: asks the models for each
 //!   case not yet recorded in that slot (`models::runs_dir`), and stops once
 //!   the recorded answers cost more than `RULES_BUDGET` dollars (default 2).
 //!   A slot is a run of the cases, 1 to 3, or a kind of variant;
@@ -24,10 +24,14 @@ fn main() {
     let r = match a[..] {
         ["split"] => print_ids("dev cases: keyed SipHash of the case id is 0 mod 5 (src/split.rs); every other case is test", split::is_dev),
         ["sample"] => print_ids("test cases asked three times: SipHash under a second key is 0 mod 4 (src/split.rs)", split::in_sample),
+        ["p2"] => data::cases(&data_dir()).map(|cases| {
+            println!("# P2's cases: the 8 dev, then the 100 test, with the smallest SipHash under a third key (src/split.rs)");
+            split::p2(cases.iter().map(|c| c.id.as_str())).iter().for_each(|id| println!("{id}"));
+        }),
         ["vary", which] => vary(which),
         ["ask", setup, which, slot] => ask(setup, which, slot),
         ["score", which] => score(which),
-        _ => Err("usage: rules-airline split | sample | vary ⟨dev|test⟩ | ask ⟨extract|p1|p3⟩ ⟨dev|test|sample⟩ ⟨1|2|3|reworded|noise|order⟩ | score ⟨dev|test⟩".into()),
+        _ => Err("usage: rules-airline split | sample | p2 | vary ⟨dev|test⟩ | ask ⟨extract|p1|p2|p3⟩ ⟨dev|test|sample|p2-dev|p2⟩ ⟨1|2|3|reworded|noise|order⟩ | score ⟨dev|test⟩".into()),
     };
     if let Err(e) = r {
         eprintln!("{e}");
@@ -50,7 +54,12 @@ fn chosen(which: &str) -> Result<Vec<Case>, String> {
         "dev" => split::is_dev,
         "test" => |id| !split::is_dev(id),
         "sample" => split::in_sample,
-        w => return Err(format!("`{w}` is not dev, test or sample")),
+        "p2-dev" | "p2" => {
+            let all = data::cases(&data_dir())?;
+            let p2: Vec<String> = split::p2(all.iter().map(|c| c.id.as_str())).into_iter().filter(|id| split::is_dev(id) == (which == "p2-dev")).map(String::from).collect();
+            return Ok(all.into_iter().filter(|c| p2.contains(&c.id)).collect());
+        }
+        w => return Err(format!("`{w}` is not dev, test, sample, p2-dev or p2")),
     };
     Ok(data::cases(&data_dir())?.into_iter().filter(|c| keep(&c.id)).collect())
 }
@@ -142,7 +151,7 @@ fn spent() -> f64 {
         }
     }
     let mut sum = 0.0;
-    for s in ["extract", "p1", "p3", "variants"] {
+    for s in ["extract", "p1", "p2", "p3", "variants"] {
         walk(&models::runs_dir().join(s), &mut sum);
     }
     sum
@@ -172,8 +181,9 @@ fn ask(setup: &str, which: &str, slot: &str) -> Result<(), String> {
                     let r = match setup {
                         "extract" => extract_one(&c.id, text, slot).map(|_| ()),
                         "p1" => models::recorded(&answer_path("p1", slot, &c.id, ""), || models::chat(prompts::SYSTEM, &prompts::p1(&rules, text))).map(|_| ()),
+                        "p2" => models::recorded(&answer_path("p2", slot, &c.id, ""), || models::reason(prompts::SYSTEM, &prompts::p1(&rules, text))).map(|_| ()),
                         "p3" => p3_one(&c.id, text, slot, &rules).map(|_| ()),
-                        s => Err(format!("`{s}` is not extract, p1 or p3")),
+                        s => Err(format!("`{s}` is not extract, p1, p2 or p3")),
                     };
                     if let Err(e) = r {
                         failed.lock().unwrap().push(format!("{}: {e}", c.id));
@@ -262,6 +272,9 @@ fn score(which: &str) -> Result<(), String> {
     let kinds: Vec<(&str, BTreeMap<String, String>)> = variants::KINDS.iter().map(|k| Ok((*k, variants::load(k)?))).collect::<Result<_, String>>()?;
     let kinds: Vec<&str> = kinds.iter().filter(|(_, v)| cases.iter().any(|c| v.contains_key(&c.id))).map(|(k, _)| *k).collect();
     const FORFEIT: &str = "forfeit: no answer recorded";
+    // P2 is asked once on its cases (`split::p2`), once any of them here is.
+    let p2 = split::p2(cases.iter().map(|c| c.id.as_str()));
+    let p2: Vec<&str> = if p2.iter().any(|id| answer_path("p2", "1", id, "").exists()) { p2 } else { vec![] };
     for c in &cases {
         let truth = reference::total(&c.facts, &t).ok_or(format!("{}: no reference answer", c.id))?;
         let mut push = |setup: &str, slot: &str, answer: Result<i64, String>, cost: f64, seconds: f64| {
@@ -307,6 +320,13 @@ fn score(which: &str) -> Result<(), String> {
                 push("P1", run, a, v["cost"].as_f64().unwrap_or(0.0), v["seconds"].as_f64().unwrap_or(0.0));
             } else {
                 push("P1", run, Err(FORFEIT.into()), 0.0, 0.0);
+            }
+            if run != "1" || !p2.contains(&c.id.as_str()) {
+            } else if let Some(v) = read_json(&answer_path("p2", run, &c.id, "")) {
+                let a = prompts::p1_answer(v["text"].as_str().unwrap_or("")).ok_or("no total in the answer".to_string());
+                push("P2", run, a, v["cost"].as_f64().unwrap_or(0.0), v["seconds"].as_f64().unwrap_or(0.0));
+            } else {
+                push("P2", run, Err(FORFEIT.into()), 0.0, 0.0);
             }
             if !asked("p3") {
             } else if let (Some(v), Some(out)) = (read_json(&answer_path("p3", run, &c.id, "")), read_json(&answer_path("p3", run, &c.id, ".out"))) {
@@ -398,6 +418,38 @@ fn summary(cases: &[Case], rows: &[Row]) {
     }
     println!("\nExtraction, run 1, {extracted_cases} cases read: cases with a wrong {wrong_facts:?}");
     variants_summary(&by, cases);
+    p2_summary(&by);
+}
+
+/// The reasoning model (the spec, stage 2 step 2), on its cases only:
+/// every setup's right answers there, and the paired differences.
+fn p2_summary(by: &BTreeMap<(&str, &str), BTreeMap<&str, &Row>>) {
+    let Some(p2) = by.get(&("P2", "1")) else { return };
+    let ids: Vec<&str> = p2.keys().copied().collect();
+    let n = ids.len();
+    println!("\nP2, run 1, on its {n} cases (a forfeit is wrong):\n");
+    println!("| setup | right | accuracy | $ per case | s per case |");
+    println!("|---|---|---|---|---|");
+    for s in ["S1 extracted", "P1", "P3", "P2"] {
+        let Some(m) = by.get(&(s, "1")) else { continue };
+        let rows: Vec<&Row> = ids.iter().filter_map(|id| m.get(id).copied()).collect();
+        let right = rows.iter().filter(|r| r.right).count();
+        let cost = rows.iter().map(|r| r.cost).sum::<f64>() / n.max(1) as f64;
+        let secs = rows.iter().map(|r| r.seconds).sum::<f64>() / n.max(1) as f64;
+        println!("| {s} | {right} of {n} | {:.1}% | {cost:.5} | {secs:.1} |", 100.0 * right as f64 / n.max(1) as f64);
+    }
+    println!("\n| comparison | only first right | only second right | difference | 95% interval | McNemar p |");
+    println!("|---|---|---|---|---|---|");
+    for (a, b) in [("S1 extracted", "P2"), ("P2", "P1"), ("P2", "P3")] {
+        let (Some(ma), Some(mb)) = (by.get(&(a, "1")), by.get(&(b, "1"))) else { continue };
+        let xa: Vec<bool> = ids.iter().map(|id| ma.get(id).is_some_and(|r| r.right)).collect();
+        let xb: Vec<bool> = ids.iter().map(|id| mb.get(id).is_some_and(|r| r.right)).collect();
+        let only_a = xa.iter().zip(&xb).filter(|(x, y)| **x && !**y).count() as u64;
+        let only_b = xa.iter().zip(&xb).filter(|(x, y)| !**x && **y).count() as u64;
+        let (lo, hi) = stats::bootstrap(&xa, &xb);
+        let d = (only_a as f64 - only_b as f64) / n.max(1) as f64;
+        println!("| {a} − {b} | {only_a} | {only_b} | {:+.1} pts | [{:+.1}, {:+.1}] | {:.2e} |", 100.0 * d, 100.0 * lo, 100.0 * hi, stats::mcnemar(only_a, only_b));
+    }
 }
 
 /// Of the cases asked in every slot of `slots`: how many were right in
