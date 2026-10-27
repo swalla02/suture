@@ -1239,7 +1239,10 @@ fn settle(prog: &Program, u: &mut Unit, out: &mut Out, now: i64) {
     for _ in 0..SETTLE_ROUNDS {
         // A formula that a grant or a new part lets the unit know is set
         // now, before the passes read it (appendix BO.2.4).
-        let known = positions(&u.root).iter().fold(false, |changed, at| formulas(prog, &mut u.root, &u.facts, at) || changed);
+        let mut known = false;
+        for at in positions(&u.root) {
+            known |= formulas(prog, &mut u.root, &u.facts, &at);
+        }
         let changed = known || positions(&u.root).iter().any(|at| {
             needs_pass(prog, u, at, now, out)
                 || bind_pass(prog, u, at, out)

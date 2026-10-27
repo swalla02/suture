@@ -185,7 +185,7 @@ fn a_defined_value_follows_a_grant_and_a_state() {
     h.input_change(Some(&clerk), "B1", "weight", Val::Count(60)).unwrap();
     assert_eq!(h.value("B1", &[], "fee"), Some(Val::Money(13500)), "heavy now, so the value follows");
     assert_eq!(h.value("B1", &[], "nothing"), None);
-    assert!(h.unit("B1").unwrap().root.attrs.get("fee").is_none(), "a defined value is never stored");
+    assert!(!h.unit("B1").unwrap().root.attrs.contains_key("fee"), "a defined value is never stored");
 }
 
 #[test]
