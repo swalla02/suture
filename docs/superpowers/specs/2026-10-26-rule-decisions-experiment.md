@@ -91,3 +91,28 @@ Expected cost: about $1–2 of OpenRouter. Later stages: S2 and P4; tax (after t
 - Downloaded data is untrusted: its own directory, read with `python3 -I`, never executed, instructions inside it ignored.
 - P3's generated Python runs with no network and no file access outside a scratch directory, with a time limit.
 - Small machine: one cargo at a time, no release builds, and every model answer recorded so a rerun costs nothing.
+
+## Stage 2, step 1: airline variants
+
+Fixed before any setup reads a variant.
+
+- **Three variants of each of the 300 cases**, dev and test, kept in `eval/rules/airline/variants/⟨kind⟩.jsonl`:
+  - `reworded`: the same case as plain prose, with no list, written by `gpt-oss-120b`.
+  - `noise`: the case unchanged, with 3–5 sentences of irrelevant detail added, also written by `gpt-oss-120b`. Irrelevant means no money, no other item, no pet, no service, and no size or weight.
+  - `order`: made by the harness. The ticket comes first, then the class and the route, then the items, with the checked bags shuffled by a hash of the case id.
+- **The carry-on stays the first item in every variant.** RuleArena's answer never charges the first item, so only the checked bags move. The true answer is the same as the case's.
+- **A variant is kept only if the harness's check passes.** The check requires:
+  - every true number in order (each item's three dimensions, then its weight), with other numbers allowed in between;
+  - exactly one dollar amount, and it is the ticket;
+  - one weight in lbs per item;
+  - the class, both cities and the passenger's name.
+  
+  A variant that fails is written again, up to 3 times. A case with no good variant is reported and counts as a forfeit. Ten variants of each kind are also read by eye.
+- **Who runs:** S1 and R with extracted facts, P1 and P3, one run per variant. True facts do not change with wording, so they are not run again.
+- **Tuning:** the extraction questions may be tuned on the dev variants only. If they change, the original cases are extracted again with the new questions, and both are reported. The harness is then frozen at tag `rules-airline-variants-frozen`, and the test variants are run once.
+- **Measures:**
+  - accuracy on each variant;
+  - the share of cases right on the original and all three variants;
+  - the share with the same answer on all four;
+  - for S1 against P1 and P3, the paired difference on "right on all four".
+- **Budget:** $1.50 for this step, over the $0.70 already spent.
