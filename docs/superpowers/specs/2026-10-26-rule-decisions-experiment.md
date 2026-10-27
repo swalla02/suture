@@ -127,3 +127,4 @@ Fixed before P2 answers any test case.
 - **Pricing first:** the 8 dev cases with the smallest hash under the same key are asked before any test case. If the measured cost puts the 100 cases over the Stage 2 budget of $4, the user is asked before the test cases run. Nothing about P2 is tuned.
 - **Measures:** on those 100 cases, the accuracy of S1 (extracted facts), P1, P3 and P2, and the paired difference S1 − P2 and P2 − P1, with McNemar and the bootstrap interval.
 - **What it answers:** whether the gap in H1 is only a cheap model's. If P2 closes most of it, H1 is reported as holding against cheap models only.
+- **Extended to the complete test set (2026-10-27, at the user's request).** P2 now runs on all 244 test cases and on each case's three variants, once each, like P1 and P3. The 100 cases already answered keep their recorded answers. The sample and `p2.txt` are dropped. The user added $10 of credit for this.
