@@ -698,6 +698,40 @@ fn rule_reads(p: &Program, r: &Rule, see: &mut dyn FnMut(&Path, Option<&str>)) {
     }
 }
 
+/// A calculation read from the node at `pre` instead of its own: a defined
+/// value read from an owner (appendix BO.2.3). What a relation adds up or
+/// counts is read from each of its entities, so it stays as it is.
+fn rebase(n: &Num, pre: &[Step]) -> Num {
+    let path = |x: &Path| Path { steps: pre.iter().chain(&x.steps).cloned().collect() };
+    match n {
+        Num::Path(x) => Num::Path(path(x)),
+        Num::Lit(_) => n.clone(),
+        Num::Bin(a, op, b) => Num::Bin(Box::new(rebase(a, pre)), *op, Box::new(rebase(b, pre))),
+        Num::Flag(c) => Num::Flag(Box::new(rebase_cond(c, pre))),
+        Num::Sum { of, kind, calc, filter, ty } => Num::Sum { of: path(of), kind: kind.clone(), calc: calc.clone(), filter: filter.clone(), ty: *ty },
+        Num::Count { of, kind, filter } => Num::Count { of: path(of), kind: kind.clone(), filter: filter.clone() },
+        Num::Taken { of, name, ty, period, kind, run, group } => {
+            Num::Taken { of: path(of), name: name.clone(), ty: *ty, period: period.clone(), kind: kind.clone(), run: *run, group: *group }
+        }
+        Num::If { cases, otherwise } => Num::If {
+            cases: cases.iter().map(|(c, n)| (rebase_cond(c, pre), rebase(n, pre))).collect(),
+            otherwise: Box::new(rebase(otherwise, pre)),
+        },
+    }
+}
+
+fn rebase_cond(c: &Cond, pre: &[Step]) -> Cond {
+    let path = |x: &Path| Path { steps: pre.iter().chain(&x.steps).cloned().collect() };
+    match c {
+        Cond::Cmp { left, op, right } => Cond::Cmp { left: rebase(left, pre), op: *op, right: rebase(right, pre) },
+        Cond::Contains { set, item, negated } => Cond::Contains { set: rebase(set, pre), item: rebase(item, pre), negated: *negated },
+        Cond::State { node, state, negated } => Cond::State { node: path(node), state: state.clone(), negated: *negated },
+        Cond::Has { node, part, state, negated } => Cond::Has { node: path(node), part: part.clone(), state: state.clone(), negated: *negated },
+        Cond::And(cs) => Cond::And(cs.iter().map(|c| rebase_cond(c, pre)).collect()),
+        Cond::Or(cs) => Cond::Or(cs.iter().map(|c| rebase_cond(c, pre)).collect()),
+    }
+}
+
 /// The calculations a condition compares, at any depth of `and` and `or`.
 fn cond_nums(c: &Cond, see: &mut dyn FnMut(&Num)) {
     match c {
@@ -1085,6 +1119,7 @@ impl Checker {
             grants: vec![],
             personal_key: None,
             calendars: vec![],
+            values: vec![],
         };
         self.calendars(src, &mut p);
         self.kinds(src, &mut p);
@@ -1100,6 +1135,7 @@ impl Checker {
         self.state_names(src, &p);
         self.formulas(src, &mut p);
         self.defines(src, &mut p);
+        self.values(src, &mut p);
         for (i, owner, at, cond) in conds {
             let c = self.cond(&p, at, &owner, cond);
             p.needs[i].cond = c;
@@ -2168,6 +2204,58 @@ impl Checker {
         }
     }
 
+    /// Defined values, in order: each reads any state and the values above
+    /// it, so none is defined in terms of itself (appendix BO.2.3).
+    fn values(&mut self, src: &Source, p: &mut Program) {
+        for v in &src.values {
+            let Some(k) = p.kind(&v.kind) else {
+                self.errors.push(err(&v.at, format!("unknown kind {}", v.kind)));
+                continue;
+            };
+            if k.attr(&v.name).is_some() || p.has_part(&v.kind, &v.name) || p.values.iter().any(|x| x.kind == v.kind && x.name == v.name) {
+                self.errors.push(err(&v.at, format!("{} already has an attribute, a part or a value called `{}`", v.kind, v.name)));
+                continue;
+            }
+            let Some((calc, ty)) = self.num(p, &v.at, &v.kind, &v.calc) else { continue };
+            if matches!(ty, Ty::Ref | Ty::Set | Ty::Media) {
+                self.errors.push(err(&v.at, format!("a {}'s {} is {ty:?}; a defined value is an amount, a count, a duration, a time, text or yes or no", v.kind, v.name)));
+                continue;
+            }
+            p.values.push(crate::ir::Value { kind: v.kind.clone(), name: v.name.clone(), ty, calc });
+        }
+    }
+
+    /// `its fee`, `its Bag's fee`: a defined value, put in place of the
+    /// reading, its paths read from where the reading is (appendix BO.2.3).
+    /// `None` when the noun phrase names no defined value.
+    fn value_reading(&mut self, p: &Program, at: &Loc, from: &str, np: &NounPhrase) -> Option<Option<(Num, Ty)>> {
+        let (last, rest) = np.steps.split_last()?;
+        if !p.values.iter().any(|v| v.name == *last) || matches!(np.head, Head::Each(_) | Head::All(_)) {
+            return None;
+        }
+        // Found quietly: if the owner is not a node with this value, the
+        // noun phrase is read as an attribute, with that error if any.
+        let owner = NounPhrase { head: np.head.clone(), steps: rest.to_vec() };
+        let errors = (self.errors.len(), self.marked.len());
+        let found = self.np(p, at, from, &owner);
+        self.errors.truncate(errors.0);
+        self.marked.truncate(errors.1);
+        let (path, kind) = match found? {
+            (path, End::Node(k) | End::Ref(k)) => (path, k),
+            _ => return None,
+        };
+        let v = p.values.iter().find(|v| v.kind == kind && v.name == *last)?;
+        let own = path.steps.iter().all(|s| matches!(s, Step::Owner | Step::Part(_))) && !matches!(path.steps.last(), Some(Step::Attr(_)));
+        if !own {
+            self.errors.push(err(
+                at,
+                format!("`{}`: a {kind}'s {last} is a defined value, computed in the {kind}'s own unit; it cannot be read through a reference, a candidate or a grant", show(np)),
+            ));
+            return Some(None);
+        }
+        Some(Some((rebase(&v.calc, &path.steps), v.ty)))
+    }
+
     /// Totals kept for readers and scenarios: each is the running total a
     /// rule over it would read, kept with no rule (appendix AI).
     fn keeps(&mut self, src: &Source, p: &Program) {
@@ -2675,6 +2763,7 @@ impl Checker {
                 let (lit, ty) = self.lit(at, l, &p.currency)?;
                 Some((Num::Lit(lit), ty))
             }
+            ast::Num::Np(np) if let Some(value) = self.value_reading(p, at, from, np) => value,
             ast::Num::Np(np) => match self.np(p, at, from, np)? {
                 (path, End::Value(ty)) => Some((Num::Path(path), ty)),
                 (path, End::Ref(_)) => Some((Num::Path(path), Ty::Ref)),
@@ -3395,6 +3484,15 @@ impl Checker {
                 Some(Cond::Cmp { left: num, op, right })
             }
             ast::Cond::Is { left, negated, right } => {
+                let value = match left {
+                    ast::Num::Np(np) => self.value_reading(p, at, from, np),
+                    _ => None,
+                };
+                if let Some(value) = value {
+                    let (num, ty) = value?;
+                    let right = self.operand(p, at, from, right, ty)?;
+                    return Some(Cond::Cmp { left: num, op: if *negated { Op::Ne } else { Op::Eq }, right });
+                }
                 let ast::Num::Np(left) = left else {
                     let (num, ty) = self.num(p, at, from, left)?;
                     let right = self.operand(p, at, from, right, ty)?;

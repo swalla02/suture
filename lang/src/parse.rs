@@ -635,6 +635,15 @@ fn define(st: &Stmt, at: Loc, out: &mut Source) -> Result<(), Error> {
         return Err(c.error(format!("expected `a` or `an`, found {}", c.found())));
     }
     let kind = c.kind_name()?;
+    if c.eat_poss() {
+        // `define: a Bag's fee is ⟨calc⟩` (appendix BO.2.3).
+        let name = c.word()?;
+        c.expect_word("is")?;
+        let calc = calc_expr(&mut c)?;
+        c.expect_end()?;
+        out.values.push(ValueDecl { kind, name, calc, at });
+        return Ok(());
+    }
     c.expect_word("is")?;
     let state = c.word()?;
     c.expect_word("when")?;

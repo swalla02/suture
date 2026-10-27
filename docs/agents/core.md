@@ -30,6 +30,7 @@ rule ⟨name⟩: no two ⟨Kinds⟩ [that ⟨cond⟩] have the same ⟨attr⟩[,
 rule ⟨name⟩: the total ⟨attr⟩ taken from each ⟨Kind⟩ ⟨cmp⟩ ⟨num⟩                    parts
 rule ⟨name⟩: for each ⟨Kind⟩ and day|week|month|year [from … to …], ⟨number rule⟩   time
 define: a ⟨Kind⟩ is ⟨state⟩ when ⟨cond⟩                                          rules
+define: a ⟨Kind⟩'s ⟨name⟩ is ⟨num⟩     a value computed when read; `its ⟨name⟩`   rules
 keep the total ⟨attr⟩ | the number of each ⟨Kind⟩'s ⟨Kinds⟩ [that ⟨cond⟩]           rules
 desired [within ⟨duration⟩]: every ⟨subject⟩ is ⟨state⟩                           time
 when a ⟨role⟩ [or ⟨role⟩] ⟨verb⟩s a ⟨Kind⟩: ⟨action⟩[ and ⟨action⟩]                  reactions
@@ -57,6 +58,8 @@ Conditions (`⟨cond⟩`), noun phrases, numbers and filters are in `rules`; act
 | blocked while something holds | `admit borrow a new Loan by member where the number of the Loan's member's Loans that are late is at most 0` |
 | one of a set of numbers | `define: a Talk is standard when its length is 30 or its length is 45` + `admit … where the Talk is standard` |
 | an average at least N | compare totals: `… unless the total score of its Reviews is at least the number of its Reviews * 3` |
+| a fee by bands, the higher of two | `0 USD if its weight is at most 50, otherwise 100 USD` · `the larger of its a and its b` |
+| a value that follows a grant or a state | `define: a Bag's fee is its Base's Rate's amount + (100 USD if it is heavy, otherwise 0 USD)` |
 | derived from what references it | `define: a Book is lent when the number of its Loans that are open is at least 1` |
 | call an outside service | a part with an `effect`; scenarios answer for it |
 | undo work on cancel | `needs … while it is not cancelled` |

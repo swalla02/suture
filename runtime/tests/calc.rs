@@ -156,3 +156,64 @@ admit add a new Bag by clerk
     assert!(h.create("Bag", "B3", &attrs(&[("size", Val::Count(60)), ("fee", Val::Money(10001))])).is_err());
     assert!(h.create("Bag", "B4", &attrs(&[("size", Val::Count(100)), ("fee", Val::Money(20001))])).is_err());
 }
+
+const LIVE: &str = "module live version 1, currency USD
+role clerk
+kind Rate { nth: Count, amount: Money }
+kind Bag { nth: Count, weight: Count }
+kind Base { bag: Bag }
+Bag needs Base
+Base uses a Rate where the Rate's nth is the Bag's nth
+define: a Bag is heavy when its weight is more than 50
+define: a Bag's surcharge is 100 USD if it is heavy, otherwise 0 USD
+define: a Bag's fee is its Base's Rate's amount + its surcharge
+define: a Bag's charge is its weight * 2 USD
+rule light: every Bag's charge is at most 200 USD
+admit add a new Rate or Bag by clerk
+admit change Bag's weight by clerk
+";
+
+#[test]
+fn a_defined_value_follows_a_grant_and_a_state() {
+    let mut h = Host::new(compile(LIVE));
+    h.create("Bag", "B1", &attrs(&[("nth", Val::Count(1)), ("weight", Val::Count(40))])).unwrap();
+    assert_eq!(h.value("B1", &[], "surcharge"), Some(Val::Money(0)));
+    assert_eq!(h.value("B1", &[], "fee"), None, "no rate yet");
+    h.create("Rate", "R1", &attrs(&[("nth", Val::Count(1)), ("amount", Val::Money(3500))])).unwrap();
+    assert_eq!(h.value("B1", &[], "fee"), Some(Val::Money(3500)));
+    let clerk = suture_lang::scenario::Caller { role: "clerk".into(), name: "Cy".into(), verb: "changes".into() };
+    h.input_change(Some(&clerk), "B1", "weight", Val::Count(60)).unwrap();
+    assert_eq!(h.value("B1", &[], "fee"), Some(Val::Money(13500)), "heavy now, so the value follows");
+    assert_eq!(h.value("B1", &[], "nothing"), None);
+    assert!(h.unit("B1").unwrap().root.attrs.get("fee").is_none(), "a defined value is never stored");
+}
+
+#[test]
+fn a_rule_reads_a_defined_value() {
+    let mut h = Host::new(compile(LIVE));
+    h.create("Bag", "B1", &attrs(&[("nth", Val::Count(1)), ("weight", Val::Count(100))])).unwrap();
+    assert!(h.create("Bag", "B2", &attrs(&[("nth", Val::Count(1)), ("weight", Val::Count(101))])).is_err());
+}
+
+#[test]
+fn a_defined_value_is_read_in_its_own_unit_and_only_from_above() {
+    let e = compile_err(&format!("{LIVE}kind Tag {{ bag: Bag }}\nrule tagged: every Tag's bag's charge is at most 3 USD\n"));
+    assert!(e.contains("is a defined value, computed in the Bag's own unit"), "{e}");
+    let e = compile_err("module m version 1, currency USD\nkind Bag { size: Count }\ndefine: a Bag's a is its b + 1\ndefine: a Bag's b is its size\n");
+    assert!(e.contains("`b`"), "{e}");
+    let e = compile_err("module m version 1, currency USD\nkind Bag { size: Count }\ndefine: a Bag's size is 3\n");
+    assert!(e.contains("already has an attribute, a part or a value called `size`"), "{e}");
+}
+
+#[test]
+fn a_scenario_expects_a_defined_value() {
+    let src = "scenario \"s\":
+  given a Rate R1 with nth 1 and amount 35 USD
+  given a Bag B1 with nth 1 and weight 60
+  expect B1's fee is 135 USD
+  expect B1's surcharge is more than 50 USD
+";
+    let sc = &suture_lang::scenario::parse_scenarios("s.scenario", src).unwrap_or_else(|e| panic!("{e}"))[0];
+    let r = suture_runtime::scenario::run(&compile(LIVE), sc);
+    assert!(r.passed(), "{:?}", r.failures);
+}

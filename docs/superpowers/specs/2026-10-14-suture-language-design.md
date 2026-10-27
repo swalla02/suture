@@ -815,7 +815,7 @@ The user asked for a working prototype as early as possible, and for "deeper" st
    - Every event for a unit is one checked, journaled step: its creation, or an answer.
    - All rules inside a unit are local.
    - This refines §5.2's "one agent per entity". Shared entities become their own units in slice 2.
-   - A unit must fit the payload limit (4096 bytes).
+   - A unit must fit the payload limit (4096 bytes; 65,536 since appendix BO.2.5).
 2. **A part without an effect is done** when all its active needs are done.
 3. **Unknown values.** An attribute that has no value yet (an answer not given) never breaks a rule. It makes a `while`, `define` or `desired` condition false.
 4. **Refused answers.** If recording an answer would break a rule, the answer is refused.
@@ -1504,7 +1504,7 @@ Four small gaps found along the way, each of which let a program or an input go 
 ### T.2 Semantics that slice 19 settles
 
 1. **Durations.** Every duration a program or a scenario names, in any unit, is at most 100 years (3 153 600 000 seconds). Larger ones, and ones whose seconds overflow, are compile errors that name the duration. The runtime adds durations to its clock without wrapping.
-2. **Unit size.** A unit is one payload, so it must fit the machine's payload limit (§A, 4096 bytes). A creation, an admitted change and an admitted event are checked as the unit would be after their step: one that would not fit is refused, `refused: ⟨label⟩ would hold ⟨n⟩ bytes, and a unit holds at most 4096`, and nothing is created or changed. A change is checked in every unit that carries the changed facts too, and an event's message, with its data, must fit the limit as well. The unit counts its carried facts and the notes of its last step.
+2. **Unit size.** A unit is one payload, so it must fit the machine's payload limit (§A, 4096 bytes; the runtime sets 65,536 since appendix BO.2.5). A creation, an admitted change and an admitted event are checked as the unit would be after their step: one that would not fit is refused, `refused: ⟨label⟩ would hold ⟨n⟩ bytes, and a unit holds at most 4096`, and nothing is created or changed. A change is checked in every unit that carries the changed facts too, and an event's message, with its data, must fit the limit as well. The unit counts its carried facts and the notes of its last step.
 3. **Checked once.** `attempts` must be at least 1. A choice (a slot, or a kind picked with `uses`, per `for a ⟨element⟩`) has at most one `prefer`; a second is an error naming the first's line. A kind's plural may be neither another kind's plural nor another kind's name, so `all ⟨Plural⟩` and the like name one kind; a kind may be its own plural (`kind Sheep (plural Sheep)`).
 
 ### T.3 Acceptance
@@ -2776,7 +2776,7 @@ RuleArena's airline fees (eval/rules) are a calculation: a fee table's row, the 
 |---|---|
 | `⟨calc⟩ if ⟨cond⟩, otherwise ⟨calc⟩`, chained | |
 | `the larger of a and b`, `the smaller of a and b` | more than two at once (nest them) |
-| `define: a Bag's fee is ⟨calc⟩`: a value computed whenever it is read | reading it through a reference, a candidate or another unit; a running total of it across units |
+| `define: a Bag's fee is ⟨calc⟩`: a value computed whenever it is read | reading it through a reference, a candidate or a grant, or in a formula, a `uses` or a `prefer`; a running total of it across units |
 | a formula that can be known only after a grant or a new part is set then | |
 | a unit holds 64 KiB | a size the compiler can bound |
 
@@ -2784,7 +2784,7 @@ RuleArena's airline fees (eval/rules) are a calculation: a fee table's row, the 
 
 1. **A conditional.** `a if c, otherwise b` is `a` when `c` holds, `b` when it does not, and unknown when `c` is unknown. Chains read in order: `0 USD if its size is at most 62, otherwise 30 USD if its size is at most 65, otherwise 200 USD`. Every branch has the same type, which is the result's. A conditional is a whole calculation, so inside a larger one it is put in brackets: `its base + (a if c, otherwise b)`. Its condition is written as in a rule (`its weight`, never a bare `weight`).
 2. **Larger and smaller.** `the larger of a and b` and `the smaller of a and b` take two values of one type: amounts, counts, durations or times. Either unknown makes the result unknown. Each side is one value, as in `the days from a to b`; a calculated side is put in brackets.
-3. **A defined value.** `define: a Bag's fee is ⟨calc⟩` names a calculation about a Bag. Unlike a formula attribute, it is never stored: it is computed whenever it is read, so it always follows what it reads (a grant, a taken total, a state). It is read as `its fee` wherever its kind's own attributes can be read in its unit: by rules, needs, `uses` conditions, `prefer`, other defines, formulas, a scenario's `expect` and `Host::value`. The compiler puts the calculation in place of each reading, so every check (fixed facts, watches, sources) sees what it really reads. A definition may use only definitions above it. A value cannot be read through a reference or a candidate, since the unit that would compute it is another one; the error says so.
+3. **A defined value.** `define: a Bag's fee is ⟨calc⟩` names a calculation about a Bag. Unlike a formula attribute, it is never stored: it is computed whenever it is read, so it always follows what it reads (a grant, a taken total, a state). It is read as `its fee` or `its Bag's fee` in its own unit: by rules, needs, goals, reactions, the values below it, a scenario's `expect` and `Host::value`. The compiler puts the calculation in place of each reading, so every check (fixed facts, watches, sources) sees what it really reads. A value reads any state and the values above it; a state's definition reads no value, so neither is defined in terms of itself. A value cannot be read through a reference, a candidate or a grant, since the unit that would compute it is another one; the error says so. Formulas, `uses` and `prefer` read stored attributes, so they read no value: a formula is computed once, and a candidate is another unit.
 4. **Formulas known late.** A formula attribute is set once it can be known (appendix Y.2.2). Before slice 64 that happened at creation and when a fetched value came, so a formula that read a grant, such as `fee: Money = its Base's Rate's amount`, stayed unknown for good, without a word. Now each pass of a unit sets the formulas it can, so a grant or a new part sets them too. A formula still never changes once set.
 5. **Unit size.** A unit, and a message, holds at most 65,536 bytes, up from 4,096. The kernel's own default is unchanged; the runtime sets the limit for its programs. A log written before slice 64 replays under the new limit, so an input once refused for size alone would now be taken.
 
@@ -2793,7 +2793,8 @@ RuleArena's airline fees (eval/rules) are a calculation: a fee table's row, the 
 - runtime/tests/calc.rs:
   - A chained conditional picks the right branch at each bound; an unknown condition leaves the value unknown; branches of different types are an error; a conditional without `otherwise` is an error.
   - `the larger of` and `the smaller of` pick, with an unknown side unknown and mixed types an error.
-  - A defined value follows a grant and a taken total; a rule and a `prefer` read it; reading one through a reference is an error; a definition that reads a later one is an error.
+  - A defined value follows a grant and a state; a rule and a scenario's `expect` read it; it is never stored; reading one through a reference is an error; a definition that reads a later one is an error.
+  - A formula that reads a state is an error that points to a `define`; a cycle of formulas through a condition is found.
   - A formula that reads a grant is set when the grant comes.
   - A unit of 10,000 bytes is taken; one of 70,000 is refused, naming 65536.
 - eval/rules/airline: `airline.st` rewritten with these forms. The fee tables stay data, and the overweight and oversize fees become formulas. The free allowance is ranked by its saving, and each bag's fee is a defined value. S1 still equals R on every case and on the random trips, and the rewrite is measured against the first version.

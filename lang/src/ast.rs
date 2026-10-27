@@ -302,6 +302,16 @@ pub struct DefineDecl {
     pub at: Loc,
 }
 
+/// `define: a Bag's fee is ⟨calc⟩`: a value computed whenever it is read
+/// (appendix BO.2.3).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValueDecl {
+    pub kind: String,
+    pub name: String,
+    pub calc: Num,
+    pub at: Loc,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GoalDecl {
     pub subject: Subject,
@@ -424,6 +434,7 @@ pub struct Source {
     pub decides: Vec<DecideDecl>,
     pub rules: Vec<RuleDecl>,
     pub defines: Vec<DefineDecl>,
+    pub values: Vec<ValueDecl>,
     pub goals: Vec<GoalDecl>,
     pub reactions: Vec<ReactionDecl>,
     pub slots: Vec<SlotDecl>,

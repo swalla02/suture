@@ -2100,6 +2100,14 @@ fn goals(prog: &Program, u: &mut Unit) {
 
 /// Whether the unit's node at `at` is in `state` (appendix B.3): `done`,
 /// `failed`, a Bool attribute, its effect's marks or outcomes, or a defined state.
+/// A defined value of the node at `at`, or `None` while what it reads is
+/// unknown or the node's kind defines no such value (appendix BO.2.3).
+pub fn value_of(prog: &Program, u: &Unit, at: &[usize], name: &str) -> Option<Val> {
+    let kind = &node_at(&u.root, at).kind;
+    let v = prog.values.iter().find(|v| v.kind == *kind && v.name == name)?;
+    num(prog, View::of(u), at, &v.calc)
+}
+
 pub fn in_state(prog: &Program, u: &Unit, at: &[usize], state: &str) -> bool {
     state_at(prog, View::of(u), at, state)
 }

@@ -1532,6 +1532,11 @@ impl Host {
         Some(a)
     }
 
+    /// A unit's defined value, at its root or at a part (appendix BO.2.3).
+    pub fn value(&self, label: &str, at: &[usize], name: &str) -> Option<Val> {
+        crate::interp::value_of(&self.prog, &self.unit(label)?, at, name)
+    }
+
     pub fn unit(&self, label: &str) -> Option<Unit> {
         let h = self.machine.hole(label)?;
         let (_, port, agent) = self.machine.hole_peer(h)?;

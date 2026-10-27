@@ -44,6 +44,20 @@ pub struct Program {
     /// When the program's calendars work (appendix BL).
     #[serde(default)]
     pub calendars: Vec<Calendar>,
+    /// The defined values, each read from its kind's node (appendix BO.2.3).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<Value>,
+}
+
+/// `define: a Bag's fee is ⟨calc⟩`: computed whenever it is read, never
+/// stored. The compiler puts `calc` in place of each reading, so a program
+/// reads it only through [`Program::values`] when a host asks for it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Value {
+    pub kind: String,
+    pub name: String,
+    pub ty: Ty,
+    pub calc: Num,
 }
 
 /// A working week, its hours and its days off (appendix BL.2.1).
