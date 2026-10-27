@@ -276,7 +276,11 @@ fn score(which: &str) -> Result<(), String> {
         let runs = (1..=3u32).filter(|r| expected(*r, &c.id)).map(|r| r.to_string());
         for run in runs.chain(kinds.iter().map(|k| k.to_string())) {
             let run = run.as_str();
-            if let Some(f) = extracted(c, run) {
+            // A setup never asked on a kind of variant has no rows for it,
+            // rather than a forfeit on every case.
+            let asked = |setup: &str| ["1", "2", "3"].contains(&run) || models::runs_dir().join(setup).join(run).is_dir();
+            if !asked("extract") {
+            } else if let Some(f) = extracted(c, run) {
                 let trip = read_json(&answer_path("extract", run, &c.id, ".trip")).unwrap_or_default();
                 let items = read_json(&answer_path("extract", run, &c.id, ".items")).unwrap_or_default();
                 let cost = trip["cost"].as_f64().unwrap_or(0.0) + items["cost"].as_f64().unwrap_or(0.0);
@@ -297,13 +301,15 @@ fn score(which: &str) -> Result<(), String> {
                 push("R extracted", run, Err(FORFEIT.into()), 0.0, 0.0);
                 push("S1 extracted", run, Err(FORFEIT.into()), 0.0, 0.0);
             }
-            if let Some(v) = read_json(&answer_path("p1", run, &c.id, "")) {
+            if !asked("p1") {
+            } else if let Some(v) = read_json(&answer_path("p1", run, &c.id, "")) {
                 let a = prompts::p1_answer(v["text"].as_str().unwrap_or("")).ok_or("no total in the answer".to_string());
                 push("P1", run, a, v["cost"].as_f64().unwrap_or(0.0), v["seconds"].as_f64().unwrap_or(0.0));
             } else {
                 push("P1", run, Err(FORFEIT.into()), 0.0, 0.0);
             }
-            if let (Some(v), Some(out)) = (read_json(&answer_path("p3", run, &c.id, "")), read_json(&answer_path("p3", run, &c.id, ".out"))) {
+            if !asked("p3") {
+            } else if let (Some(v), Some(out)) = (read_json(&answer_path("p3", run, &c.id, "")), read_json(&answer_path("p3", run, &c.id, ".out"))) {
                 let a = match out["stdout"].as_str() {
                     Some(s) => prompts::p3_answer(s).ok_or("no number printed".to_string()),
                     None => Err(out["error"].as_str().unwrap_or("?").to_string()),
@@ -418,13 +424,17 @@ fn variants_summary(by: &BTreeMap<(&str, &str), BTreeMap<&str, &Row>>, cases: &[
     for s in ["R extracted", "S1 extracted", "P1", "P3"] {
         let cell = |k: &str| by.get(&(s, k)).map(|m| format!("{} of {n}", m.values().filter(|r| r.right).count())).unwrap_or("—".into());
         let (right, same, asked) = agreement(by, s, &all, cases);
-        println!("| {s} | {} | {} | {} | {} | {right} of {asked} | {same} of {asked} |", cell("1"), cell("reworded"), cell("noise"), cell("order"));
+        let (right, same) = if asked == 0 { ("—".into(), "—".into()) } else { (format!("{right} of {asked}"), format!("{same} of {asked}")) };
+        println!("| {s} | {} | {} | {} | {} | {right} | {same} |", cell("1"), cell("reworded"), cell("noise"), cell("order"));
     }
     println!("\nPaired, right on all 4:\n");
     println!("| comparison | only first | only second | difference | 95% interval | McNemar p |");
     println!("|---|---|---|---|---|---|");
     let on_all = |s: &str, id: &str| all.iter().all(|k| by.get(&(s, *k)).and_then(|m| m.get(id)).is_some_and(|r| r.right));
     for (a, b) in [("S1 extracted", "P1"), ("S1 extracted", "P3")] {
+        if !all.iter().all(|k| by.contains_key(&(b, *k))) {
+            continue;
+        }
         let xa: Vec<bool> = cases.iter().map(|c| on_all(a, &c.id)).collect();
         let xb: Vec<bool> = cases.iter().map(|c| on_all(b, &c.id)).collect();
         let only_a = xa.iter().zip(&xb).filter(|(x, y)| **x && !**y).count() as u64;
