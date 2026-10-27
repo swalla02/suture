@@ -47,17 +47,43 @@ Extraction misread the direction of 2 test trips (and 1 dev trip), all to or fro
 
 The whole of Stage 1 cost $0.70 at OpenRouter: dev $0.23 and test $0.47.
 
+## Variants: the same cases, written differently (Stage 2, step 1)
+
+Each test case was given three variants, with the same facts and the same true answer (spec, stage 2 step 1; `airline/variants/`):
+- `reworded`: plain prose instead of a list;
+- `noise`: 3–5 sentences of irrelevant detail added, such as flight numbers, times, weather, or what is packed;
+- `order`: the ticket first and the checked bags shuffled.
+
+`gpt-oss-120b` wrote the first two, and the harness made the third. The carry-on stays the first item. The harness kept a variant only when every fact was in it. That gave 899 of 900. On case c0-073 the model dropped the ticket three times, so that case has no `noise` variant and counts as a forfeit. The harness was frozen at tag `rules-airline-variants-frozen` before the test variants were asked, and each setup was asked once on each variant.
+
+| setup | original | reworded | noise | order | right on all 4 | same answer on all 4 |
+|---|---|---|---|---|---|---|
+| **S1, extracted facts** | **244** | **244** | **241** | **243** | **240** | **240** |
+| R, extracted facts | 244 | 244 | 241 | 243 | 240 | 240 |
+| P1, prompting | 52 | 35 | 53 | 54 | 8 | 11 |
+| P3, code per case | 68 | 58 | 53 | 62 | 9 | 10 |
+
+The table counts cases right, out of 244. On "right on all 4", S1 beats P1 by +95.1 points, with interval [+92.2, +97.5] and McNemar p = 3e-70. It beats P3 by +94.7 points, with interval [+91.8, +97.1]. Neither model was right on a case where S1 was wrong.
+
+All three of S1's wrong answers come from one extraction question, the region:
+- two noisy trips, from Canada and from Panama, were read as within the U.S.;
+- one reordered trip from "Roma" was read as Australia.
+
+Nothing else was misread: no class, ticket, count, size or weight. S1 and R erred on the same cases, so the rules added no error. The prompted models, by contrast, rarely give the same answer to the same trip written another way.
+
+Writing the variants cost $0.07. Asking every setup on them cost $1.60, of which P1 was $0.58, extraction $0.57 and P3 $0.45. So the step cost $1.67, and the experiment has cost $2.37 so far.
+
 ## The hypotheses
 
 - **H1, accuracy: holds for airline**, against P1 and P3. The intervals are far from zero. P2, the reasoning model, is not run until Stage 2, so the claim is about a cheap model.
 - **H2, error source: holds.** S1 equals R on all 300 cases and on 400 random trips that reach the parts of the policy the cases leave untried (`sutured.rs`): every region and class, bags from 30 to 130 lbs and 45 to 145 in. Where the policy text says "Not accepted" (over 70 lbs to or from Europe, Israel, Qatar, Australia and New Zealand), or gives no fee at all (over 100 lbs, over 115 in), RuleArena's script charges a fee anyway: the 70–100 lbs fee of other regions ($200), or its top tier. S1 follows the script, since its answers are the ground truth. The generator never makes such a bag, but an extraction error could. With extracted facts S1 is still exact, so the extraction error that remains, 2 misread directions, never changes an answer.
-- **H4, consistency: holds across runs, untested across rewordings.** Suture's answer was the same on every run because the extraction answers were. P1 gave three equal answers on 3 of 57 cases, P3 on 12. The reworded variants are not made yet.
+- **H4, consistency: holds**, across runs and across rewordings. Suture's answer was the same on every run because the extraction answers were. P1 gave three equal answers on 3 of 57 cases, P3 on 12. Over the case and its three variants, Suture gave one answer on 240 of 244 cases, P1 on 11 and P3 on 10.
 - H3, H5, H6: later stages.
 
 ## How far to trust this
 
 - **S1 is not held out the way the models are.** We checked it against R on all 300 cases while writing it, test included, because getting the rules exactly right is the point of a hand-written program. What test measures for S1 is extraction. A fair test of *authoring* is S2 (an LLM writes the Suture rules, H3), in Stage 2.
-- **The cases are easy to read.** RuleArena generates every case from one template, so the typed questions had little to get wrong. Rewordings, irrelevant details and shuffled order (the spec's variants) are the real test of extraction, and are not done yet.
+- **The cases are easy to read.** RuleArena generates every case from one template, so the typed questions had little to get wrong. The variants make reading harder, but only moderately: the rewording keeps each item's numbers together and in order. That is where S1's only errors came from (3 of 731 variants). Text that is messier still, such as numbers in words or facts spread across a conversation, is not tested.
 - **P1 is the cheap arm.** Low reasoning effort, as the spec's P1 is "one cheap open model". A reasoning model (P2) will do better. The gap to beat will be smaller, not gone: level 2 is where prompting collapses (8 of 76).
 - **Fewer runs than the spec asks.** Three runs on a seeded sample of 57 test cases (`sample.txt`), one on the rest, to keep the stage under $2. Dev had three runs of everything.
 - **R is in Rust, not Python.** It is a rewrite of the generator's own script, checked by hand against the script's logic. The spec asked for plain Python.

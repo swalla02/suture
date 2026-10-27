@@ -42,7 +42,7 @@ On [RuleArena](https://github.com/skyriver-2000/RuleArena)'s airline task, a mod
 | `gpt-oss-120b` writing a Python program per case | 27.9% |
 | `gpt-oss-120b` asked for the answer | 21.3% |
 
-The models fall apart as cases grow: with 11 items, prompting got 8 of 76 right. Suture got all 76. These are early numbers: we wrote the Suture rules ourselves, the comparison model is a cheap one, and the cases come from one template. Rules written by an LLM, a reasoning model, and reworded cases come next. [The write-up](eval/rules/RESULTS.md) lists every caveat.
+The models fall apart as cases grow: with 11 items, prompting got 8 of 76 right. Suture got all 76. Each case was also written three more ways (as prose, with irrelevant detail, and in another order). Suture was right on all four versions of 240 of 244 cases, and its 4 misses were misread regions. The models managed 8 (prompting) and 9 (Python per case). These are early numbers: we wrote the Suture rules ourselves, the comparison model is a cheap one, and the cases come from one template. Rules written by an LLM, a reasoning model, and reworded cases come next. [The write-up](eval/rules/RESULTS.md) lists every caveat.
 
 ## What you stop writing
 
