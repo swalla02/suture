@@ -4,7 +4,7 @@ Stage 1 of the rule-decisions experiment (`docs/superpowers/specs/2026-10-26-rul
 
 The setups:
 - **R**, the reference: RuleArena's `compute_answer.py`, read and rewritten in Rust (`harness/src/reference.rs`), never run. Its answers are the ground truth.
-- **S1**, Suture: `airline/suture/airline.st` and its fee rows (`charges.csv`), written by us from the policy text. The numbers below are of this first version, frozen at tag `rules-airline-frozen`; version 2, rewritten after slice 64, gives the same answers (see the end).
+- **S1**, Suture: `airline/suture/airline.st`, written by us from the policy text. The numbers below are of its first version, at tag `rules-airline-frozen`. The version now in the repo gives the same answer on every case (see "What we learned").
 - **Extraction**, for R and S1: `typesafe/jev-1.14` through OpenRouter's Decisions API answers typed questions (class, region, direction, ticket, number of items, and each item's three dimensions and weight), each a choice among fixed options. A number is a choice among the numbers in the case's text. The model never writes free text.
 - **P1**, prompting: `openai/gpt-oss-120b` with RuleArena's own zero-shot prompt, reasoning effort low, temperature 0.
 - **P3**, code generation: the same model writes a Python program for each case. We run it in a container with no network, a read-only file system, no privileges and a 10-second limit.
@@ -50,7 +50,7 @@ The whole of Stage 1 cost $0.70 at OpenRouter: dev $0.23 and test $0.47.
 ## The hypotheses
 
 - **H1, accuracy: holds for airline**, against P1 and P3. The intervals are far from zero. P2, the reasoning model, is not run until Stage 2, so the claim is about a cheap model.
-- **H2, error source: holds.** S1 equals R on all 300 cases and on 400 random trips that reach the parts of the policy the cases leave untried (`sutured.rs`): every region and class, bags from 30 to 130 lbs and 45 to 145 in. Where the policy text says "Not accepted" (over 70 lbs to Europe, Israel, Qatar, Australia and New Zealand; over 100 lbs; over 115 in), RuleArena's script charges the highest fee anyway. S1's rows follow the script, since its answers are the ground truth. The generator never makes such a bag, but an extraction error could. With extracted facts S1 is still exact, so the extraction error that remains, 2 misread directions, never changes an answer.
+- **H2, error source: holds.** S1 equals R on all 300 cases and on 400 random trips that reach the parts of the policy the cases leave untried (`sutured.rs`): every region and class, bags from 30 to 130 lbs and 45 to 145 in. Where the policy text says "Not accepted" (over 70 lbs to Europe, Israel, Qatar, Australia and New Zealand; over 100 lbs; over 115 in), RuleArena's script charges the highest fee anyway. S1 follows the script, since its answers are the ground truth. The generator never makes such a bag, but an extraction error could. With extracted facts S1 is still exact, so the extraction error that remains, 2 misread directions, never changes an answer.
 - **H4, consistency: holds across runs, untested across rewordings.** Suture's answer was the same on every run because the extraction answers were. P1 gave three equal answers on 3 of 57 cases, P3 on 12. The reworded variants are not made yet.
 - H3, H5, H6: later stages.
 
@@ -71,40 +71,23 @@ The whole of Stage 1 cost $0.70 at OpenRouter: dev $0.23 and test $0.47.
 
 P3 writes the same policy anew for every case and gets a different part wrong each time. The typed extraction model costs $0.0006 per case and made no error that mattered.
 
-**Where it loses.** Writing `airline.st` took far more effort than writing R. The policy is a calculation (a table lookup, a max, a sum, an allocation by saving), and Suture v0 has no arithmetic beyond formulas without comparisons. The language gaps the policy hit, with their workarounds, are in `airline/GAPS.md`. The worst three:
-- **The answer is not a Suture value.** No sentence can read what a part was granted, so the harness adds up the granted fee rows. The last step of the answer sits outside the language, where no rule can check it and `suture explain` does not show it.
-- **Input order carries meaning.** A bag's fee waits on a `weigh` event that the harness sends after the free allowances are given out. Weighed too early, a bag pays the 50 lbs rate.
-- **The 4096-byte unit limit forced four redesigns,** each found by a run-time fault, none by the compiler: one row per region, the fee pick on each bag, one unit per free place, and the pool limited to bags that save.
+**Where it loses.** Writing `airline.st` took far more effort than writing R. The policy is a calculation: a table lookup, a max, a sum and an allocation by saving. Suture had no comparison inside a calculation, so the first version turned every fee into a table row that a pool picks, and ranked the free allowance by tiers worked out by hand. It also needed a `weigh` event whose timing carried meaning, and it was reshaped four times to fit 4096-byte units. That version is at tag `rules-airline-frozen`, and it is the one the numbers above measure.
 
-**A rule written by hand that a program would derive.** The free allowance goes to the bags where it saves the most. Suture cannot rank by a computed difference, so we worked out the three tiers by hand (heavy and snug, heavy and close, plump and snug). They hold for these tables. A new fee could reorder them, and nothing would say so.
-
-**What this means for the next stage.** Before tax, which is all arithmetic, Suture needs three things:
-- comparisons and conditions in formulas, with `max` and `min`;
-- sums over the rows a unit was granted;
-- a unit limit that fails at compile time, or no unit limit at all.
-
-Without them, tax would not be a test of the paradigm but a puzzle in working around it.
-
-## Version 2, after slice 64
-
-Slice 64 (spec appendix BO) added the three things above:
+Slice 64 (spec appendix BO) added what it lacked:
 - conditionals and `the larger of` in calculations;
-- defined values, computed whenever read;
+- defined values, computed whenever they are read;
 - 64 KiB units.
 
-`airline.st` was rewritten with them:
-- The overweight and oversize tables are formulas on Region and Bag, not rows.
-- The free allowance is ranked by each bag's saving (`prefer Bag: highest saving`), not by hand-made tiers.
-- Each bag's fee is a defined value, which the harness reads (`Host::value`) and adds to the ticket.
-- `charges.csv`, the Charge, Grace, Paid and Free kinds, and the `weigh` event are gone: 7 kinds instead of 11, and no input order that carries meaning.
+The module now in `airline/suture/` is rewritten with these:
+- The overweight and oversize tables are formulas.
+- The free allowance goes by each bag's saving (`prefer Bag: highest saving`).
+- Each bag's fee is a defined value, which the harness reads with `Host::value` and adds to the ticket.
+- It has 7 kinds instead of 11, no fee rows beyond the checked-bag table, and no event.
 
 On rescoring from the recorded answers, at no cost:
-- Version 2 gives version 1's answer on all 56 dev and 244 test cases, with true and with extracted facts.
+- It gives the first version's answer on all 56 dev and 244 test cases, with true and with extracted facts.
 - It equals R on the 400 random trips.
-- It passes the five scenarios, which now check fees directly (`expect B's fee is 400 USD`).
-- It runs at 0.06 s a case with true facts, against 0.10 s for version 1. The numbers in the tables above are unchanged and stay those of version 1.
+- It passes five scenarios that check fees directly (`expect B's fee is 400 USD`).
+- It takes 0.06 s a case with true facts, against 0.10 s.
 
-`airline/GAPS.md` gives each gap's status. Still open:
-- the trip's total, a sum of defined values across units, which the harness makes;
-- a unit size the compiler can bound;
-- the default of 8 candidates in a pool.
+What it still cannot say is in `airline/GAPS.md`. The worst gap is that the trip's total, a sum of defined values across units, is still made by the harness.
