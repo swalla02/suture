@@ -2,14 +2,17 @@
 //!
 //! - `split`, `sample`: print the dev cases, and the test cases asked three
 //!   times, for `split.txt` and `sample.txt`;
-//! - `ask ⟨extract|p1|p3⟩ ⟨dev|test|sample⟩ ⟨run⟩`: asks the models for each
-//!   case not yet recorded in that run (`models::runs_dir`), and stops once
-//!   the recorded answers cost more than `RULES_BUDGET` dollars (default 2);
+//! - `vary ⟨dev|test⟩`: writes the variants of each case not yet kept
+//!   (`variants.rs`), and keeps those that pass the check;
+//! - `ask ⟨extract|p1|p3⟩ ⟨dev|test|sample⟩ ⟨slot⟩`: asks the models for each
+//!   case not yet recorded in that slot (`models::runs_dir`), and stops once
+//!   the recorded answers cost more than `RULES_BUDGET` dollars (default 2).
+//!   A slot is a run of the cases, 1 to 3, or a kind of variant;
 //! - `score ⟨dev|test⟩`: every setup's answer to every case, in
 //!   `results/⟨split⟩.csv`, and the summary on standard output.
 
 use rules_airline::data::{Case, Facts, Tables};
-use rules_airline::{data, data_dir, extract, models, prompts, reference, split, stats, sutured};
+use rules_airline::{data, data_dir, extract, models, prompts, reference, split, stats, sutured, variants};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -21,9 +24,10 @@ fn main() {
     let r = match a[..] {
         ["split"] => print_ids("dev cases: keyed SipHash of the case id is 0 mod 5 (src/split.rs); every other case is test", split::is_dev),
         ["sample"] => print_ids("test cases asked three times: SipHash under a second key is 0 mod 4 (src/split.rs)", split::in_sample),
-        ["ask", setup, which, run] => run.parse().map_err(|e| format!("run: {e}")).and_then(|run| ask(setup, which, run)),
+        ["vary", which] => vary(which),
+        ["ask", setup, which, slot] => ask(setup, which, slot),
         ["score", which] => score(which),
-        _ => Err("usage: rules-airline split | sample | ask ⟨extract|p1|p3⟩ ⟨dev|test|sample⟩ ⟨run⟩ | score ⟨dev|test⟩".into()),
+        _ => Err("usage: rules-airline split | sample | vary ⟨dev|test⟩ | ask ⟨extract|p1|p3⟩ ⟨dev|test|sample⟩ ⟨1|2|3|reworded|noise|order⟩ | score ⟨dev|test⟩".into()),
     };
     if let Err(e) = r {
         eprintln!("{e}");
@@ -51,8 +55,75 @@ fn chosen(which: &str) -> Result<Vec<Case>, String> {
     Ok(data::cases(&data_dir())?.into_iter().filter(|c| keep(&c.id)).collect())
 }
 
-fn answer_path(setup: &str, run: u32, id: &str, part: &str) -> PathBuf {
-    models::runs_dir().join(format!("{setup}/{run}/{id}{part}.json"))
+fn answer_path(setup: &str, slot: &str, id: &str, part: &str) -> PathBuf {
+    models::runs_dir().join(format!("{setup}/{slot}/{id}{part}.json"))
+}
+
+/// The text a slot gives a case: the case's own in a run, else its kept
+/// variant of that kind.
+fn texts(cases: &[Case], slot: &str) -> Result<BTreeMap<String, String>, String> {
+    if ["1", "2", "3"].contains(&slot) {
+        return Ok(cases.iter().map(|c| (c.id.clone(), c.text.clone())).collect());
+    }
+    if !variants::KINDS.contains(&slot) {
+        return Err(format!("`{slot}` is not a run, 1 to 3, or a kind of variant"));
+    }
+    variants::load(slot)
+}
+
+/// Writes the variants of each case not yet kept. A written variant is
+/// recorded whether or not it passes, so a rerun asks nothing again.
+fn vary(which: &str) -> Result<(), String> {
+    let cases = chosen(which)?;
+    let budget: f64 = std::env::var("RULES_BUDGET").ok().and_then(|b| b.parse().ok()).unwrap_or(2.0);
+    for kind in variants::KINDS {
+        let mut kept = variants::load(kind)?;
+        let todo: Vec<&Case> = cases.iter().filter(|c| !kept.contains_key(&c.id)).collect();
+        let queue = Mutex::new(todo.iter());
+        let made = Mutex::new(vec![]);
+        let failed = Mutex::new(vec![]);
+        std::thread::scope(|s| {
+            for _ in 0..6 {
+                s.spawn(|| {
+                    loop {
+                        let Some(c) = queue.lock().unwrap().next() else { return };
+                        if spent() > budget {
+                            return;
+                        }
+                        match vary_one(c, kind) {
+                            Ok(text) => made.lock().unwrap().push((c.id.clone(), text)),
+                            Err(e) => failed.lock().unwrap().push(format!("{} {kind}: {e}", c.id)),
+                        }
+                    }
+                });
+            }
+        });
+        kept.extend(made.into_inner().unwrap());
+        variants::save(kind, &kept)?;
+        for f in failed.into_inner().unwrap() {
+            eprintln!("no variant: {f}");
+        }
+        eprintln!("{kind}: {} kept in all; ${:.4} recorded in all", kept.len(), spent());
+    }
+    Ok(())
+}
+
+fn vary_one(c: &Case, kind: &str) -> Result<String, String> {
+    let p = variants::parts(&c.text).ok_or("not RuleArena's template")?;
+    if kind == "order" {
+        return variants::order(c).ok_or("not RuleArena's template".into());
+    }
+    let prompt = if kind == "reworded" { variants::reworded_prompt(&c.text, &p.class) } else { variants::noise_prompt(&c.text) };
+    let mut why = String::new();
+    for attempt in 1..=3 {
+        let v = models::recorded(&answer_path("variants", kind, &c.id, &format!(".{attempt}")), || models::chat_at(variants::SYSTEM, &prompt, if attempt == 1 { 0.0 } else { 0.7 }))?;
+        let text = v["text"].as_str().unwrap_or("").trim().to_string();
+        match variants::check(&p, &text) {
+            Ok(()) => return Ok(text),
+            Err(e) => why = format!("attempt {attempt}: {e}"),
+        }
+    }
+    Err(why)
 }
 
 /// The dollars every recorded answer cost.
@@ -71,14 +142,15 @@ fn spent() -> f64 {
         }
     }
     let mut sum = 0.0;
-    for s in ["extract", "p1", "p3"] {
+    for s in ["extract", "p1", "p3", "variants"] {
         walk(&models::runs_dir().join(s), &mut sum);
     }
     sum
 }
 
-fn ask(setup: &str, which: &str, run: u32) -> Result<(), String> {
+fn ask(setup: &str, which: &str, slot: &str) -> Result<(), String> {
     let cases = chosen(which)?;
+    let texts = texts(&cases, slot)?;
     let budget: f64 = std::env::var("RULES_BUDGET").ok().and_then(|b| b.parse().ok()).unwrap_or(2.0);
     let rules = std::fs::read_to_string(data_dir().join("reference_rules.txt")).map_err(|e| e.to_string())?;
     let queue = Mutex::new(cases.iter());
@@ -93,10 +165,14 @@ fn ask(setup: &str, which: &str, run: u32) -> Result<(), String> {
                         over.store(true, std::sync::atomic::Ordering::SeqCst);
                         return;
                     }
+                    let Some(text) = texts.get(&c.id) else {
+                        failed.lock().unwrap().push(format!("{}: no variant kept", c.id));
+                        continue;
+                    };
                     let r = match setup {
-                        "extract" => extract_one(c, run).map(|_| ()),
-                        "p1" => models::recorded(&answer_path("p1", run, &c.id, ""), || models::chat(prompts::SYSTEM, &prompts::p1(&rules, &c.text))).map(|_| ()),
-                        "p3" => p3_one(c, run, &rules).map(|_| ()),
+                        "extract" => extract_one(&c.id, text, slot).map(|_| ()),
+                        "p1" => models::recorded(&answer_path("p1", slot, &c.id, ""), || models::chat(prompts::SYSTEM, &prompts::p1(&rules, text))).map(|_| ()),
+                        "p3" => p3_one(&c.id, text, slot, &rules).map(|_| ()),
                         s => Err(format!("`{s}` is not extract, p1 or p3")),
                     };
                     if let Err(e) = r {
@@ -110,19 +186,19 @@ fn ask(setup: &str, which: &str, run: u32) -> Result<(), String> {
     for f in &failed {
         eprintln!("forfeit: {f}");
     }
-    eprintln!("{setup} {which} run {run}: {} cases, {} forfeits; ${:.4} recorded in all", cases.len(), failed.len(), spent());
+    eprintln!("{setup} {which} {slot}: {} cases, {} forfeits; ${:.4} recorded in all", cases.len(), failed.len(), spent());
     if over.into_inner() {
         return Err(format!("stopped: the recorded answers cost more than ${budget}"));
     }
     Ok(())
 }
 
-fn extract_one(c: &Case, run: u32) -> Result<Facts, String> {
-    let state = serde_json::json!({"case": c.text});
-    let trip = models::recorded(&answer_path("extract", run, &c.id, ".trip"), || models::decide(&state, &extract::trip_questions(&c.text)))?;
+fn extract_one(id: &str, text: &str, slot: &str) -> Result<Facts, String> {
+    let state = serde_json::json!({"case": text});
+    let trip = models::recorded(&answer_path("extract", slot, id, ".trip"), || models::decide(&state, &extract::trip_questions(text)))?;
     let count = extract::count(&trip["picks"])?;
     let items = if count >= 2 {
-        models::recorded(&answer_path("extract", run, &c.id, ".items"), || models::decide(&state, &extract::item_questions(&c.text, count)))?
+        models::recorded(&answer_path("extract", slot, id, ".items"), || models::decide(&state, &extract::item_questions(text, count)))?
     } else {
         serde_json::json!({"picks": {}})
     };
@@ -131,21 +207,21 @@ fn extract_one(c: &Case, run: u32) -> Result<Facts, String> {
 
 /// The recorded extraction, without asking: none when the trip was never
 /// read, an error when the rest is missing or makes no facts.
-fn extracted(c: &Case, run: u32) -> Option<Result<Facts, String>> {
-    let trip = read_json(&answer_path("extract", run, &c.id, ".trip"))?;
+fn extracted(c: &Case, slot: &str) -> Option<Result<Facts, String>> {
+    let trip = read_json(&answer_path("extract", slot, &c.id, ".trip"))?;
     let items = || -> Result<Facts, String> {
         let count = extract::count(&trip["picks"])?;
-        let items = if count >= 2 { read_json(&answer_path("extract", run, &c.id, ".items")).ok_or("forfeit: no items recorded")? } else { serde_json::json!({"picks": {}}) };
+        let items = if count >= 2 { read_json(&answer_path("extract", slot, &c.id, ".items")).ok_or("forfeit: no items recorded")? } else { serde_json::json!({"picks": {}}) };
         extract::facts(&trip["picks"], &items["picks"])
     };
     Some(items())
 }
 
-fn p3_one(c: &Case, run: u32, rules: &str) -> Result<Value, String> {
-    let v = models::recorded(&answer_path("p3", run, &c.id, ""), || models::chat(prompts::SYSTEM, &prompts::p3(rules, &c.text)))?;
-    models::recorded(&answer_path("p3", run, &c.id, ".out"), || {
+fn p3_one(id: &str, text: &str, slot: &str, rules: &str) -> Result<Value, String> {
+    let v = models::recorded(&answer_path("p3", slot, id, ""), || models::chat(prompts::SYSTEM, &prompts::p3(rules, text)))?;
+    models::recorded(&answer_path("p3", slot, id, ".out"), || {
         let Some(program) = prompts::p3_program(v["text"].as_str().unwrap_or("")) else { return Ok(serde_json::json!({"error": "no program"})) };
-        let scratch = models::runs_dir().join(format!("tmp/p3-{}-{}-{}", std::process::id(), c.id, run));
+        let scratch = models::runs_dir().join(format!("tmp/p3-{}-{id}-{slot}", std::process::id()));
         let out = prompts::sandboxed(&program, &scratch);
         let _ = std::fs::remove_dir_all(&scratch);
         Ok(match out {
@@ -160,7 +236,7 @@ fn p3_one(c: &Case, run: u32, rules: &str) -> Result<Value, String> {
 struct Row {
     id: String,
     setup: String,
-    run: u32,
+    slot: String,
     answer: Option<i64>,
     right: bool,
     cost: f64,
@@ -181,20 +257,25 @@ fn score(which: &str) -> Result<(), String> {
     // Every case is asked once; dev cases and the test sample three times.
     // An answer expected and not recorded counts as a forfeit, never as a
     // case left out.
+    // Every variant is asked once, when any variant of its kind is kept.
     let expected = |run: u32, id: &str| run == 1 || which == "dev" || split::in_sample(id);
+    let kinds: Vec<(&str, BTreeMap<String, String>)> = variants::KINDS.iter().map(|k| Ok((*k, variants::load(k)?))).collect::<Result<_, String>>()?;
+    let kinds: Vec<&str> = kinds.iter().filter(|(_, v)| cases.iter().any(|c| v.contains_key(&c.id))).map(|(k, _)| *k).collect();
     const FORFEIT: &str = "forfeit: no answer recorded";
     for c in &cases {
         let truth = reference::total(&c.facts, &t).ok_or(format!("{}: no reference answer", c.id))?;
-        let mut push = |setup: &str, run: u32, answer: Result<i64, String>, cost: f64, seconds: f64| {
+        let mut push = |setup: &str, slot: &str, answer: Result<i64, String>, cost: f64, seconds: f64| {
             let right = answer.as_ref().is_ok_and(|a| *a == truth);
             let note = answer.as_ref().err().cloned().unwrap_or_default();
-            rows.push(Row { id: c.id.clone(), setup: setup.into(), run, answer: answer.ok(), right, cost, seconds, note });
+            rows.push(Row { id: c.id.clone(), setup: setup.into(), slot: slot.into(), answer: answer.ok(), right, cost, seconds, note });
         };
-        push("R true", 1, reference::total(&c.facts, &t).ok_or("no fee row".into()), 0.0, 0.0);
+        push("R true", "1", reference::total(&c.facts, &t).ok_or("no fee row".into()), 0.0, 0.0);
         let start = std::time::Instant::now();
         let a = s1.total(&format!("{}t", c.id), &c.facts);
-        push("S1 true", 1, a, 0.0, start.elapsed().as_secs_f64());
-        for run in (1..=3).filter(|r| expected(*r, &c.id)) {
+        push("S1 true", "1", a, 0.0, start.elapsed().as_secs_f64());
+        let runs = (1..=3u32).filter(|r| expected(*r, &c.id)).map(|r| r.to_string());
+        for run in runs.chain(kinds.iter().map(|k| k.to_string())) {
+            let run = run.as_str();
             if let Some(f) = extracted(c, run) {
                 let trip = read_json(&answer_path("extract", run, &c.id, ".trip")).unwrap_or_default();
                 let items = read_json(&answer_path("extract", run, &c.id, ".items")).unwrap_or_default();
@@ -244,7 +325,7 @@ fn write_rows(which: &str, rows: &[Row]) -> Result<(), String> {
     let mut out = String::from("case,setup,run,answer,right,cost,seconds,note\n");
     for r in rows {
         let note = r.note.replace([',', '\n', '"'], " ");
-        out.push_str(&format!("{},{},{},{},{},{:.6},{:.2},{}\n", r.id, r.setup, r.run, r.answer.map(|a| a.to_string()).unwrap_or_default(), r.right, r.cost, r.seconds, note.chars().take(120).collect::<String>()));
+        out.push_str(&format!("{},{},{},{},{},{:.6},{:.2},{}\n", r.id, r.setup, r.slot, r.answer.map(|a| a.to_string()).unwrap_or_default(), r.right, r.cost, r.seconds, note.chars().take(120).collect::<String>()));
     }
     std::fs::write(dir.join(format!("{which}.csv")), out).map_err(|e| e.to_string())
 }
@@ -252,11 +333,11 @@ fn write_rows(which: &str, rows: &[Row]) -> Result<(), String> {
 const SETUPS: [&str; 6] = ["R true", "S1 true", "R extracted", "S1 extracted", "P1", "P3"];
 
 fn summary(cases: &[Case], rows: &[Row]) {
-    let mut by: BTreeMap<(&str, u32), BTreeMap<&str, &Row>> = BTreeMap::new();
+    let mut by: BTreeMap<(&str, &str), BTreeMap<&str, &Row>> = BTreeMap::new();
     for r in rows {
-        by.entry((r.setup.as_str(), r.run)).or_default().insert(r.id.as_str(), r);
+        by.entry((r.setup.as_str(), r.slot.as_str())).or_default().insert(r.id.as_str(), r);
     }
-    let first = |s: &'static str| by.get(&(s, 1));
+    let first = |s: &'static str| by.get(&(s, "1"));
     println!("{} cases\n", cases.len());
     println!("| setup | answered (run 1) | right (run 1) | accuracy | right on all 3 runs | same answer on all 3 runs | $ per case | s per case |");
     println!("|---|---|---|---|---|---|---|---|");
@@ -264,13 +345,11 @@ fn summary(cases: &[Case], rows: &[Row]) {
         let Some(m) = first(s) else { continue };
         let right = m.values().filter(|r| r.right).count();
         let answered = m.values().filter(|r| r.answer.is_some()).count();
-        let three: Vec<&str> = cases.iter().map(|c| c.id.as_str()).filter(|id| (1..=3).all(|run| by.get(&(s, run)).is_some_and(|m| m.contains_key(id)))).collect();
-        let all3 = three.iter().filter(|id| (1..=3).all(|run| by[&(s, run)][*id].right)).count();
-        let same3 = three.iter().filter(|id| by[&(s, 1)][*id].answer.is_some() && (2..=3).all(|run| by[&(s, run)][*id].answer == by[&(s, 1)][*id].answer)).count();
+        let (all3, same3, three) = agreement(&by, s, &["1", "2", "3"], cases);
         let n = cases.len().max(1) as f64;
         let cost: f64 = m.values().map(|r| r.cost).sum::<f64>() / n;
         let secs: f64 = m.values().map(|r| r.seconds).sum::<f64>() / n;
-        let (consistency, same) = if three.is_empty() || matches!(s, "R true" | "S1 true") { ("—".to_string(), "—".to_string()) } else { (format!("{all3} of {}", three.len()), format!("{same3} of {}", three.len())) };
+        let (consistency, same) = if three == 0 || matches!(s, "R true" | "S1 true") { ("—".to_string(), "—".to_string()) } else { (format!("{all3} of {three}"), format!("{same3} of {three}")) };
         println!("| {s} | {answered} of {} | {right} | {:.1}% | {consistency} | {same} | {cost:.5} | {secs:.2} |", cases.len(), 100.0 * right as f64 / n);
     }
     println!("\nRight in run 1, by level (5, 8 or 11 items):\n");
@@ -302,7 +381,7 @@ fn summary(cases: &[Case], rows: &[Row]) {
     let mut wrong_facts: BTreeMap<&str, usize> = BTreeMap::new();
     let mut extracted_cases = 0;
     for c in cases {
-        let Some(Ok(f)) = extracted(c, 1) else { continue };
+        let Some(Ok(f)) = extracted(c, "1") else { continue };
         extracted_cases += 1;
         let t = &c.facts;
         for (what, bad) in [("class", f.class != t.class), ("region", f.region != t.region), ("way", f.way != t.way && t.region != "U.S."), ("ticket", f.ticket != t.ticket), ("item count", f.bags.len() != t.bags.len()), ("a bag", f.bags.len() == t.bags.len() && f.bags != t.bags)] {
@@ -312,4 +391,46 @@ fn summary(cases: &[Case], rows: &[Row]) {
         }
     }
     println!("\nExtraction, run 1, {extracted_cases} cases read: cases with a wrong {wrong_facts:?}");
+    variants_summary(&by, cases);
+}
+
+/// Of the cases asked in every slot of `slots`: how many were right in
+/// each, how many gave one answer in all, and how many were asked.
+fn agreement(by: &BTreeMap<(&str, &str), BTreeMap<&str, &Row>>, s: &str, slots: &[&str], cases: &[Case]) -> (usize, usize, usize) {
+    let asked: Vec<&str> = cases.iter().map(|c| c.id.as_str()).filter(|id| slots.iter().all(|k| by.get(&(s, *k)).is_some_and(|m| m.contains_key(id)))).collect();
+    let row = |k: &str, id: &str| by[&(s, k)][id];
+    let right = asked.iter().filter(|id| slots.iter().all(|k| row(k, id).right)).count();
+    let same = asked.iter().filter(|id| row(slots[0], id).answer.is_some() && slots.iter().all(|k| row(k, id).answer == row(slots[0], id).answer)).count();
+    (right, same, asked.len())
+}
+
+/// The variants (the spec, stage 2 step 1): accuracy on each, and the
+/// cases right, and the same, on the case and all three.
+fn variants_summary(by: &BTreeMap<(&str, &str), BTreeMap<&str, &Row>>, cases: &[Case]) {
+    if !variants::KINDS.iter().any(|k| by.contains_key(&("S1 extracted", *k))) {
+        return;
+    }
+    let all: Vec<&str> = std::iter::once("1").chain(variants::KINDS).collect();
+    let n = cases.len();
+    println!("\nVariants, one run each (a forfeit is wrong):\n");
+    println!("| setup | original | reworded | noise | order | right on all 4 | same answer on all 4 |");
+    println!("|---|---|---|---|---|---|---|");
+    for s in ["R extracted", "S1 extracted", "P1", "P3"] {
+        let cell = |k: &str| by.get(&(s, k)).map(|m| format!("{} of {n}", m.values().filter(|r| r.right).count())).unwrap_or("—".into());
+        let (right, same, asked) = agreement(by, s, &all, cases);
+        println!("| {s} | {} | {} | {} | {} | {right} of {asked} | {same} of {asked} |", cell("1"), cell("reworded"), cell("noise"), cell("order"));
+    }
+    println!("\nPaired, right on all 4:\n");
+    println!("| comparison | only first | only second | difference | 95% interval | McNemar p |");
+    println!("|---|---|---|---|---|---|");
+    let on_all = |s: &str, id: &str| all.iter().all(|k| by.get(&(s, *k)).and_then(|m| m.get(id)).is_some_and(|r| r.right));
+    for (a, b) in [("S1 extracted", "P1"), ("S1 extracted", "P3")] {
+        let xa: Vec<bool> = cases.iter().map(|c| on_all(a, &c.id)).collect();
+        let xb: Vec<bool> = cases.iter().map(|c| on_all(b, &c.id)).collect();
+        let only_a = xa.iter().zip(&xb).filter(|(x, y)| **x && !**y).count() as u64;
+        let only_b = xa.iter().zip(&xb).filter(|(x, y)| !**x && **y).count() as u64;
+        let (lo, hi) = stats::bootstrap(&xa, &xb);
+        let d = (xa.iter().filter(|x| **x).count() as f64 - xb.iter().filter(|x| **x).count() as f64) / n.max(1) as f64;
+        println!("| {a} − {b} | {only_a} | {only_b} | {:+.1} pts | [{:+.1}, {:+.1}] | {:.2e} |", 100.0 * d, 100.0 * lo, 100.0 * hi, stats::mcnemar(only_a, only_b));
+    }
 }

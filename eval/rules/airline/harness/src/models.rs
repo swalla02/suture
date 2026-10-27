@@ -89,9 +89,15 @@ pub fn recorded(path: &Path, ask: impl FnOnce() -> Result<Value, String>) -> Res
 /// A chat completion from the prompt LLM, with its text, reasoning effort
 /// low and temperature 0 as RuleArena asked its models.
 pub fn chat(system: &str, user: &str) -> Result<Value, String> {
+    chat_at(system, user, 0.0)
+}
+
+/// The same at another temperature: a variant written again after one
+/// that failed its check.
+pub fn chat_at(system: &str, user: &str, temperature: f64) -> Result<Value, String> {
     let body = json!({
         "model": LLM,
-        "temperature": 0,
+        "temperature": temperature,
         "max_tokens": 12000,
         "reasoning": {"effort": "low"},
         "usage": {"include": true},

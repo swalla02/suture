@@ -9,6 +9,7 @@ pub mod reference;
 pub mod split;
 pub mod stats;
 pub mod sutured;
+pub mod variants;
 
 /// `eval/rules/airline/data`, from this crate.
 pub fn data_dir() -> std::path::PathBuf {
