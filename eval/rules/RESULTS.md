@@ -71,11 +71,39 @@ All three of S1's wrong answers come from one extraction question, the region:
 
 Nothing else was misread: no class, ticket, count, size or weight. S1 and R erred on the same cases, so the rules added no error. The prompted models, by contrast, rarely give the same answer to the same trip written another way.
 
-Writing the variants cost $0.07. Asking every setup on them cost $1.60, of which P1 was $0.58, extraction $0.57 and P3 $0.45. So the step cost $1.67, and the experiment has cost $2.37 so far.
+Writing the variants cost $0.07. Asking every setup on them cost $1.60, of which P1 was $0.58, extraction $0.57 and P3 $0.45. So the step cost $1.67.
+
+## A reasoning model (Stage 2, step 2)
+
+P2 is `deepseek/deepseek-v4-pro` at high reasoning effort, given RuleArena's prompt as P1 is (spec, stage 2 step 2). It answered 100 test cases, chosen by a keyed hash and listed in `airline/p2.txt`, once each on the original text. Before any of them, it was priced on 8 dev cases and got all 8 right. The harness was frozen at tag `rules-airline-p2-frozen` before the test cases were asked.
+
+| setup, on P2's 100 cases | right | $ per case | s per case |
+|---|---|---|---|
+| **S1, extracted facts** | **100** | 0.00061 | 1.0 |
+| P2, reasoning model | 98 | 0.0124 | 61 |
+| P3, code per case | 32 | 0.00029 | 27 |
+| P1, prompting | 20 | 0.00036 | 31 |
+
+| comparison | only first right | only second right | difference | 95% bootstrap interval | exact McNemar p |
+|---|---|---|---|---|---|
+| S1 extracted − P2 | 2 | 0 | +2.0 pts | [0, +5.0] | 0.5 |
+| P2 − P1 | 78 | 0 | +78.0 pts | [+70.0, +86.0] | 7e-24 |
+| P2 − P3 | 66 | 0 | +66.0 pts | [+57.0, +75.0] | 3e-20 |
+
+**The reasoning model closes the accuracy gap.** On these cases S1 and P2 cannot be told apart. P2 missed one case with 5 items and one with 11, overcharging by $210 and $140, and got 45 of 45 cases with 8 items. The sample is light on the hardest level: 23 cases with 11 items, against 76 of 244 in all of test.
+
+What is left between them:
+- **Cost:** S1 costs about a twentieth as much.
+- **Time:** S1 takes about a sixtieth as long.
+- **Errors:** S1's errors are in reading the facts, which can be checked. P2's errors are inside 6,800 tokens of reasoning on average.
+
+P2 was not asked on the variants, so its consistency across wordings is not measured.
+
+P2 cost $1.37: $0.13 to price it on dev, and $1.24 for the test cases. The experiment has cost $3.73 so far.
 
 ## The hypotheses
 
-- **H1, accuracy: holds for airline**, against P1 and P3. The intervals are far from zero. P2, the reasoning model, is not run until Stage 2, so the claim is about a cheap model.
+- **H1, accuracy: holds for airline against the cheap model only**, P1 and P3, whose intervals are far from zero. Against P2, the reasoning model, it does not hold: 100 against 98 of 100, p = 0.5. On airline, Suture's edge over a reasoning model is cost, time, and errors that can be checked, not accuracy.
 - **H2, error source: holds.** S1 equals R on all 300 cases and on 400 random trips that reach the parts of the policy the cases leave untried (`sutured.rs`): every region and class, bags from 30 to 130 lbs and 45 to 145 in. Where the policy text says "Not accepted" (over 70 lbs to or from Europe, Israel, Qatar, Australia and New Zealand), or gives no fee at all (over 100 lbs, over 115 in), RuleArena's script charges a fee anyway: the 70–100 lbs fee of other regions ($200), or its top tier. S1 follows the script, since its answers are the ground truth. The generator never makes such a bag, but an extraction error could. With extracted facts S1 is still exact, so the extraction error that remains, 2 misread directions, never changes an answer.
 - **H4, consistency: holds**, across runs and across rewordings. Suture's answer was the same on every run because the extraction answers were. P1 gave three equal answers on 3 of 57 cases, P3 on 12. Over the case and its three variants, Suture gave one answer on 240 of 244 cases, P1 on 11 and P3 on 10.
 - H3, H5, H6: later stages.
@@ -84,7 +112,7 @@ Writing the variants cost $0.07. Asking every setup on them cost $1.60, of which
 
 - **S1 is not held out the way the models are.** We checked it against R on all 300 cases while writing it, test included, because getting the rules exactly right is the point of a hand-written program. What test measures for S1 is extraction. A fair test of *authoring* is S2 (an LLM writes the Suture rules, H3), in Stage 2.
 - **The cases are easy to read.** RuleArena generates every case from one template, so the typed questions had little to get wrong. The variants make reading harder, but only moderately: the rewording keeps each item's numbers together and in order. That is where S1's only errors came from (3 of 731 variants). Text that is messier still, such as numbers in words or facts spread across a conversation, is not tested.
-- **P1 is the cheap arm.** Low reasoning effort, as the spec's P1 is "one cheap open model". A reasoning model (P2) will do better. The gap to beat will be smaller, not gone: level 2 is where prompting collapses (8 of 76).
+- **P1 is the cheap arm.** Low reasoning effort, as the spec's P1 is "one cheap open model". A reasoning model, P2, got 98 of 100, so the large accuracy gaps above are gaps to a cheap model.
 - **Fewer runs than the spec asks.** Three runs on a seeded sample of 57 test cases (`sample.txt`), one on the rest, to keep the stage under $2. Dev had three runs of everything.
 - **R is in Rust, not Python.** It is a rewrite of the generator's own script, checked by hand against the script's logic. The spec asked for plain Python.
 

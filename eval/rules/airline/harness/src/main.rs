@@ -272,6 +272,13 @@ fn score(which: &str) -> Result<(), String> {
     let kinds: Vec<(&str, BTreeMap<String, String>)> = variants::KINDS.iter().map(|k| Ok((*k, variants::load(k)?))).collect::<Result<_, String>>()?;
     let kinds: Vec<&str> = kinds.iter().filter(|(_, v)| cases.iter().any(|c| v.contains_key(&c.id))).map(|(k, _)| *k).collect();
     const FORFEIT: &str = "forfeit: no answer recorded";
+    // A setup was asked on a kind of variant when one of these cases has
+    // its answer: the runs of dev and test share one directory.
+    let was_asked: BTreeMap<(&str, &str), bool> = ["extract", "p1", "p3"]
+        .iter()
+        .flat_map(|s| kinds.iter().map(move |k| (*s, *k)))
+        .map(|(s, k)| ((s, k), cases.iter().any(|c| answer_path(s, k, &c.id, if s == "extract" { ".trip" } else { "" }).exists())))
+        .collect();
     // P2 is asked once on its cases (`split::p2`), once any of them here is.
     let p2 = split::p2(cases.iter().map(|c| c.id.as_str()));
     let p2: Vec<&str> = if p2.iter().any(|id| answer_path("p2", "1", id, "").exists()) { p2 } else { vec![] };
@@ -291,7 +298,7 @@ fn score(which: &str) -> Result<(), String> {
             let run = run.as_str();
             // A setup never asked on a kind of variant has no rows for it,
             // rather than a forfeit on every case.
-            let asked = |setup: &str| ["1", "2", "3"].contains(&run) || models::runs_dir().join(setup).join(run).is_dir();
+            let asked = |setup: &str| ["1", "2", "3"].contains(&run) || was_asked[&(setup, run)];
             if !asked("extract") {
             } else if let Some(f) = extracted(c, run) {
                 let trip = read_json(&answer_path("extract", run, &c.id, ".trip")).unwrap_or_default();

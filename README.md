@@ -42,7 +42,11 @@ On [RuleArena](https://github.com/skyriver-2000/RuleArena)'s airline task, a mod
 | `gpt-oss-120b` writing a Python program per case | 27.9% |
 | `gpt-oss-120b` asked for the answer | 21.3% |
 
-The models fall apart as cases grow: with 11 items, prompting got 8 of 76 right. Suture got all 76. Each case was also written three more ways (as prose, with irrelevant detail, and in another order). Suture was right on all four versions of 240 of 244 cases, and its 4 misses were misread regions. The models managed 8 (prompting) and 9 (Python per case). These are early numbers: we wrote the Suture rules ourselves, the comparison model is a cheap one, and the cases come from one template. Rules written by an LLM, a reasoning model, and reworded cases come next. [The write-up](eval/rules/RESULTS.md) lists every caveat.
+The cheap models fall apart as cases grow. With 11 items, prompting got 8 of 76 right, and Suture got all 76. Each case was also written three more ways: as prose, with irrelevant detail, and in another order. Suture was right on all four versions of 240 of 244 cases. Its 4 misses were misread regions. The cheap models managed 8 (prompting) and 9 (Python per case).
+
+A reasoning model is as accurate. `deepseek-v4-pro` at high effort got 98 of 100 test cases right, where Suture got 100. But it cost $0.012 a case against Suture's $0.0006, and took 61 s against 1 s. There, Suture's edge is cost, speed, and errors you can check.
+
+These are early numbers. We wrote the Suture rules ourselves, and the cases come from one template. Rules written by an LLM come next. [The write-up](eval/rules/RESULTS.md) lists every caveat.
 
 ## What you stop writing
 
