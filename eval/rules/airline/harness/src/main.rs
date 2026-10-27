@@ -175,9 +175,8 @@ fn read_json(p: &Path) -> Option<Value> {
 fn score(which: &str) -> Result<(), String> {
     let cases = chosen(which)?;
     let t = Tables::load(&data_dir())?;
-    let charges = std::fs::read_to_string(sutured::module_dir().join("charges.csv")).map_err(|e| e.to_string())?;
     let prog = sutured::compile(&sutured::module_dir())?;
-    let mut s1 = sutured::Run::new(prog, &t, &charges)?;
+    let mut s1 = sutured::Run::new(prog, &t)?;
     let mut rows = vec![];
     // Every case is asked once; dev cases and the test sample three times.
     // An answer expected and not recorded counts as a forfeit, never as a

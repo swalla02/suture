@@ -1,14 +1,13 @@
 //! S1: the answer of eval/rules/airline/suture/airline.st, run by the Suture
-//! runtime. The harness enters the tables and a case's facts, in the order
-//! the module's header gives, and adds up the amounts of the rows granted.
-//! It decides nothing: every fee, and which bags ride free, is a choice the
-//! module makes.
+//! runtime. The harness enters the fee table and a case's facts, in the
+//! order the module's header gives, and adds the ticket to each bag's `fee`,
+//! a value the module defines. It decides nothing: every fee, and which bags
+//! ride free, is the module's.
 
 use crate::data::{Facts, REGIONS, Tables};
 use suture_lang::ir::Program;
-use suture_lang::scenario::Caller;
 use suture_runtime::host::Host;
-use suture_runtime::state::{Bind, Node, Val};
+use suture_runtime::state::Val;
 use std::path::Path;
 
 pub fn module_dir() -> std::path::PathBuf {
@@ -34,11 +33,10 @@ fn dollars(d: i64) -> Val {
 /// One run of the module over many cases: the tables are entered once.
 pub struct Run {
     host: Host,
-    clerk: Caller,
 }
 
 impl Run {
-    pub fn new(prog: Program, t: &Tables, charges: &str) -> Result<Run, String> {
+    pub fn new(prog: Program, t: &Tables) -> Result<Run, String> {
         let mut host = Host::new(prog);
         for (i, r) in REGIONS.iter().enumerate() {
             host.create("Region", &format!("Region{i}"), &[("name".into(), text(r))])?;
@@ -54,28 +52,7 @@ impl Run {
             ];
             host.create("Rate", &format!("Rate{i}"), &attrs)?;
         }
-        let mut n = 0;
-        for l in charges.lines().skip(1).filter(|l| !l.starts_with('#') && !l.trim().is_empty()) {
-            let c: Vec<&str> = l.split(',').collect();
-            let [kind, regions, lowsize, highsize, lowweight, highweight, amount] = c[..] else { return Err(format!("charges.csv: {l}")) };
-            let regions: Vec<&str> = if regions == "all" { REGIONS.to_vec() } else { regions.split('|').collect() };
-            let num = |s: &str| s.parse::<i64>().map_err(|e| format!("charges.csv: {s}: {e}"));
-            // One row per region of the group: a granted row is carried into
-            // the bag, with what it refers to, and 21 regions would not fit.
-            for r in regions {
-                let attrs = [
-                    ("region".into(), Val::Ref(region_label(r).ok_or(format!("charges.csv names region {r}"))?)),
-                    ("lowsize".into(), Val::Count(num(lowsize)?)),
-                    ("highsize".into(), Val::Count(num(highsize)?)),
-                    ("lowweight".into(), Val::Count(num(lowweight)?)),
-                    ("highweight".into(), Val::Count(num(highweight)?)),
-                    ("amount".into(), dollars(num(amount)?)),
-                ];
-                host.create(kind, &format!("{kind}{n}"), &attrs)?;
-                n += 1;
-            }
-        }
-        Ok(Run { host, clerk: Caller { role: "clerk".into(), name: "desk".into(), verb: "weighs".into() } })
+        Ok(Run { host })
     }
 
     /// The total the module gives the case, or why it gives none. `id` must
@@ -104,34 +81,18 @@ impl Run {
         for n in 1..=3 {
             h.create("Allowance", &format!("{id}A{n}"), &[("trip".into(), Val::Ref(trip.clone())), ("nth".into(), Val::Count(n))])?;
         }
-        for b in &bags {
-            h.input_event(Some(&self.clerk), b, None, &[])?;
-        }
         let mut sum = f.ticket * 100;
         for b in &bags {
-            let u = self.host.unit(b).ok_or("no bag")?;
-            let base = u.root.parts.iter().find_map(|p| self.granted(p, "Rate"));
-            sum += base.ok_or(format!("{b} has no checked-bag fee row"))?;
-            let got: Vec<i64> = u.root.parts.iter().filter_map(|p| self.granted(p, "Charge").or_else(|| self.granted(p, "Grace"))).collect();
-            match got[..] {
-                [fee] => sum += fee,
-                [] => return Err(format!("{b} has no overweight or oversize row")),
-                _ => return Err(format!("{b} has {} rows", got.len())),
+            match h.value(b, &[], "fee") {
+                Some(Val::Money(c)) => sum += c,
+                // A bag with no row of the fee table: a 3rd bag to Cuba.
+                _ => return Err(format!("{b} has no fee")),
             }
         }
         if sum % 100 != 0 {
             return Err(format!("{sum} cents"));
         }
         Ok(sum / 100)
-    }
-
-    /// The amount, in cents, of the row a part's binding was granted.
-    fn granted(&self, part: &Node, bind: &str) -> Option<i64> {
-        let Some(Bind::Granted { to, .. }) = part.binds.get(bind) else { return None };
-        match self.host.unit(to)?.root.attrs.get("amount") {
-            Some(Val::Money(c)) => Some(*c),
-            _ => None,
-        }
     }
 }
 
@@ -142,8 +103,7 @@ mod tests {
 
     fn run() -> Run {
         let t = Tables::load(&crate::data_dir()).unwrap();
-        let charges = std::fs::read_to_string(module_dir().join("charges.csv")).unwrap();
-        Run::new(compile(&module_dir()).unwrap(), &t, &charges).unwrap()
+        Run::new(compile(&module_dir()).unwrap(), &t).unwrap()
     }
 
     #[test]
@@ -156,6 +116,18 @@ mod tests {
             bags: [(51, 24, 27, 65), (46, 29, 24, 85), (35, 12, 11, 44), (30, 11, 10, 33)].iter().map(|&(l, w, h, g)| data::Bag { length: l, width: w, height: h, weight: g }).collect(),
         };
         assert_eq!(run().total("x", &f), Ok(1198));
+    }
+
+    #[test]
+    fn the_scenarios_pass() {
+        let prog = compile(&module_dir()).unwrap();
+        let text = std::fs::read_to_string(module_dir().join("airline.scenario")).unwrap();
+        let scenarios = suture_lang::scenario::parse_scenarios("airline.scenario", &text).unwrap();
+        assert_eq!(scenarios.len(), 5);
+        for sc in &scenarios {
+            let r = suture_runtime::scenario::run(&prog, sc);
+            assert!(r.passed(), "{}: {:?}", sc.title, r.failures);
+        }
     }
 
     /// H2's first half, on every case: with true facts the module gives

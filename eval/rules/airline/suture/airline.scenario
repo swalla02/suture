@@ -3,14 +3,10 @@ scenario "the higher of oversize and overweight applies, and the 5th bag pays th
   given a Trip T with region US, class "Main Cabin", way "from" and ticket 100 USD
   given a Rate R3 with region US, class "Main Cabin", way "from", nth 3 and amount 150 USD
   given a Rate R4 with region US, class "Main Cabin", way "from", nth 4 and amount 200 USD
-  given a Charge S0 with region US, lowsize 0, highsize 62, lowweight 0, highweight 1000 and amount 0 USD
-  given a Charge S2 with region US, lowsize 65, highsize 115, lowweight 0, highweight 1000 and amount 200 USD
-  given a Charge W0 with region US, lowsize 0, highsize 1000, lowweight 0, highweight 50 and amount 0 USD
-  given a Charge W2 with region US, lowsize 0, highsize 1000, lowweight 53, highweight 70 and amount 100 USD
   given a Bag B with trip T, nth 5, weight 60, length 50, width 30 and height 20
-  when clerk C weighs B
-  expect B's Base is done
-  expect B's Paid is done
+  expect B's oversize is 200 USD
+  expect B's overweight is 100 USD
+  expect B's fee is 400 USD
   expect B is not waived
 
 scenario "Business: the free allowance goes to the bags it saves most on":
@@ -54,13 +50,17 @@ scenario "Main Cabin frees one bag's allowance only to Australia or New Zealand"
   expect F2 is not waived
   expect N1 is not waived
 
-scenario "a waived bag takes its row from the free allowance's table":
+scenario "a waived bag pays its fee on the free allowance, and one it saves nothing on is not waived":
   given a Region US with name "U.S."
   given a Trip T with region US, class "Business", way "from" and ticket 100 USD
-  given a Grace G0 with region US, lowsize 0, highsize 62, lowweight 0, highweight 1000 and amount 0 USD
-  given a Grace GW with region US, lowsize 0, highsize 1000, lowweight 0, highweight 70 and amount 0 USD
+  given a Rate R1 with region US, class "Business", way "from", nth 1 and amount 0 USD
+  given a Rate R2 with region US, class "Business", way "from", nth 2 and amount 0 USD
   given a Bag B with trip T, nth 1, weight 60, length 20, width 20 and height 10
+  given a Bag H with trip T, nth 2, weight 80, length 20, width 20 and height 10
   given an Allowance A1 with trip T and nth 1
-  when clerk C weighs B
+  given an Allowance A2 with trip T and nth 2
   expect B is waived
-  expect B's Free is done
+  expect B's fee is 0 USD
+  expect H is not waived
+  expect H's fee is 200 USD
+  expect A2 is not done

@@ -2,25 +2,53 @@
 -- the fee of each checked bag, and which bags ride on a free allowance.
 --
 -- The harness enters, in this order:
---   1. the fee tables as rows: Rates (data/fee_tables, the checked-bag
---      fees) and Charges and Graces (charges.csv, the overweight and
---      oversize tables of the policy text, one row per region of a group:
---      a granted row is carried into the bag with what it refers to);
+--   1. the checked-bag fee table as rows, Rates (data/fee_tables), and the
+--      regions;
 --   2. a case's Trip and its checked Bags, in the order the case lists them
 --      (the first item is the carry-on, which is never charged); each bag
 --      gets its row of the checked-bag fees;
 --   3. three Allowances, nth 1 to 3, since "you won't have to pay the fees
 --      for up to 3 bags": the free ones go to the bags they save most on,
---      and one left with no bag waits;
---   4. a weigh of each Bag, which then gets its overweight or oversize row.
--- The answer is the ticket plus the amounts of the rows each part was
--- granted; a part that waits granted nothing, and the case has no answer.
-module airline version 1, currency USD, candidates 16
+--      and one with no bag to save on waits.
+-- The answer is the ticket plus each bag's fee, read with Host::value.
+module airline version 2, currency USD, candidates 16
 
 role clerk
 
-kind Region { name: Text }
-kind Trip   { region: Region, class: Text, way: Text, ticket: Money }
+-- The overweight and oversize fees of the policy text that depend on where
+-- the trip goes.
+kind Region {
+  name: Text,
+  -- "Over 65 in. … up to 115 in.": $150 for these, $200 elsewhere.
+  big: Money = 150 USD if its name is "Panama" or its name is "South America" or its name is "Peru" or its name is "Colombia"
+    or its name is "Ecuador" or its name is "Europe" or its name is "Israel" or its name is "Qatar", otherwise 200 USD,
+  -- "Over 53 lbs … up to 70 lbs": $200 to Cuba, $100 elsewhere.
+  heavy: Money = 200 USD if its name is "Cuba", otherwise 100 USD,
+  -- "Over 70 lbs … up to 100 lbs": $450 to these, $200 elsewhere.
+  over: Money = 450 USD if its name is "India" or its name is "China" or its name is "Japan" or its name is "South Korea"
+    or its name is "Hong Kong", otherwise 200 USD,
+  far: Bool = yes if its name is "Australia" or its name is "New Zealand", otherwise no
+}
+
+kind Trip {
+  region: Region,
+  class: Text,
+  way: Text,
+  ticket: Money,
+  -- How many free bags may weigh 70 lbs: "For First / Business, weight is
+  -- 70 lbs / 32 kgs for complimentary bags", and to or from Australia or
+  -- New Zealand in every class. These are the bags whose row of the fee
+  -- table is $0: the 1st and 2nd in Business and First, the 3rd in First
+  -- outside the U.S., Puerto Rico and Canada, and to or from Australia or
+  -- New Zealand the 1st in Main Cabin and the 1st and 2nd in Main Plus and
+  -- Premium Economy. Elsewhere a free bag keeps the 50 lbs allowance.
+  free: Count = 3 if its class is "First" and its region's name is not "U.S." and its region's name is not "Puerto Rico" and its region's name is not "Canada",
+    otherwise 2 if its class is "Business" or its class is "First",
+    otherwise 1 if its region is far and its class is "Main Cabin",
+    otherwise 2 if its region is far and (its class is "Main Plus" or its class is "Premium Economy"),
+    otherwise 0
+}
+
 kind Bag {
   trip: Trip,
   nth: Count,
@@ -30,22 +58,23 @@ kind Bag {
   weight: Count,
   -- "adding the total outside dimensions of each bag, length + width + height"
   size: Count = length + width + height,
-  weighed: Bool = no
+  oversize: Money = 0 USD if its size is at most 62, otherwise 30 USD if its size is at most 65, otherwise its trip's region's big,
+  overweight: Money = 0 USD if its weight is at most 50, otherwise 30 USD if its weight is at most 53,
+    otherwise its trip's region's heavy if its weight is at most 70, otherwise its trip's region's over,
+  -- The same on a free allowance of 70 lbs.
+  allowed: Money = 0 USD if its weight is at most 70, otherwise its trip's region's over,
+  -- "The higher fee between oversize and overweight applies, in addition to
+  -- the checked bag fee", paid and on the allowance, and what it saves.
+  charge: Money = the larger of its oversize and its overweight,
+  grace: Money = the larger of its oversize and its allowed,
+  saving: Money = its charge - its grace
 }
 -- The checked-bag fee of the nth bag; nth 4 stands for the 4th and after.
 kind Rate { region: Region, class: Text, way: Text, nth: Count, amount: Money }
--- An overweight or oversize fee for a bag between the bounds (over the
--- low one, up to the high one): Charges for bags that are paid for,
--- Graces for bags on a free allowance.
-kind Charge { region: Region, lowsize: Count, highsize: Count, lowweight: Count, highweight: Count, amount: Money }
-kind Grace  { region: Region, lowsize: Count, highsize: Count, lowweight: Count, highweight: Count, amount: Money }
 
 kind Base      { bag: Bag }
--- A free place, one unit each: three in one would not fit.
 kind Allowance { trip: Trip, nth: Count }
 kind Waiver    { allowance: Allowance }
-kind Paid    { bag: Bag }
-kind Free    { bag: Bag }
 
 Bag needs Base
 Allowance needs Waiver
@@ -55,55 +84,17 @@ Allowance needs Waiver
 Base uses a Rate where the Rate's region is the Bag's trip's region
   and the Rate's class is the Bag's trip's class and the Rate's way is the Bag's trip's way
   and (the Rate's nth is the Bag's nth or (the Rate's nth is 4 and the Bag's nth is more than 4))
-
--- "For First / Business, weight is 70 lbs / 32 kgs for complimentary bags",
--- and to or from Australia or New Zealand in every class. The nth
--- Allowance frees a bag where the fee table's row for the nth bag is $0
--- and the 70 lbs allowance applies: the 1st and 2nd in Business and First,
--- the 3rd in First outside the U.S., Puerto Rico and Canada, and to or from
--- Australia or New Zealand the 1st in Main Cabin and the 1st and 2nd in
--- Main Plus and Premium Economy. Elsewhere a free bag
--- keeps the 50 lbs allowance, so no Waiver is needed and that Allowance waits.
-Waiver uses a Bag where the Bag's trip is the Allowance's trip
-  and ((the Bag's weight is more than 53 and the Bag's weight is at most 70 and the Bag's size is at most 65)
-    or (the Bag's weight is more than 50 and the Bag's weight is at most 53 and the Bag's size is at most 62))
-  and ((the Allowance's nth is at most 2 and (the Allowance's trip's class is "Business" or the Allowance's trip's class is "First"))
-    or (the Allowance's nth is 3 and the Allowance's trip's class is "First" and the Allowance's trip's region's name is not "U.S." and the Allowance's trip's region's name is not "Puerto Rico" and the Allowance's trip's region's name is not "Canada")
-    or ((the Allowance's trip's region's name is "Australia" or the Allowance's trip's region's name is "New Zealand")
-      and ((the Allowance's nth is 1 and the Allowance's trip's class is "Main Cabin")
-        or (the Allowance's nth is at most 2 and (the Allowance's trip's class is "Main Plus" or the Allowance's trip's class is "Premium Economy"))))),
-  taking 1
-rule once: the total waivers taken from each Bag is at most 1
-
-define: a Bag is heavy when its weight is more than 53 and its weight is at most 70
-define: a Bag is plump when its weight is more than 50 and its weight is at most 53
-define: a Bag is snug when its size is at most 62
-define: a Bag is close when its size is more than 62 and its size is at most 65
-define: a Bag is waived when the total waivers taken from it is at least 1
-
--- The free allowance goes where it saves the most: the higher of the
--- overweight and oversize fees, paid, less the same on the allowance.
--- Heavy and snug saves 100 (200 to Cuba), heavy and close 70 (170), plump
--- and snug 30; every other bag saves nothing, and the Waiver's condition
--- leaves it out: an Allowance choosing among ten bags would not fit its unit.
-prefer Bag: those that are heavy and snug, then those that are heavy and close, then those that are plump and snug
-
--- "The higher fee between oversize and overweight applies, in addition to
--- the checked bag fee": a bag matches one size row and one weight row, and
--- takes the higher.
-Bag needs Paid while it is weighed and it is not waived
-Bag needs Free while it is weighed and it is waived
-Paid uses a Charge where the Charge's region is the Bag's trip's region
-  and the Bag's size is more than the Charge's lowsize and the Bag's size is at most the Charge's highsize
-  and the Bag's weight is more than the Charge's lowweight and the Bag's weight is at most the Charge's highweight
-Free uses a Grace where the Grace's region is the Bag's trip's region
-  and the Bag's size is more than the Grace's lowsize and the Bag's size is at most the Grace's highsize
-  and the Bag's weight is more than the Grace's lowweight and the Bag's weight is at most the Grace's highweight
-prefer Charge: highest amount
-prefer Grace: highest amount
 prefer Rate: lowest nth
 
-when a clerk weighs a Bag: the Bag is weighed
+-- The free allowance goes where it saves the most. A bag it saves nothing
+-- on needs none, and an Allowance past the trip's free ones waits.
+Waiver uses a Bag where the Bag's trip is the Allowance's trip
+  and the Allowance's nth is at most the Allowance's trip's free and the Bag's saving is more than 0 USD,
+  taking 1
+prefer Bag: highest saving
+rule once: the total waivers taken from each Bag is at most 1
 
-admit add a new Region, Trip, Bag, Rate, Charge, Grace or Allowance by clerk
-admit weigh Bag by clerk
+define: a Bag is waived when the total waivers taken from it is at least 1
+define: a Bag's fee is its Base's Rate's amount + (its grace if it is waived, otherwise its charge)
+
+admit add a new Region, Trip, Bag, Rate or Allowance by clerk

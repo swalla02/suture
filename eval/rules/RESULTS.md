@@ -4,7 +4,7 @@ Stage 1 of the rule-decisions experiment (`docs/superpowers/specs/2026-10-26-rul
 
 The setups:
 - **R**, the reference: RuleArena's `compute_answer.py`, read and rewritten in Rust (`harness/src/reference.rs`), never run. Its answers are the ground truth.
-- **S1**, Suture: `airline/suture/airline.st` and its fee rows (`charges.csv`), written by us from the policy text.
+- **S1**, Suture: `airline/suture/airline.st` and its fee rows (`charges.csv`), written by us from the policy text. The numbers below are of this first version, frozen at tag `rules-airline-frozen`; version 2, rewritten after slice 64, gives the same answers (see the end).
 - **Extraction**, for R and S1: `typesafe/jev-1.14` through OpenRouter's Decisions API answers typed questions (class, region, direction, ticket, number of items, and each item's three dimensions and weight), each a choice among fixed options. A number is a choice among the numbers in the case's text. The model never writes free text.
 - **P1**, prompting: `openai/gpt-oss-120b` with RuleArena's own zero-shot prompt, reasoning effort low, temperature 0.
 - **P3**, code generation: the same model writes a Python program for each case. We run it in a container with no network, a read-only file system, no privileges and a 10-second limit.
@@ -84,3 +84,27 @@ P3 writes the same policy anew for every case and gets a different part wrong ea
 - a unit limit that fails at compile time, or no unit limit at all.
 
 Without them, tax would not be a test of the paradigm but a puzzle in working around it.
+
+## Version 2, after slice 64
+
+Slice 64 (spec appendix BO) added the three things above:
+- conditionals and `the larger of` in calculations;
+- defined values, computed whenever read;
+- 64 KiB units.
+
+`airline.st` was rewritten with them:
+- The overweight and oversize tables are formulas on Region and Bag, not rows.
+- The free allowance is ranked by each bag's saving (`prefer Bag: highest saving`), not by hand-made tiers.
+- Each bag's fee is a defined value, which the harness reads (`Host::value`) and adds to the ticket.
+- `charges.csv`, the Charge, Grace, Paid and Free kinds, and the `weigh` event are gone: 7 kinds instead of 11, and no input order that carries meaning.
+
+On rescoring from the recorded answers, at no cost:
+- Version 2 gives version 1's answer on all 56 dev and 244 test cases, with true and with extracted facts.
+- It equals R on the 400 random trips.
+- It passes the five scenarios, which now check fees directly (`expect B's fee is 400 USD`).
+- It runs at 0.06 s a case with true facts, against 0.10 s for version 1. The numbers in the tables above are unchanged and stay those of version 1.
+
+`airline/GAPS.md` gives each gap's status. Still open:
+- the trip's total, a sum of defined values across units, which the harness makes;
+- a unit size the compiler can bound;
+- the default of 8 candidates in a pool.
