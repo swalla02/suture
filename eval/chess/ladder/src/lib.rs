@@ -8,7 +8,7 @@ pub mod players;
 pub mod uci;
 
 use game::Player;
-use players::{Decider, Flat, Lc0, Llm, Naked, Nnue, Random, Rng, Scorer, Stockfish, Sutured, Via};
+use players::{Decider, Flat, Lc0, Llm, Naked, Nnue, Random, Rng, Scorer, Stockfish, Sutured};
 use std::path::{Path, PathBuf};
 
 /// Where the engines and networks are: `CHESS_TOOLS`, else ~/chess-tools.
@@ -30,9 +30,9 @@ fn windows(p: &Path) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-pub const NETS: &[(&str, &str)] = &[("maia1100", "maia-1100.pb.gz"), ("maia1500", "maia-1500.pb.gz"), ("maia1900", "maia-1900.pb.gz"), ("leela256", "t1-256x10.pb.gz"), ("leela512", "t1-512x15.pb.gz")];
+pub const NETS: &[(&str, &str)] = &[("maia1100", "maia-1100.pb.gz"), ("maia1500", "maia-1500.pb.gz"), ("maia1900", "maia-1900.pb.gz")];
 
-/// `none`, `nnue`, a net from NETS, `llm:anthropic|cli|openrouter:⟨model⟩`,
+/// `none`, `nnue`, a net from NETS, `llm:⟨model⟩`, an LLM on OpenRouter,
 /// or `decide:⟨model⟩`, a decision model on OpenRouter.
 pub fn scorer(spec: &str, scratch: &Path) -> Result<Box<dyn Scorer>, String> {
     if spec == "none" {
@@ -44,15 +44,8 @@ pub fn scorer(spec: &str, scratch: &Path) -> Result<Box<dyn Scorer>, String> {
     if let Some((_, file)) = NETS.iter().find(|(n, _)| *n == spec) {
         return Ok(Box::new(Lc0::new(&lc0(), &windows(&tools().join("nets").join(file))?, spec)?));
     }
-    if let Some(rest) = spec.strip_prefix("llm:") {
-        let (via, model) = rest.split_once(':').ok_or(format!("`{spec}`: llm:⟨via⟩:⟨model⟩"))?;
-        let via = match via {
-            "anthropic" => Via::Anthropic,
-            "cli" => Via::ClaudeCli,
-            "openrouter" => Via::OpenRouter,
-            v => return Err(format!("`{v}` is not anthropic, cli or openrouter")),
-        };
-        return Ok(Box::new(Llm::new(via, model, scratch.to_path_buf())));
+    if let Some(model) = spec.strip_prefix("llm:") {
+        return Ok(Box::new(Llm::new(model, scratch.to_path_buf())));
     }
     if let Some(model) = spec.strip_prefix("decide:") {
         return Ok(Box::new(Decider::new(model, scratch.to_path_buf())));

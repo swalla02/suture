@@ -76,10 +76,6 @@ impl Player for Stockfish {
 pub trait Scorer {
     fn name(&self) -> String;
     fn scores(&mut self, g: &Game, moves: &[Move]) -> Result<Vec<i64>, String>;
-    /// Answers it gave that named no legal move, this game.
-    fn misses(&self) -> u32 {
-        0
-    }
 }
 
 /// No model: every move the same, so the strategy alone decides.
@@ -189,22 +185,11 @@ impl Scorer for Nnue {
     }
 }
 
-/// Where an LLM is reached.
-pub enum Via {
-    /// The Anthropic API, with the key in `ANTHROPIC_API_KEY`.
-    Anthropic,
-    /// Claude Code in print mode, on the person's own plan.
-    ClaudeCli,
-    /// OpenRouter, with the key in `OPENROUTER_API_KEY`.
-    OpenRouter,
-}
-
-/// An LLM asked for its three best moves from the list it is given.
+/// An LLM on OpenRouter, with the key in `OPENROUTER_API_KEY`, asked for its
+/// three best moves from the list it is given.
 pub struct Llm {
-    pub via: Via,
     pub model: String,
     pub scratch: std::path::PathBuf,
-    misses: u32,
     /// Its own request file, apart from other threads' players.
     id: u64,
 }
@@ -238,12 +223,11 @@ pub struct Decider {
     pub model: String,
     pub scratch: std::path::PathBuf,
     id: u64,
-    misses: u32,
 }
 
 impl Decider {
     pub fn new(model: &str, scratch: std::path::PathBuf) -> Decider {
-        Decider { model: model.to_string(), scratch, id: LLMS.fetch_add(1, std::sync::atomic::Ordering::SeqCst), misses: 0 }
+        Decider { model: model.to_string(), scratch, id: LLMS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) }
     }
 }
 
@@ -301,46 +285,20 @@ impl Scorer for Decider {
             break v?;
         };
         let out = decided(&v, moves)?;
-        if out.iter().all(|&x| x == 0) {
-            self.misses += 1;
-        }
         Ok(out)
-    }
-    fn misses(&self) -> u32 {
-        self.misses
     }
 }
 
 impl Llm {
-    pub fn new(via: Via, model: &str, scratch: std::path::PathBuf) -> Llm {
-        Llm { via, model: model.to_string(), scratch, misses: 0, id: LLMS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) }
+    pub fn new(model: &str, scratch: std::path::PathBuf) -> Llm {
+        Llm { model: model.to_string(), scratch, id: LLMS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) }
     }
 
     fn ask(&self, prompt: &str) -> Result<String, String> {
-        let body = |v: serde_json::Value| request_file(&self.scratch, self.id, v);
-        let curl = post;
-        match self.via {
-            Via::Anthropic => {
-                let f = body(serde_json::json!({"model": self.model, "max_tokens": 400, "thinking": {"type": "disabled"}, "messages": [{"role": "user", "content": prompt}]}))?;
-                let v = curl("https://api.anthropic.com/v1/messages", format!("x-api-key: {}\"\nheader = \"anthropic-version: 2023-06-01", key("ANTHROPIC_API_KEY")?), &f)?;
-                v["content"].as_array().map(|c| c.iter().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join(" ")).ok_or(format!("no answer: {v}"))
-            }
-            Via::OpenRouter => {
-                // Without reasoning, as the Claude players are asked.
-                let f = body(serde_json::json!({"model": self.model, "max_tokens": 2000, "reasoning": {"enabled": false}, "messages": [{"role": "user", "content": prompt}]}))?;
-                let v = curl("https://openrouter.ai/api/v1/chat/completions", format!("authorization: Bearer {}", key("OPENROUTER_API_KEY")?), &f)?;
-                v["choices"][0]["message"]["content"].as_str().map(str::to_string).ok_or(format!("no answer: {v}"))
-            }
-            Via::ClaudeCli => {
-                let out = Command::new("claude")
-                    .args(["-p", "--model", &self.model, "--output-format", "text", "--tools", "", "--no-session-persistence", "--strict-mcp-config", "--setting-sources", "", "--disable-slash-commands"])
-                    .args(["--system-prompt", "You pick chess moves. Answer with moves only."])
-                    .arg(prompt)
-                    .output()
-                    .map_err(|e| e.to_string())?;
-                Ok(String::from_utf8_lossy(&out.stdout).to_string())
-            }
-        }
+        // Without reasoning: the model answers from the position alone.
+        let f = request_file(&self.scratch, self.id, serde_json::json!({"model": self.model, "max_tokens": 2000, "reasoning": {"enabled": false}, "messages": [{"role": "user", "content": prompt}]}))?;
+        let v = post("https://openrouter.ai/api/v1/chat/completions", format!("authorization: Bearer {}", key("OPENROUTER_API_KEY")?), &f)?;
+        v["choices"][0]["message"]["content"].as_str().map(str::to_string).ok_or(format!("no answer: {v}"))
     }
 }
 
@@ -389,17 +347,11 @@ impl Scorer for Llm {
             }
         };
         let picks = named(&answer, moves);
-        if picks.is_empty() {
-            self.misses += 1;
-        }
         let mut out = vec![0; moves.len()];
         for (r, i) in picks.into_iter().enumerate() {
             out[i] = [1000, 600, 300][r];
         }
         Ok(out)
-    }
-    fn misses(&self) -> u32 {
-        self.misses
     }
 }
 
@@ -422,10 +374,9 @@ impl Player for Naked {
     }
 }
 
-/// What the strategy may read about move `m` in the game's position: its
-/// facts (chess_engine::facts), the position's, and the model's `score` and
-/// `rank` for it. Bools are also given as 1 or 0, for formulas.
-pub fn attributes(g: &Game, m: Move, score: i64, rank: i64) -> Vec<(String, Val)> {
+/// What the strategy reads about move `m` in the game's position: the
+/// facts its Move declares (chess_engine::facts), and the model's `score`.
+pub fn attributes(g: &Game, m: Move, score: i64) -> Vec<(String, Val)> {
     let b = g.board();
     let n = g.ply();
     let us = b.turn;
@@ -433,72 +384,41 @@ pub fn attributes(g: &Game, m: Move, score: i64, rank: i64) -> Vec<(String, Val)
     let pieces: i32 = (0..64).filter_map(|s| b.at(s)).filter(|p| !matches!(p.kind, Kind::Pawn | Kind::King)).map(|p| p.kind.value()).sum();
     let f = facts(b, m);
     let count = |v: i32| Val::Count(v.max(0) as i64);
-    let flag = |v: bool| Val::Count(v as i64);
     vec![
         ("ply".into(), Val::Count(n as i64)),
         ("uci".into(), Val::Text(m.to_string())),
-        ("piece".into(), Val::Text(f.piece.into())),
-        ("captures".into(), count(f.captures)),
-        ("checking".into(), Val::Bool(f.check)),
         ("mating".into(), Val::Bool(f.mate)),
+        ("exposing".into(), Val::Bool(f.allows_mate)),
         ("stalemating".into(), Val::Bool(f.stalemate)),
-        ("hangs".into(), count(f.hangs)),
-        ("threat".into(), count(f.threat)),
-        ("fork".into(), count(f.fork)),
-        ("wins".into(), count(f.outcome)),
-        ("loses".into(), count(-f.outcome)),
+        ("repeating".into(), Val::Bool(g.repeats(&b.play(m)))),
+        ("trapped".into(), Val::Bool(f.trapped)),
+        ("cornered".into(), Val::Bool(f.cornered)),
         ("gains".into(), count(f.outlook)),
         ("drops".into(), count(-f.outlook)),
-        ("danger".into(), count(f.danger)),
-        ("cornered".into(), Val::Bool(f.cornered)),
-        ("luft".into(), count(f.luft)),
-        ("exposing".into(), Val::Bool(f.allows_mate)),
-        ("castling".into(), Val::Bool(f.castles)),
-        ("promoting".into(), Val::Bool(f.promotes)),
-        ("developing".into(), Val::Bool(f.develops)),
-        ("undeveloping".into(), Val::Bool(f.undevelops)),
-        ("central".into(), Val::Bool(f.center)),
-        ("pawnrank".into(), count(f.pawn_rank)),
-        ("passed".into(), Val::Bool(f.passed)),
-        ("trading".into(), Val::Bool(f.trades)),
-        ("boxed".into(), count(f.boxed)),
-        ("kings".into(), count(f.kings)),
-        ("kingedge".into(), count(f.king_edge)),
-        ("theiredge".into(), count(f.their_edge)),
-        ("replies".into(), count(f.replies)),
+        ("up".into(), count(balance)),
+        ("down".into(), count(-balance)),
+        ("score".into(), Val::Count(score)),
         ("mobility".into(), count(f.mobility)),
-        ("loose".into(), count(f.loose)),
+        ("replies".into(), count(f.replies)),
         ("shield".into(), count(f.shield)),
         ("pressure".into(), count(f.pressure)),
         ("peril".into(), count(f.peril)),
+        ("pushes".into(), count(if f.passed { f.pawn_rank } else { 0 })),
+        ("kingedge".into(), count(f.king_edge)),
+        ("kings".into(), count(f.kings)),
+        ("boxed".into(), count(f.boxed)),
+        ("loose".into(), count(f.loose)),
         ("rim".into(), count(f.rim)),
-        ("up".into(), count(balance)),
-        ("down".into(), count(-balance)),
-        ("ahead".into(), Val::Bool(balance >= 2)),
-        ("behind".into(), Val::Bool(balance <= -2)),
+        ("trading".into(), Val::Bool(f.trades)),
+        ("checking".into(), Val::Bool(f.check)),
+        ("castling".into(), Val::Bool(f.castles)),
+        ("developing".into(), Val::Bool(f.develops)),
+        ("undeveloping".into(), Val::Bool(f.undevelops)),
+        ("central".into(), Val::Bool(f.center)),
+        ("queenmoves".into(), Val::Count((f.piece == "queen") as i64)),
+        ("kingmoves".into(), Val::Count((f.piece == "king" && !f.castles) as i64)),
         ("opening".into(), Val::Bool(n < 20)),
         ("endgame".into(), Val::Bool(pieces <= 26)),
-        ("repeating".into(), Val::Bool(g.repeats(&b.play(m)))),
-        // The same facts as numbers, 1 or 0, for the strategy's formulas.
-        ("checks".into(), flag(f.check)),
-        ("castles".into(), flag(f.castles)),
-        ("centers".into(), flag(f.center)),
-        ("pawnmoves".into(), flag(f.piece == "pawn")),
-        ("develops".into(), flag(f.develops)),
-        ("undevelops".into(), flag(f.undevelops)),
-        ("kingmoves".into(), flag(f.piece == "king" && !f.castles)),
-        ("queenmoves".into(), flag(f.piece == "queen")),
-        ("pushes".into(), count(if f.passed { f.pawn_rank } else { 0 })),
-        ("trades".into(), flag(f.trades)),
-        ("nets".into(), flag(f.cornered)),
-        ("traps".into(), flag(f.trapped)),
-        ("trapped".into(), Val::Bool(f.trapped)),
-        ("stalemates".into(), flag(f.stalemate)),
-        ("repeats".into(), flag(g.repeats(&b.play(m)))),
-        ("early".into(), flag(n < 20)),
-        ("late".into(), flag(pieces <= 26)),
-        ("score".into(), Val::Count(score)),
-        ("rank".into(), Val::Count(rank)),
     ]
 }
 
@@ -511,14 +431,11 @@ pub struct Sutured {
     pub rng: Rng,
     host: Option<Host>,
     overrides: u32,
-    /// The Move attributes the strategy declares, other than its formulas.
-    reads: Vec<String>,
 }
 
 impl Sutured {
     pub fn new(prog: Program, scorer: Box<dyn Scorer>, rng: Rng) -> Sutured {
-        let reads = prog.kind("Move").map(|k| k.attrs.iter().filter(|a| a.formula.is_none()).map(|a| a.name.clone()).collect()).unwrap_or_default();
-        Sutured { prog, scorer, rng, host: None, overrides: 0, reads }
+        Sutured { prog, scorer, rng, host: None, overrides: 0 }
     }
 }
 
@@ -539,8 +456,6 @@ impl Player for Sutured {
         let scores = self.scorer.scores(g, &legal)?;
         let host = self.host.get_or_insert_with(|| Host::new(self.prog.clone()));
         let n = g.ply();
-        let mut rank: Vec<usize> = (0..legal.len()).collect();
-        rank.sort_by_key(|&i| -scores[i]);
         // Entered in a shuffled order, so that a tie the strategy leaves is
         // broken at random, not by the move generator's order.
         let mut order: Vec<usize> = (0..legal.len()).collect();
@@ -548,12 +463,7 @@ impl Player for Sutured {
             order.swap(i, self.rng.below(i + 1));
         }
         for &i in &order {
-            let m = legal[i];
-            let attrs = attributes(g, m, scores[i], rank.iter().position(|&r| r == i).unwrap_or(0) as i64 + 1);
-            // Only the facts the strategy's Move declares: a strategy names
-            // what it reads, and the rest is not entered.
-            let attrs: Vec<(String, Val)> = attrs.into_iter().filter(|(a, _)| self.reads.iter().any(|r| r == a)).collect();
-            host.create("Move", &format!("M{n}x{i}"), &attrs)?;
+            host.create("Move", &format!("M{n}x{i}"), &attributes(g, legal[i], scores[i]))?;
         }
         let turn = format!("T{n}");
         host.create("Turn", &turn, &[("ply".into(), Val::Count(n as i64))])?;
@@ -564,7 +474,7 @@ impl Player for Sutured {
         });
         let to = to.ok_or_else(|| format!("the strategy chose no move at ply {n}"))?;
         let i: usize = to.rsplit('x').next().and_then(|i| i.parse().ok()).ok_or(format!("not a move: {to}"))?;
-        if scores[i] < scores[rank[0]] {
+        if scores[i] < *scores.iter().max().unwrap_or(&0) {
             self.overrides += 1;
         }
         Ok(legal[i])

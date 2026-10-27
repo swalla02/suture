@@ -1,6 +1,6 @@
 # Chess: a move scorer, alone and with Suture
 
-Frozen on 2026-10-26 at strategy `269e2871` (the first 8 characters of `git hash-object suture/bot.st`; v8 from round 2 of `suture/STRATEGY.md`). Chess is now a demo. The main test of Suture is the rules experiment in `docs/superpowers/specs/2026-10-26-rule-decisions-experiment.md`.
+Frozen on 2026-10-26 at strategy `269e2871` (the first 8 characters of `git hash-object suture/bot.st`; `suture/STRATEGY.md` explains it). Chess is now a demo. The main test of Suture is the rules experiment in `docs/superpowers/specs/2026-10-26-rule-decisions-experiment.md`.
 
 ## How it is measured
 
@@ -19,8 +19,9 @@ Frozen on 2026-10-26 at strategy `269e2871` (the first 8 characters of `git hash
 - **Games:** 80 per arm, 40 per level. There are two exceptions:
   - Laguna, on a free tier with a daily cap: 20 games alone, 16 with Suture.
   - "No model, alone": 40 games, all lost. It is left out below.
+  - Seven games forfeited when OpenRouter kept answering 502 after every retry; they were replayed and are not in the records.
 - **When:** every arm with Suture was played on this strategy. The alone arms do not read `bot.st`:
-  - the chess-trained alone arms are earlier games, from round 1 (round 2 for Maia 1900);
+  - the chess-trained alone arms are earlier games, from the runs of earlier versions;
   - the API alone arms were played in this version's runs.
 
 ## Results
@@ -57,7 +58,7 @@ Frozen on 2026-10-26 at strategy `269e2871` (the first 8 characters of `git hash
 2. **The lift shrinks as the scorer gets stronger.**
    - Maia 1900 gains 131 ± 123, barely clear of zero.
    - Maia 1500 gains 79 ± 113, not clear of zero, and with Suture it is not above Maia 1100 with Suture.
-   - v6 had Maia 1500 with Suture at 1718 ± 83, so v8's changes may have cost it (`STRATEGY.md`, round 2).
+   - An earlier version of the strategy rated Maia 1500 with Suture at 1718 ± 83, so the final chain may have cost it.
 3. **Suture's rules alone reach 1355,** with no model at all.
 4. **General decision models and LLMs add nothing to the rules, and some make them worse.**
    - Jev, Decider and Clef land within noise of the rules alone.
@@ -68,7 +69,7 @@ Frozen on 2026-10-26 at strategy `269e2871` (the first 8 characters of `git hash
 ## What it does not show
 
 - **The facts carry much of the chess.**
-  - The Rust engine computes about sixty facts per move, one reply deep (`engine/src/facts.rs`). They include whether the move mates, allows a mate in one, stalemates or repeats, what it wins or drops, and whether a check in reply could only be blocked.
+  - The strategy reads 34 facts per move, computed one reply deep by the Rust engine (`engine/src/facts.rs`). They include whether the move mates, allows a mate in one, stalemates or repeats, what it wins or drops, and whether a check in reply could only be blocked.
   - `bot.st` combines them (`sound`, `wasteful`, and the `material` and `plan` formulas) and orders them.
   - Nothing here compares the same strategy written in plain Rust, so this does not show that the language itself adds strength. A skeptic can call Suture the sorting step here.
 - **There is no held-out test.** The strategy was tuned against the same Stockfish levels it is rated against.
@@ -79,17 +80,9 @@ Frozen on 2026-10-26 at strategy `269e2871` (the first 8 characters of `git hash
   - Seeds come from the clock, so a rerun plays different games.
 - **The API arms cannot be replayed exactly.**
   - Model answers were not recorded, and a model name on OpenRouter can serve a new version.
-  - The ladder counts answers that give no usable move, but the records do not keep that count. Such a turn is played at random, so some of a general model's moves alone may be random.
+  - How often an answer gave no usable move was not counted. Such a turn is played at random, so some of a general model's moves alone may be random.
 - **1794 is weak for chess.** A short alpha-beta search plays well past 2000. Reaching 2000 here would say little about Suture.
-- **Not run on this strategy:** Leela, the Claude models, Mammoth (Baseten) and our own move ranker.
-
-## Corrections
-
-- **Maia 1900 with Suture is 1794 ± 84, not 1887 ± 73.**
-  - Round 2 of `STRATEGY.md` reported 1887 ± 73, but some of those games started before the final `bot.st` was saved.
-  - Every arm with Suture was replayed on the final file, which gives 1794 ± 84.
-  - `STRATEGY.md` keeps the old tables, marked as superseded.
-- **Seven forfeited games were replayed.** They were played against OpenRouter and forfeited when the API kept answering 502 after every retry. They were set aside, replayed, and are not in the records.
+- **Not run:** Leela, the Claude models, Mammoth (Baseten) and our own move ranker.
 
 ## Reproduce
 
@@ -119,7 +112,7 @@ python3 eval/chess/results/figures.py ~/chess-runs/elo.json ~/chess-runs/269e287
 - **Player names:** `naked:` or `suture:`, then a scorer:
   - `none`, `nnue` or `maia1100|1500|1900`;
   - `decide:⟨model⟩` for a decision model on OpenRouter;
-  - `llm:openrouter:⟨model⟩` for an LLM.
+  - `llm:⟨model⟩` for an LLM on OpenRouter.
 - **The API arms** read the key from `OPENROUTER_API_KEY` or `~/.config/chess-ladder/openrouter.key`. All the OpenRouter spending for this ladder came to about $3.80. That covers every version, the replays and the trials.
 - **The records** (`results/269e2871/*.jsonl`) hold one game per line:
   - the players and the opening;

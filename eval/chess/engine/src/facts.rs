@@ -10,27 +10,15 @@ use crate::{Board, Color, Kind, Move};
 pub struct Facts {
     /// The moving piece: pawn, knight, bishop, rook, queen or king.
     pub piece: &'static str,
-    /// The value of what it takes, and of what a promotion adds.
-    pub captures: i32,
     pub check: bool,
     pub mate: bool,
     /// Leaves the side to move no move and no check: a draw.
     pub stalemate: bool,
-    /// The most the other side can win with one capture next, counting the
-    /// exchange that follows on that square.
-    pub hangs: i32,
-    /// The most this side could win with one capture after that, if the
-    /// other side did nothing.
-    pub threat: i32,
-    /// A double attack: the second most this side could win, if the other
-    /// side did nothing, on another square. It can save only one.
-    pub fork: i32,
     /// The material this move wins (positive) or loses (negative) once the
     /// other side has made its best reply and this side its best capture
-    /// after it, each capture judged by the exchange on its square.
-    pub outcome: i32,
-    /// As `outcome`, but a check in reply that takes nothing does not undo
-    /// what this side threatens: it is answered, and the threat stays.
+    /// after it, each capture judged by the exchange on its square. A check
+    /// in reply that takes nothing does not undo what this side threatens:
+    /// it is answered, and the threat stays.
     pub outlook: i32,
     /// The other side has a mate in one after it.
     pub allows_mate: bool,
@@ -40,14 +28,7 @@ pub struct Facts {
     /// Some check in reply can only be blocked: the king cannot move and
     /// the checking piece cannot be taken. A back-rank mate often follows.
     pub trapped: bool,
-    /// The squares beside this side's king that it could step to after the
-    /// move: empty or the other side's, and not attacked.
-    pub luft: i32,
-    /// What the other side could win with one capture before the move: a
-    /// piece of this side is attacked.
-    pub danger: i32,
     pub castles: bool,
-    pub promotes: bool,
     /// A knight or bishop off its home rank.
     pub develops: bool,
     /// A knight or bishop back to its home rank.
@@ -68,8 +49,6 @@ pub struct Facts {
     pub kings: i32,
     /// How far this side's king is from the centre after the move (0 to 3).
     pub king_edge: i32,
-    /// How far the other side's king is from the centre after the move.
-    pub their_edge: i32,
     /// How many replies the other side has.
     pub replies: i32,
     /// How many moves this side would have next, if the other side passed;
@@ -87,34 +66,6 @@ pub struct Facts {
     /// How far a knight, bishop or queen lands from the centre (0 to 3); 0
     /// for other pieces.
     pub rim: i32,
-    /// This side's material minus the other's, before the move.
-    pub balance: i32,
-}
-
-/// The material `c` stands to lose to one capture, by the usual exchange
-/// rule of thumb: all of a piece no one defends, or the difference when a
-/// cheaper piece attacks it.
-pub fn loose(b: &Board, c: Color) -> i32 {
-    let mut worst = 0;
-    for s in 0..64u8 {
-        let Some(p) = b.at(s) else { continue };
-        if p.color != c || p.kind == Kind::King {
-            continue;
-        }
-        let attackers: Vec<u8> = b.attackers(s, c.other()).collect();
-        if attackers.is_empty() {
-            continue;
-        }
-        let defended = b.attackers(s, c).next().is_some();
-        let cheapest = attackers.iter().filter_map(|&a| b.at(a)).filter(|a| !(defended && a.kind == Kind::King)).map(|a| if a.kind == Kind::King { 0 } else { a.kind.value() }).min();
-        let loss = match (defended, cheapest) {
-            (_, None) => 0,
-            (false, Some(_)) => p.kind.value(),
-            (true, Some(v)) => (p.kind.value() - v).max(0),
-        };
-        worst = worst.max(loss);
-    }
-    worst
 }
 
 pub fn material(b: &Board, c: Color) -> i32 {
@@ -168,11 +119,9 @@ pub fn best_capture(b: &Board) -> i32 {
     best
 }
 
-/// The two largest exchanges `by` could start against `c`'s pieces.
-fn targets(b: &Board, by: Color) -> (i32, i32) {
-    let mut v: Vec<i32> = (0..64u8).filter(|&s| b.at(s).is_some_and(|p| p.color != by && p.kind != Kind::King)).map(|s| see(b, s, by)).filter(|&g| g > 0).collect();
-    v.sort_unstable_by(|a, b| b.cmp(a));
-    (v.first().copied().unwrap_or(0), v.get(1).copied().unwrap_or(0))
+/// The largest exchange `by` could start against the other side's pieces.
+fn target(b: &Board, by: Color) -> i32 {
+    (0..64u8).filter(|&s| b.at(s).is_some_and(|p| p.color != by && p.kind != Kind::King)).map(|s| see(b, s, by)).max().unwrap_or(0)
 }
 
 /// Squares from the centre: 0 on d4–e5, 3 on the edge.
@@ -213,7 +162,7 @@ pub fn facts(b: &Board, m: Move) -> Facts {
     let mut cornered = false;
     let mut trapped = false;
     // Their best reply against this side's best capture after it.
-    let (mut worst, mut patient) = (i32::MAX, i32::MAX);
+    let mut patient = i32::MAX;
     for r in &replies {
         let next = after.play(*r);
         let checked = next.in_check(us);
@@ -230,43 +179,28 @@ pub fn facts(b: &Board, m: Move) -> Facts {
             None => 0,
         } + r.promo.map_or(0, |k| k.value() - 1);
         let now = best_capture(&next);
-        worst = worst.min(now - lost);
         // A check that takes nothing only puts off what this side threatens.
-        patient = patient.min(if checked && lost == 0 { now.max(targets(&next, us).0) } else { now - lost });
+        patient = patient.min(if checked && lost == 0 { now.max(target(&next, us)) } else { now - lost });
     }
-    let outcome = captures + if replies.is_empty() { 0 } else { worst };
     let outlook = captures + if replies.is_empty() { 0 } else { patient };
     // The other side passing, to see what this side would then threaten.
     let mut pass = after.clone();
     pass.turn = us;
     pass.ep = None;
     let quiet = !(mate || check);
-    let (threat, fork) = if quiet { (best_capture(&pass), targets(&pass, us).1) } else { (0, 0) };
-    let mut before = b.clone();
-    before.turn = us.other();
-    before.ep = None;
-    let danger = if b.in_check(us) { 0 } else { best_capture(&before) };
     let rank = if us == Color::White { (m.to / 8) as i32 + 1 } else { 8 - (m.to / 8) as i32 };
     let home = if us == Color::White { 0 } else { 7 };
     let (ours, theirs) = (after.king(us).unwrap_or(0), after.king(us.other()).unwrap_or(0));
     Facts {
         piece: p.kind.name(),
-        captures,
         check,
         mate,
         stalemate,
-        hangs: if mate { 0 } else { best_capture(&after) },
-        threat,
-        fork,
-        outcome,
         outlook,
         allows_mate,
         cornered,
         trapped,
-        luft: crate::KING.iter().filter_map(|&d| crate::step(ours, d)).filter(|&t| after.at(t).is_none_or(|q| q.color != us) && !after.attacked(t, us.other())).count() as i32,
-        danger,
         castles: p.kind == Kind::King && m.from.abs_diff(m.to) == 2,
-        promotes: m.promo.is_some(),
         develops: matches!(p.kind, Kind::Knight | Kind::Bishop) && m.from / 8 == home && m.to / 8 != home,
         undevelops: matches!(p.kind, Kind::Knight | Kind::Bishop) && m.from / 8 != home && m.to / 8 == home,
         center: matches!(m.to, 27 | 28 | 35 | 36),
@@ -276,7 +210,6 @@ pub fn facts(b: &Board, m: Move) -> Facts {
         boxed: replies.iter().filter(|r| r.from == theirs).count() as i32,
         kings: distance(ours, theirs),
         king_edge: edge(ours),
-        their_edge: edge(theirs),
         replies: replies.len() as i32,
         mobility: if quiet { pass.legal().len() as i32 } else { 0 },
         loose: (0..64u8).filter(|&s| after.at(s).is_some_and(|q| q.color == us && !matches!(q.kind, Kind::Pawn | Kind::King)) && !after.attacked(s, us)).count() as i32,
@@ -284,7 +217,6 @@ pub fn facts(b: &Board, m: Move) -> Facts {
         pressure: crate::KING.iter().filter_map(|&d| crate::step(theirs, d)).filter(|&t| after.attacked(t, us)).count() as i32,
         peril: crate::KING.iter().filter_map(|&d| crate::step(ours, d)).filter(|&t| after.attacked(t, us.other())).count() as i32,
         rim: if matches!(p.kind, Kind::Knight | Kind::Bishop | Kind::Queen) { edge(m.to) } else { 0 },
-        balance: material(b, us) - material(b, us.other()),
     }
 }
 
