@@ -22,9 +22,9 @@ fn staff(verb: &str) -> Caller {
 #[test]
 fn a_unit_too_large_for_the_machine_is_refused_before_it_is_made() {
     let mut h = Host::new(prog(NOTES));
-    let long = Val::Text("x".repeat(5000));
+    let long = Val::Text("x".repeat(70_000));
     let e = h.input_new(Some(&staff("writes")), "Note", "N1", &[("body".into(), long)], &[]).unwrap_err();
-    assert!(e.starts_with("refused: N1 would hold ") && e.ends_with("bytes, and a unit holds at most 4096"), "{e}");
+    assert!(e.starts_with("refused: N1 would hold ") && e.ends_with("bytes, and a unit holds at most 65536"), "{e}");
     assert!(h.unit("N1").is_none());
     assert!(h.machine.faults().is_empty());
 }
@@ -35,7 +35,7 @@ fn a_change_that_would_make_a_unit_too_large_is_refused_and_changes_nothing() {
     let mut h = Host::new(p);
     h.input_new(Some(&staff("writes")), "Note", "N1", &[("body".into(), Val::Text("short".into()))], &[]).unwrap();
     let before = h.unit("N1");
-    let e = h.input_change(Some(&staff("changes")), "N1", "body", Val::Text("x".repeat(5000))).unwrap_err();
+    let e = h.input_change(Some(&staff("changes")), "N1", "body", Val::Text("x".repeat(70_000))).unwrap_err();
     assert!(e.starts_with("refused: N1 would hold "), "{e}");
     assert_eq!(h.unit("N1"), before);
     assert!(h.machine.faults().is_empty());
@@ -93,7 +93,7 @@ fn a_change_that_would_make_a_reader_too_large_is_refused_and_changes_nothing() 
     let p = prog("module library version 1, currency EUR
 role librarian
 kind Member { name: Text, bio: Text, suspended: Bool = no }
-kind Loan   { member: Member, memo: Text, open: Bool = yes }
+kind Loan   { member: Member, guarantor: Member, memo: Text, open: Bool = yes }
 rule suspended: no Loan whose member is suspended is open
 admit add a new Member or Loan by librarian
 admit change Member's bio by librarian
@@ -101,10 +101,12 @@ admit change Member's bio by librarian
     let mut h = Host::new(p);
     let by = |verb: &str| Caller { role: "librarian".into(), name: "Lu".into(), verb: verb.into() };
     h.input_new(Some(&by("adds")), "Member", "Ada", &[("name".into(), Val::Text("Ada".into())), ("bio".into(), Val::Text("short".into()))], &[]).unwrap();
-    h.input_new(Some(&by("adds")), "Loan", "L1", &[("member".into(), Val::Ref("Ada".into())), ("memo".into(), Val::Text("m".repeat(1700)))], &[]).unwrap();
+    h.input_new(Some(&by("adds")), "Member", "Bo", &[("name".into(), Val::Text("Bo".into())), ("bio".into(), Val::Text("g".repeat(20_000)))], &[]).unwrap();
+    let loan = [("member".into(), Val::Ref("Ada".into())), ("guarantor".into(), Val::Ref("Bo".into())), ("memo".into(), Val::Text("m".repeat(15_000)))];
+    h.input_new(Some(&by("adds")), "Loan", "L1", &loan, &[]).unwrap();
     let (ada, loan) = (h.unit("Ada"), h.unit("L1"));
-    // Ada fits with the new bio, but L1, which carries it, would not.
-    let e = h.input_change(Some(&by("changes")), "Ada", "bio", Val::Text("b".repeat(1820))).unwrap_err();
+    // Ada fits with the new bio, but L1, which carries it and Bo's, would not.
+    let e = h.input_change(Some(&by("changes")), "Ada", "bio", Val::Text("b".repeat(32_000))).unwrap_err();
     assert!(e.starts_with("refused: L1 would hold "), "{e}");
     assert_eq!((h.unit("Ada"), h.unit("L1")), (ada, loan));
     assert!(h.machine.faults().is_empty());

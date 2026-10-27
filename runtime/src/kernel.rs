@@ -35,6 +35,9 @@ pub struct Kinds {
 /// The kernel program for a compiled program. Its fingerprint pins the
 /// compiled program's hash (plan 1), so a journal replays only under the
 /// same program.
+/// The most a unit, or a message, holds: its encoded bytes (appendix BO.2.5).
+pub const UNIT_BYTES: usize = 64 << 10;
+
 pub fn program(prog: Arc<Program>) -> (KernelProgram, Kinds) {
     let mut b = SigBuilder::new(&format!("suture:{}", prog.module), prog.version);
     let (mailbox, reply, route) = (b.polarized("Mailbox"), b.polarized("Reply"), b.polarized("Route"));
@@ -98,10 +101,11 @@ pub fn program(prog: Arc<Program>) -> (KernelProgram, Kinds) {
         d.str(&serde_json::to_string(&*prog).expect("compiled programs serialize"));
         d.finish()
     };
-    let kernel = KernelProgram::new(sig, t)
+    let mut kernel = KernelProgram::new(sig, t)
         .expect("the runtime rules are valid")
         .with_policy(RulesHold { prog, unit: k.unit })
         .with_fingerprint(hash);
+    kernel.limits.max_payload_bytes = UNIT_BYTES;
     (kernel, k)
 }
 

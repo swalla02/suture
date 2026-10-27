@@ -43,9 +43,9 @@ fn a_french_order_runs_end_to_end_on_the_kernel() {
 fn an_oversized_unit_is_reported_not_panicked() {
     let mut h = Host::new(shop());
     french(&mut h);
-    let big = data(&[("value", Val::Money(100)), ("contents", Val::Text("x".repeat(3_600)))]);
+    let big = data(&[("value", Val::Money(100)), ("contents", Val::Text("x".repeat(65_040)))]);
     let err = h.answer("forms", "filled", &big, None).unwrap_err();
-    assert!(err.contains("bytes, limit 4096"), "{err}");
+    assert!(err.contains("bytes, limit 65536"), "{err}");
 }
 
 #[test]
@@ -61,7 +61,7 @@ fn answers_with_no_pending_request_are_errors_not_panics() {
 fn a_faulted_step_is_journaled_and_replays() {
     let mut h = Host::new(shop());
     french(&mut h);
-    let big = data(&[("value", Val::Money(100)), ("contents", Val::Text("x".repeat(3_600)))]);
+    let big = data(&[("value", Val::Money(100)), ("contents", Val::Text("x".repeat(65_040)))]);
     h.answer("forms", "filled", &big, None).unwrap_err();
     let (digest, faults) = (h.machine.digest(), h.machine.faults().len());
     assert_eq!(faults, 1);
@@ -74,9 +74,9 @@ fn a_faulted_step_is_journaled_and_replays() {
 fn an_answer_too_large_to_deliver_keeps_its_request() {
     let mut h = Host::new(shop());
     french(&mut h);
-    let huge = data(&[("value", Val::Money(100)), ("contents", Val::Text("x".repeat(5_000)))]);
+    let huge = data(&[("value", Val::Money(100)), ("contents", Val::Text("x".repeat(66_440)))]);
     let err = h.answer("forms", "filled", &huge, None).unwrap_err();
-    assert!(err.contains("limit 4096"), "{err}");
+    assert!(err.contains("limit 65536"), "{err}");
     assert!(!h.trace.iter().any(|l| l.contains("xxxx")), "the trace must not say it was delivered");
     assert!(h.pending().iter().any(|a| a.adapter == "forms"));
     let fine = data(&[("value", Val::Money(100)), ("contents", Val::Text("books".into()))]);
