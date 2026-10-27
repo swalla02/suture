@@ -32,6 +32,18 @@ Changes are where the gap shows:
 - **Some bugs can't be written.** Solidus fixed a bug in which one customer's return item could cancel another order's return items (`2741034ae`). In Suture a unit can't touch another unit, so that path never existed, and the fix was one `where` clause.
 - **Suture doesn't always win.** In claims, adding a third payout type cost Suture +9 −4 lines against the baseline's +5 −4. In returns, adding a new reception state first cost Suture twice what it cost Solidus, until slice 25 added a state form. Each loss went on the roadmap. The write-ups list them all: [claims](eval/claims/RESULTS.md), [returns](eval/returns/RESULTS.md), [leave](eval/leave/RESULTS.md).
 
+### Rules against prompting
+
+On [RuleArena](https://github.com/skyriver-2000/RuleArena)'s airline task, a model reads the trip and the bags and Suture computes the fee:
+
+| On 244 test cases | Right |
+|---|---|
+| **Suture**, with the facts read by a typed model | **100%** |
+| `gpt-oss-120b` writing a Python program per case | 27.9% |
+| `gpt-oss-120b` asked for the answer | 21.3% |
+
+The models fall apart as cases grow: with 11 items, prompting got 8 of 76 right. Suture got all 76. These are early numbers: we wrote the Suture rules ourselves, the comparison model is a cheap one, and the cases come from one template. Rules written by an LLM, a reasoning model, and reworded cases come next. [The write-up](eval/rules/RESULTS.md) lists every caveat.
+
 ## What you stop writing
 
 | You'd normally write | In Suture |
