@@ -1241,7 +1241,23 @@ fn settle(prog: &Program, u: &mut Unit, out: &mut Out, now: i64) {
         // now, before the passes read it (appendix BO.2.4).
         let mut known = false;
         for at in positions(&u.root) {
-            known |= formulas(prog, &mut u.root, &u.facts, &at);
+            if !unset_formula(prog, node_at(&u.root, &at)) {
+                continue;
+            }
+            let before = u.root.clone();
+            if !formulas(prog, &mut u.root, &u.facts, &at) {
+                continue;
+            }
+            // The formulas of a node that would break a rule stay unknown,
+            // as a part that would break one waits (appendix BO.2.4).
+            if violated(prog, u).is_some() {
+                let now = std::mem::replace(&mut u.root, before);
+                if violated(prog, u).is_none() {
+                    continue;
+                }
+                u.root = now;
+            }
+            known = true;
         }
         let changed = known || positions(&u.root).iter().any(|at| {
             needs_pass(prog, u, at, now, out)
@@ -2101,16 +2117,17 @@ fn goals(prog: &Program, u: &mut Unit) {
     }
 }
 
-/// Whether the unit's node at `at` is in `state` (appendix B.3): `done`,
-/// `failed`, a Bool attribute, its effect's marks or outcomes, or a defined state.
 /// A defined value of the node at `at`, or `None` while what it reads is
-/// unknown or the node's kind defines no such value (appendix BO.2.3).
+/// unknown, or when there is no node at `at` or its kind defines no such
+/// value (appendix BO.2.3).
 pub fn value_of(prog: &Program, u: &Unit, at: &[usize], name: &str) -> Option<Val> {
-    let kind = &node_at(&u.root, at).kind;
-    let v = prog.values.iter().find(|v| v.kind == *kind && v.name == name)?;
+    let node = at.iter().try_fold(&u.root, |n, &i| n.parts.get(i))?;
+    let v = prog.values.iter().find(|v| v.kind == node.kind && v.name == name)?;
     num(prog, View::of(u), at, &v.calc)
 }
 
+/// Whether the unit's node at `at` is in `state` (appendix B.3): `done`,
+/// `failed`, a Bool attribute, its effect's marks or outcomes, or a defined state.
 pub fn in_state(prog: &Program, u: &Unit, at: &[usize], state: &str) -> bool {
     state_at(prog, View::of(u), at, state)
 }
@@ -2146,6 +2163,11 @@ pub fn holds(prog: &Program, u: &Unit, at: &[usize], c: &Cond) -> bool {
 
 /// The first rule the unit's state breaks, if any. A rule applies to a node
 /// only when its filter is known to hold.
+/// Whether a node has a formula attribute that is not set yet.
+fn unset_formula(prog: &Program, n: &Node) -> bool {
+    prog.kind(&n.kind).is_some_and(|k| k.attrs.iter().any(|a| a.formula.is_some() && !n.attrs.contains_key(&a.name)))
+}
+
 pub fn violated<'p>(prog: &'p Program, u: &Unit) -> Option<&'p Rule> {
     broken_rule(prog, View::of(u))
 }

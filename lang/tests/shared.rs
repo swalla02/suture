@@ -327,14 +327,15 @@ rule other: no Order has a Shipment unless its Refund's amount is at most 5 EUR
 
 #[test]
 fn a_formula_known_only_once_a_part_exists_is_not_fixed() {
-    let src = REFUNDS.replace("country: Country = customer's country }", "country: Country = customer's country, back: Money = its Refund's amount }");
+    let src = REFUNDS.replace("country: Country = customer's country }", "country: Country = customer's country, back: Money = its Note's amount }")
+        + "kind Note { order: Order, amount: Money = order's total }\nOrder needs Note\n";
     let p = prog(&format!(
         "{src}rule late: no Order has a Shipment unless its back is at most 5 EUR
 rule both: no Order has a Shipment or a Refund unless its total is at most 50 EUR
 "
     ));
     let rule = |n: &str| p.rules.iter().find(|r| r.name == n).unwrap();
-    assert!(!rule("late").fixed, "`back` is known only once a Refund exists");
+    assert!(!rule("late").fixed, "`back` is known only once a Note exists");
     assert!(rule("both").fixed);
 }
 

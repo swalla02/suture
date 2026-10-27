@@ -54,7 +54,7 @@ Every entity also has a built-in `created: Time`, the clock when it was created.
 What follows `=` decides whether an attribute is a default or a formula.
 
 - **A literal is a default.** `rare: Bool = no` starts as `no`, and a reaction or an admitted change may set it later.
-- **Anything else is a formula**, computed once when the entity is created and never changed afterwards.
+- **Anything else is a formula**, computed once, as soon as what it reads is known, and never changed afterwards.
 - **With no `=`, the attribute is required.** Every new entity must be given it, unless it comes from a source (chapter 14) or an effect's answer sets it (chapter 5). A state attribute starts in its first state, and an element's reference to its owner is set for it. An input that leaves one out is refused at the gate: `a new Leave needs its approver: it has no default`. In a scenario, a `given` that leaves one out fails its step.
 
 ```suture
@@ -63,7 +63,9 @@ kind Loan { member: Member, book: Book, days: Count,
             returned: Bool = no }
 ```
 
-A formula can read the entity's own given values, its other formulas, its list elements, its owner's attributes, and attributes of the entities it references. They are computed in whatever order they depend on each other; formulas that read each other in a circle are a compile error, and so is a formula that reads a value that only arrives later (an answer's data, or a part created by a need).
+A formula can read the entity's own given values, its other formulas, its list elements, its owner's attributes, and attributes of the entities it references. They are computed in whatever order they depend on each other; formulas that read each other in a circle are a compile error, and so is a formula that reads a value that only arrives later (an answer's data). A formula that reads a grant or a part is set once the grant or the part comes, but it may not read a part that a need may withdraw (`needs … while`) or a slot may replace, and it reads no state: it would outlive them. One whose value would break a rule stays unknown.
+
+A formula may decide: `0 USD if its size is at most 62, otherwise 30 USD if its size is at most 65, otherwise 200 USD`, and `the larger of its oversize and its overweight`. A value that must follow what it reads, a grant, a total or a state, is a defined value, never stored: `define: a Bag's fee is its Base's Rate's amount + (100 USD if it is heavy, otherwise 0 USD)` (chapter 7).
 
 Because a formula is computed once, it is how a fact is **carried**: `fee` keeps the book's fee as it was when the loan was made, even if the book's fee changes later. This is usually what the business means, and it is what keeps rules cheap (chapter 7).
 

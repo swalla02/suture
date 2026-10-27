@@ -32,12 +32,12 @@ pub struct Kinds {
     pub pick: KindId,
 }
 
-/// The kernel program for a compiled program. Its fingerprint pins the
-/// compiled program's hash (plan 1), so a journal replays only under the
-/// same program.
 /// The most a unit, or a message, holds: its encoded bytes (appendix BO.2.5).
 pub const UNIT_BYTES: usize = 64 << 10;
 
+/// The kernel program for a compiled program. Its fingerprint pins the
+/// compiled program's hash (plan 1), so a journal replays only under the
+/// same program.
 pub fn program(prog: Arc<Program>) -> (KernelProgram, Kinds) {
     let mut b = SigBuilder::new(&format!("suture:{}", prog.module), prog.version);
     let (mailbox, reply, route) = (b.polarized("Mailbox"), b.polarized("Reply"), b.polarized("Route"));

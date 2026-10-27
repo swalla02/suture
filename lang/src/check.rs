@@ -13,7 +13,8 @@ use crate::readback;
 
 /// Checks a parsed module and compiles it, reporting every error it finds.
 pub fn check(src: &Source) -> Result<Program, Vec<Error>> {
-    let mut cx = Checker { defines: src.defines.clone(), ..Checker::default() };
+    let values = src.values.iter().map(|v| (v.kind.clone(), v.name.clone())).collect();
+    let mut cx = Checker { defines: src.defines.clone(), values, ..Checker::default() };
     let prog = cx.program(src);
     if cx.errors.is_empty() { Ok(prog) } else { Err(cx.errors) }
 }
@@ -293,6 +294,17 @@ fn arith_type(op: char, lt: Ty, rt: Ty) -> Result<(Arith, Ty), String> {
     })
 }
 
+/// Whether `the larger of` two values of these types is one (appendix BO.2.2).
+fn pick_type(lt: Ty, rt: Ty) -> Result<(), String> {
+    if lt != rt {
+        return Err(format!("has one side a {lt:?} and the other a {rt:?}; both sides are of one type"));
+    }
+    if !matches!(lt, Ty::Money | Ty::Count | Ty::Duration | Ty::Time) {
+        return Err(format!("compares amounts, counts, durations or times, and these are {lt:?}"));
+    }
+    Ok(())
+}
+
 /// The type of `a * b / c`: a share of an amount when all three are
 /// amounts (appendix AB.2.1), and otherwise a product, then a quotient.
 fn product_quotient(ta: Ty, tb: Ty, tc: Ty) -> Result<Ty, String> {
@@ -355,6 +367,16 @@ fn reads_cand(n: &Num) -> bool {
     match n {
         Num::Path(p) => p.steps.contains(&Step::Cand),
         Num::Bin(x, _, y) => reads_cand(x) || reads_cand(y),
+        Num::Flag(c) => {
+            let mut reads = false;
+            cond_nums(c, &mut |m| reads |= reads_cand(m));
+            reads
+        }
+        Num::If { cases, otherwise } => {
+            let mut reads = false;
+            cases.iter().for_each(|(c, _)| cond_nums(c, &mut |m| reads |= reads_cand(m)));
+            reads || cases.iter().any(|(c, n)| !cond_values_only(c) || reads_cand(n)) || reads_cand(otherwise)
+        }
         _ => false,
     }
 }
@@ -468,6 +490,9 @@ struct Checker {
     /// `prefer` can be one (appendix BN.2.1), and how deep one is inlined.
     defines: Vec<ast::DefineDecl>,
     inlining: u8,
+    /// Every defined value as (kind, name), so that a reading where none is
+    /// read says why (appendix BO.2.3).
+    values: Vec<(String, String)>,
 }
 
 /// A relation across units (appendix F.2.11): from a Customer, `their
@@ -1574,6 +1599,10 @@ impl Checker {
 
     /// Formula attributes, once owners, lists and effects are known (appendix E.2.5).
     fn formulas(&mut self, src: &Source, p: &mut Program) {
+        // A part a need may withdraw, and a slot's alternatives, which it
+        // may replace: a formula, once set, would outlive them (appendix BO.2.4).
+        let mut going: Vec<String> = src.needs.iter().filter(|n| n.cond.is_some()).flat_map(|n| n.parts.clone()).collect();
+        going.extend(p.slots.iter().flat_map(|s| s.alternatives.iter().chain([&s.name]).cloned()));
         for k in &src.kinds {
             for a in &k.attrs {
                 let Some(f) = &a.formula else { continue };
@@ -1612,6 +1641,21 @@ impl Checker {
                 let Some((num, ty)) = num else { continue };
                 if ty != want {
                     self.errors.push(err(&k.at, format!("{}.{} is {want:?}, but its formula gives a {ty:?}", k.name, a.name)));
+                    continue;
+                }
+                let mut gone = None;
+                num_reads(p, &num, &mut |path, _| {
+                    let part = path.steps.iter().find_map(|s| match s {
+                        Step::Part(x) | Step::Slot(x) if going.contains(x) => Some(x.clone()),
+                        _ => None,
+                    });
+                    gone = gone.take().or(part);
+                });
+                if let Some(part) = gone {
+                    self.errors.push(err(
+                        &k.at,
+                        format!("{}.{} reads its {part}, which a need may withdraw or replace; a formula never changes once set, so a value that follows it is a define: `define: a {}'s {} is …`", k.name, a.name, k.name, a.name),
+                    ));
                     continue;
                 }
                 if let Some(why) = not_known_at_creation(p, &k.name, &num) {
@@ -2223,6 +2267,14 @@ impl Checker {
             }
             p.values.push(crate::ir::Value { kind: v.kind.clone(), name: v.name.clone(), ty, calc });
         }
+    }
+
+    /// Why a defined value is not read here, if `name` is one of `kind`'s.
+    fn value_hint(&self, kind: &str, name: &str) -> String {
+        if !self.values.iter().any(|(k, n)| k == kind && n == name) {
+            return String::new();
+        }
+        format!("; a {kind}'s {name} is a defined value, read only in its own unit, by rules, needs, goals, reactions and the values below it, never by a formula, a `uses` or a `prefer`")
     }
 
     /// `its fee`, `its Bag's fee`: a defined value, put in place of the
@@ -2845,12 +2897,8 @@ impl Checker {
             ast::Num::Pick { larger, a: x, b: y } => {
                 let (l, lt) = self.num(p, at, from, x)?;
                 let (r, rt) = self.num(p, at, from, y)?;
-                if lt != rt {
-                    self.errors.push(err(at, format!("`{}`: one side is a {lt:?} and the other a {rt:?}; both sides are of one type", show_num(n))));
-                    return None;
-                }
-                if !matches!(lt, Ty::Money | Ty::Count | Ty::Duration | Ty::Time) {
-                    self.errors.push(err(at, format!("`{}` compares amounts, counts, durations or times, and these are {lt:?}", show_num(n))));
+                if let Err(what) = pick_type(lt, rt) {
+                    self.errors.push(err(at, format!("`{}` {what}", show_num(n))));
                     return None;
                 }
                 Some((Num::Bin(Box::new(l), if *larger { Arith::Max } else { Arith::Min }, Box::new(r)), lt))
@@ -2899,7 +2947,7 @@ impl Checker {
                         return None;
                     }
                     None => {
-                        self.errors.push(err(at, format!("{} has no attribute {attr}", a(&kind))));
+                        self.errors.push(err(at, format!("{} has no attribute {attr}{}", a(&kind), self.value_hint(&kind, attr))));
                         return None;
                     }
                 };
@@ -3129,14 +3177,42 @@ impl Checker {
                 let inner = NounPhrase { head: Head::It, steps: np.steps[1..].to_vec() };
                 self.num(p, at, element, &ast::Num::Np(inner))
             }
+            // The owner's value, or its defined value, read from each element.
             ast::Num::Np(_) => {
                 let (num, ty) = self.num(p, at, owner, n)?;
-                let Num::Path(path) = num else { unreachable!("a noun phrase resolves to a path") };
-                let mut steps = vec![Step::Owner];
-                steps.extend(path.steps);
-                Some((Num::Path(Path { steps }), ty))
+                Some((rebase(&num, &[Step::Owner]), ty))
             }
             ast::Num::Lit(_) => self.num(p, at, owner, n),
+            // Its conditions are about the owner, as `its` is (appendix BO.2.1).
+            ast::Num::If { cases, otherwise } => {
+                let mut out = vec![];
+                let mut ty: Option<Ty> = None;
+                for (c, branch) in cases.iter().map(|(c, b)| (Some(c), b)).chain([(None, otherwise.as_ref())]) {
+                    let c = match c {
+                        Some(c) => Some(rebase_cond(&self.cond(p, at, owner, c)?, &[Step::Owner])),
+                        None => None,
+                    };
+                    let (b, t) = self.over(p, at, owner, element, names, branch)?;
+                    if let Some(first) = ty.filter(|f| *f != t) {
+                        self.errors.push(err(at, format!("`{}`: one branch gives a {first:?} and `{}` a {t:?}; every branch gives the same type", show_num(n), show_num(branch))));
+                        return None;
+                    }
+                    ty = Some(t);
+                    out.push((c, b));
+                }
+                let otherwise = Box::new(out.pop().expect("the otherwise branch").1);
+                let cases = out.into_iter().map(|(c, b)| (c.expect("a case has a condition"), b)).collect();
+                Some((Num::If { cases, otherwise }, ty.expect("a conditional has branches")))
+            }
+            ast::Num::Pick { larger, a: x, b: y } => {
+                let (l, lt) = self.over(p, at, owner, element, names, x)?;
+                let (r, rt) = self.over(p, at, owner, element, names, y)?;
+                if let Err(what) = pick_type(lt, rt) {
+                    self.errors.push(err(at, format!("`{}` {what}", show_num(n))));
+                    return None;
+                }
+                Some((Num::Bin(Box::new(l), if *larger { Arith::Max } else { Arith::Min }, Box::new(r)), lt))
+            }
             ast::Num::Bin(x, '/', y) if matches!(x.as_ref(), ast::Num::Bin(_, '*', _)) => {
                 let ast::Num::Bin(a, _, b) = x.as_ref() else { unreachable!("matched above") };
                 let (na, ta) = self.over(p, at, owner, element, names, a)?;
@@ -3374,7 +3450,7 @@ impl Checker {
             if shared {
                 self.errors.push(err(
                     at,
-                    format!("`{}`: {} is shared, so only its attributes can be read, and it has no attribute `{w}`", show(np), self::a(&cur)),
+                    format!("`{}`: {} is shared, so only its attributes can be read, and it has no attribute `{w}`{}", show(np), self::a(&cur), self.value_hint(&cur, w)),
                 ));
                 return None;
             }
@@ -3398,7 +3474,7 @@ impl Checker {
                     cur = o.kind.clone();
                 }
                 None => {
-                    self.errors.push(err(at, format!("{} has no attribute, part or owner called `{w}`", a(&cur))));
+                    self.errors.push(err(at, format!("{} has no attribute, part or owner called `{w}`{}", a(&cur), self.value_hint(&cur, w))));
                     return None;
                 }
             }

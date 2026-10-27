@@ -217,3 +217,62 @@ fn a_scenario_expects_a_defined_value() {
     let r = suture_runtime::scenario::run(&compile(LIVE), sc);
     assert!(r.passed(), "{:?}", r.failures);
 }
+
+#[test]
+fn a_defined_value_and_a_conditional_are_read_in_a_total_over_a_list() {
+    let src = "module m version 1, currency USD
+kind Order { vip: Bool, lines: list of Line, cap: Money }
+kind Line { order: Order, price: Money }
+define: an Order's rate is 2 if its vip is yes, otherwise 1
+rule capped: every Order's cap is at least the total of the line's price * its rate over its lines
+rule plain: every Order's cap is at least the total of (the line's price if its vip is yes, otherwise 0 USD) over its lines
+";
+    compile(src);
+}
+
+#[test]
+fn a_pool_key_that_reads_the_candidate_in_a_conditional_is_no_key() {
+    let src = RATES.replace(
+        "Base uses a Rate where the Rate's nth is the Bag's nth",
+        "Base uses a Rate where the Rate's nth is (1 if the Rate's amount is more than 50 USD, otherwise 2) and the Rate's nth is the Bag's nth",
+    );
+    let mut h = Host::new(compile(&src));
+    h.create("Rate", "R1", &attrs(&[("nth", Val::Count(2)), ("amount", Val::Money(3500))])).unwrap();
+    h.create("Bag", "B1", &attrs(&[("nth", Val::Count(2))])).unwrap();
+    assert_eq!(attr(&h, "B1", "fee"), Some(Val::Money(3500)));
+}
+
+#[test]
+fn a_formula_reads_no_part_that_may_be_withdrawn_or_replaced() {
+    let e = compile_err("module m version 1, currency USD
+kind Order { big: Bool, cost: Money = its Shipment's price }
+kind Shipment { order: Order, price: Money }
+Order needs Shipment while it is big
+");
+    assert!(e.contains("Shipment") && e.contains("define"), "{e}");
+}
+
+#[test]
+fn a_formula_that_would_break_a_rule_stays_unknown() {
+    let src = format!("{RATES}rule cheap: every Bag's fee is at most 100 USD\n");
+    let mut h = Host::new(compile(&src));
+    h.create("Rate", "R1", &attrs(&[("nth", Val::Count(1)), ("amount", Val::Money(15000))])).unwrap();
+    h.create("Bag", "B1", &attrs(&[("nth", Val::Count(1))])).unwrap();
+    assert!(h.machine.faults().is_empty(), "{:?}", h.machine.faults());
+    assert_eq!(attr(&h, "B1", "fee"), None);
+}
+
+#[test]
+fn a_value_at_no_part_is_none() {
+    let mut h = Host::new(compile(LIVE));
+    h.create("Bag", "B1", &attrs(&[("nth", Val::Count(1)), ("weight", Val::Count(40))])).unwrap();
+    assert_eq!(h.value("B1", &[5], "surcharge"), None);
+}
+
+#[test]
+fn a_value_where_none_is_read_says_why() {
+    let e = compile_err(&LIVE.replace("rule light:", "prefer Bag: highest fee\nrule light:").replace("kind Base { bag: Bag }", "kind Base { bag: Bag }\nkind Tote { trip: Count }\nkind Pick { tote: Tote }\nTote needs Pick\nPick uses a Bag where the Bag's nth is the Tote's trip"));
+    assert!(e.contains("a Bag's fee is a defined value, read only in its own unit"), "{e}");
+    let e = compile_err("module m version 1, currency USD\nkind Bag { size: Count, twice: Count = its double }\ndefine: a Bag's double is its size * 2\n");
+    assert!(e.contains("a Bag's double is a defined value"), "{e}");
+}
