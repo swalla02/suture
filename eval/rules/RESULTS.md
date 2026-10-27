@@ -60,10 +60,14 @@ Each test case was given three variants, with the same facts and the same true a
 |---|---|---|---|---|---|---|
 | **S1, extracted facts** | **244** | **244** | **241** | **243** | **240** | **240** |
 | R, extracted facts | 244 | 244 | 241 | 243 | 240 | 240 |
+| P2, reasoning model | 239 | 216 | 233 | 238 | 204 | 204 |
 | P1, prompting | 52 | 35 | 53 | 54 | 8 | 11 |
 | P3, code per case | 68 | 58 | 53 | 62 | 9 | 10 |
 
-The table counts cases right, out of 244. On "right on all 4", S1 beats P1 by +95.1 points, with interval [+92.2, +97.5] and McNemar p = 3e-70. It beats P3 by +94.7 points, with interval [+91.8, +97.1]. Neither model was right on a case where S1 was wrong.
+The table counts cases right, out of 244. P2 is the next section's reasoning model. On "right on all 4":
+- S1 beats P1 by +95.1 points, with interval [+92.2, +97.5] and McNemar p = 3e-70.
+- S1 beats P3 by +94.7 points, with interval [+91.8, +97.1].
+- S1 beats P2 by +14.8 points, with interval [+9.8, +19.7] and p = 6e-9. S1 alone was right on 39 cases, P2 alone on 3: S1's three misreads.
 
 All three of S1's wrong answers come from one extraction question, the region:
 - two noisy trips, from Canada and from Panama, were read as within the U.S.;
@@ -75,44 +79,45 @@ Writing the variants cost $0.07. Asking every setup on them cost $1.60, of which
 
 ## A reasoning model (Stage 2, step 2)
 
-P2 is `deepseek/deepseek-v4-pro` at high reasoning effort, given RuleArena's prompt as P1 is (spec, stage 2 step 2). It answered 100 test cases, chosen by a keyed hash and listed in `airline/p2.txt`, once each on the original text. Before any of them, it was priced on 8 dev cases and got all 8 right. The harness was frozen at tag `rules-airline-p2-frozen` before the test cases were asked.
+P2 is `deepseek/deepseek-v4-pro` at high reasoning effort, given RuleArena's prompt as P1 is (spec, stage 2 step 2). It answered every test case and every variant, once each. Before that it was priced on 8 dev cases and got all 8 right. Those dev answers are kept but not scored.
 
-| setup, on P2's 100 cases | right | $ per case | s per case |
-|---|---|---|---|
-| **S1, extracted facts** | **100** | 0.00061 | 1.0 |
-| P2, reasoning model | 98 | 0.0124 | 61 |
-| P3, code per case | 32 | 0.00029 | 27 |
-| P1, prompting | 20 | 0.00036 | 31 |
+| setup, 244 test cases | right | 5 items | 8 items | 11 items | $ per case | s per case |
+|---|---|---|---|---|---|---|
+| **S1, extracted facts** | **244** | 82 of 82 | 86 of 86 | 76 of 76 | 0.00064 | 1.0 |
+| P2, reasoning model | 239 | 80 of 82 | 86 of 86 | 73 of 76 | 0.0126 | 62 |
+| P3, code per case | 68 | 26 of 82 | 21 of 86 | 21 of 76 | 0.00029 | 27 |
+| P1, prompting | 52 | 26 of 82 | 18 of 86 | 8 of 76 | 0.00035 | 30 |
 
 | comparison | only first right | only second right | difference | 95% bootstrap interval | exact McNemar p |
 |---|---|---|---|---|---|
-| S1 extracted − P2 | 2 | 0 | +2.0 pts | [0, +5.0] | 0.5 |
-| P2 − P1 | 78 | 0 | +78.0 pts | [+70.0, +86.0] | 7e-24 |
-| P2 − P3 | 66 | 0 | +66.0 pts | [+57.0, +75.0] | 3e-20 |
+| S1 extracted − P2, original text | 5 | 0 | +2.0 pts | [+0.4, +4.1] | 0.06 |
+| S1 extracted − P2, right on all 4 | 39 | 3 | +14.8 pts | [+9.8, +19.7] | 6e-9 |
+| P2 − P1 | 187 | 0 | +76.6 pts | [+71.3, +82.0] | 1e-56 |
+| P2 − P3 | 171 | 0 | +70.1 pts | [+64.3, +75.8] | 7e-52 |
 
-**The reasoning model closes the accuracy gap.** On these cases S1 and P2 cannot be told apart. P2 missed one case with 5 items and one with 11, overcharging by $210 and $140, and got 45 of 45 cases with 8 items. The sample is light on the hardest level: 23 cases with 11 items, against 76 of 244 in all of test.
+**On the original text, the reasoning model nearly closes the gap:** 239 against 244, which falls short of significance. **On the same trips written four ways, it does not.** P2 was right on all four versions of 204 cases, against 240 for S1, and gave one answer on all four only for those same 204. Prose costs it the most (216 of 244 right).
 
-What is left between them:
-- **Cost:** S1 costs about a twentieth as much.
-- **Time:** S1 takes about a sixtieth as long.
-- **Errors:** S1's errors are in reading the facts, which can be checked. P2's errors are inside 6,800 tokens of reasoning on average.
+Its errors are fresh ones, made in the reasoning rather than in reading the facts. 43 of its 50 wrong answers overcharge, by $140 at the median and by up to $1,000.
 
-P2 was not asked on the variants, so its consistency across wordings is not measured.
+Beyond consistency, S1 has the edge on:
+- **Cost:** about a twentieth of P2's per case.
+- **Time:** about a sixtieth.
 
-P2 cost $1.37: $0.13 to price it on dev, and $1.24 for the test cases. The experiment has cost $3.73 so far.
+P2 cost $11.95: $0.13 to price it on dev, $3.07 for the test cases and $8.76 for the variants. The experiment has cost $14.31 so far. The user added $10 of credit for P2 on the complete test set.
 
 ## The hypotheses
 
-- **H1, accuracy: holds for airline against the cheap model only**, P1 and P3, whose intervals are far from zero. Against P2, the reasoning model, it does not hold: 100 against 98 of 100, p = 0.5. On airline, Suture's edge over a reasoning model is cost, time, and errors that can be checked, not accuracy.
+- **H1, accuracy: holds for airline against the cheap model**, P1 and P3, whose intervals are far from zero. **Against P2, the reasoning model, it holds only across wordings.** On the original text the gap is 244 against 239, with p = 0.06. Right on all four versions, it is 240 against 204, with p = 6e-9.
 - **H2, error source: holds.** S1 equals R on all 300 cases and on 400 random trips that reach the parts of the policy the cases leave untried (`sutured.rs`): every region and class, bags from 30 to 130 lbs and 45 to 145 in. Where the policy text says "Not accepted" (over 70 lbs to or from Europe, Israel, Qatar, Australia and New Zealand), or gives no fee at all (over 100 lbs, over 115 in), RuleArena's script charges a fee anyway: the 70–100 lbs fee of other regions ($200), or its top tier. S1 follows the script, since its answers are the ground truth. The generator never makes such a bag, but an extraction error could. With extracted facts S1 is still exact, so the extraction error that remains, 2 misread directions, never changes an answer.
-- **H4, consistency: holds**, across runs and across rewordings. Suture's answer was the same on every run because the extraction answers were. P1 gave three equal answers on 3 of 57 cases, P3 on 12. Over the case and its three variants, Suture gave one answer on 240 of 244 cases, P1 on 11 and P3 on 10.
+- **H4, consistency: holds**, across runs and across rewordings. Suture's answer was the same on every run because the extraction answers were. P1 gave three equal answers on 3 of 57 cases, P3 on 12. Over the case and its three variants, Suture gave one answer on 240 of 244 cases, P2 on 204, P1 on 11 and P3 on 10.
 - H3, H5, H6: later stages.
 
 ## How far to trust this
 
 - **S1 is not held out the way the models are.** We checked it against R on all 300 cases while writing it, test included, because getting the rules exactly right is the point of a hand-written program. What test measures for S1 is extraction. A fair test of *authoring* is S2 (an LLM writes the Suture rules, H3), in Stage 2.
 - **The cases are easy to read.** RuleArena generates every case from one template, so the typed questions had little to get wrong. The variants make reading harder, but only moderately: the rewording keeps each item's numbers together and in order. That is where S1's only errors came from (3 of 731 variants). Text that is messier still, such as numbers in words or facts spread across a conversation, is not tested.
-- **P1 is the cheap arm.** Low reasoning effort, as the spec's P1 is "one cheap open model". A reasoning model, P2, got 98 of 100, so the large accuracy gaps above are gaps to a cheap model.
+- **P1 is the cheap arm.** Low reasoning effort, as the spec's P1 is "one cheap open model". The large accuracy gaps are gaps to a cheap model. Against the reasoning model, P2, the gap on the original text is 5 cases of 244.
+- **P2 ran once per version.** Its own run-to-run consistency on one text was not measured.
 - **Fewer runs than the spec asks.** Three runs on a seeded sample of 57 test cases (`sample.txt`), one on the rest, to keep the stage under $2. Dev had three runs of everything.
 - **R is in Rust, not Python.** It is a rewrite of the generator's own script, checked by hand against the script's logic. The spec asked for plain Python.
 

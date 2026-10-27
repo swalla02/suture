@@ -44,7 +44,7 @@ On [RuleArena](https://github.com/skyriver-2000/RuleArena)'s airline task, a mod
 
 The cheap models fall apart as cases grow. With 11 items, prompting got 8 of 76 right, and Suture got all 76. Each case was also written three more ways: as prose, with irrelevant detail, and in another order. Suture was right on all four versions of 240 of 244 cases. Its 4 misses were misread regions. The cheap models managed 8 (prompting) and 9 (Python per case).
 
-A reasoning model is as accurate. `deepseek-v4-pro` at high effort got 98 of 100 test cases right, where Suture got 100. But it cost $0.012 a case against Suture's $0.0006, and took 61 s against 1 s. There, Suture's edge is cost, speed, and errors you can check.
+A reasoning model nearly closes the gap on RuleArena's own text. `deepseek-v4-pro` at high effort got 239 of 244 right. It does not close it on the trips written other ways: it was right on all four versions of 204 cases, where Suture was right on 240. It also cost $0.013 a case against Suture's $0.0006, and took 62 s against 1 s.
 
 These are early numbers. We wrote the Suture rules ourselves, and the cases come from one template. Rules written by an LLM come next. [The write-up](eval/rules/RESULTS.md) lists every caveat.
 
