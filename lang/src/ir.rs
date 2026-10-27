@@ -644,6 +644,9 @@ pub enum Num {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         group: bool,
     },
+    /// The value of the first case whose condition holds, else `otherwise`;
+    /// unknown at the first condition that is unknown (appendix BO.2.1).
+    If { cases: Vec<(Cond, Num)>, otherwise: Box<Num> },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -661,6 +664,9 @@ pub enum Arith {
     /// `the work time from x to y`: the Duration the program's calendar
     /// number n works between them (appendix BL.2.2).
     Working(u16),
+    /// `the larger of x and y`, `the smaller of x and y` (appendix BO.2.2).
+    Max,
+    Min,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

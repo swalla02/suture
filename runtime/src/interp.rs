@@ -2312,6 +2312,16 @@ fn num(prog: &Program, v: View, at: &[usize], n: &Num) -> Option<Val> {
             T::No => Some(Val::Count(0)),
             T::Unknown => None,
         },
+        Num::If { cases, otherwise } => {
+            for (c, n) in cases {
+                match eval(prog, v, at, c) {
+                    T::Yes => return num(prog, v, at, n),
+                    T::No => {}
+                    T::Unknown => return None,
+                }
+            }
+            num(prog, v, at, otherwise)
+        }
         Num::Sum { of, kind, calc, filter, ty } => {
             let mut total = zero(*ty);
             for pos in relation(prog, v, at, of, kind, filter.as_deref())? {
@@ -2495,12 +2505,18 @@ fn arith(x: Val, op: Arith, y: Val) -> Option<Val> {
         Arith::Sub => a.checked_sub(b),
         Arith::Mul => a.checked_mul(b),
         Arith::Div => a.checked_div(b),
+        Arith::Max => Some(a.max(b)),
+        Arith::Min => Some(a.min(b)),
         Arith::Days | Arith::Weekdays | Arith::Working(_) => None,
     };
     match (x, y) {
         // Calendar days in UTC, both counted: none or fewer when `b` is before `a` (appendix AN.2.2).
         (Val::Time(a), Val::Time(b)) if op == Arith::Days => Some(Val::Count(b.div_euclid(86_400) - a.div_euclid(86_400) + 1)),
         (Val::Time(a), Val::Time(b)) if op == Arith::Weekdays => Some(Val::Count(weekdays(a.div_euclid(86_400), b.div_euclid(86_400)))),
+        // The larger or smaller of two values of one type (appendix BO.2.2).
+        (Val::Money(a), Val::Money(b)) if matches!(op, Arith::Max | Arith::Min) => f(a, b).map(Val::Money),
+        (Val::Time(a), Val::Time(b)) if matches!(op, Arith::Max | Arith::Min) => f(a, b).map(Val::Time),
+        (Val::Duration(a), Val::Duration(b)) if matches!(op, Arith::Max | Arith::Min) => f(a, b).map(Val::Duration),
         (Val::Money(a), Val::Money(b)) if matches!(op, Arith::Add | Arith::Sub) => f(a, b).map(Val::Money),
         (Val::Money(a), Val::Count(b)) if matches!(op, Arith::Mul | Arith::Div) => f(a, b).map(Val::Money),
         (Val::Count(a), Val::Money(b)) if op == Arith::Mul => f(a, b).map(Val::Money),

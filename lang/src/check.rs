@@ -99,6 +99,11 @@ fn show_num(n: &ast::Num) -> String {
         ast::Num::Run { of, .. } => format!("the days in a row of {}", show(of)),
         ast::Num::Days { from, to, weekdays } => format!("the {} from {} to {}", if *weekdays { "weekdays" } else { "days" }, show_num(from), show_num(to)),
         ast::Num::Working { calendar, from, to } => format!("the {calendar} time from {} to {}", show_num(from), show_num(to)),
+        ast::Num::If { cases, otherwise } => {
+            let cases: Vec<String> = cases.iter().map(|(_, n)| format!("{} if …", show_num(n))).collect();
+            format!("{}, otherwise {}", cases.join(", otherwise "), show_num(otherwise))
+        }
+        ast::Num::Pick { larger, a, b } => format!("the {} of {} and {}", if *larger { "larger" } else { "smaller" }, show_num(a), show_num(b)),
     }
 }
 
@@ -135,6 +140,24 @@ fn not_known_at_creation(p: &Program, kind: &str, n: &Num) -> Option<String> {
         // its value at creation (appendix AA.2.3).
         Num::Taken { kind: k, .. } if !k.is_empty() => None,
         Num::Taken { name, .. } => Some(format!("the total {name} taken from it, which changes")),
+        Num::If { cases, otherwise } => cases
+            .iter()
+            .find_map(|(c, n)| cond_not_known_at_creation(p, kind, c).or_else(|| not_known_at_creation(p, kind, n)))
+            .or_else(|| not_known_at_creation(p, kind, otherwise)),
+    }
+}
+
+/// Why a condition in a formula cannot be known once and for all, if it
+/// cannot: a formula never changes once set, so it reads no state that does.
+fn cond_not_known_at_creation(p: &Program, kind: &str, c: &Cond) -> Option<String> {
+    match c {
+        Cond::Cmp { left, right, .. } | Cond::Contains { set: left, item: right, .. } => not_known_at_creation(p, kind, left).or_else(|| not_known_at_creation(p, kind, right)),
+        Cond::And(cs) | Cond::Or(cs) => cs.iter().find_map(|c| cond_not_known_at_creation(p, kind, c)),
+        Cond::State { state, .. } if !p.kinds.iter().any(|k| k.attr(state).is_some_and(|a| a.ty == Ty::Bool)) => Some(format!(
+            "whether it is {state}, which changes; a formula is computed once, so a value that follows a state is a define: `define: a {kind}'s x is …`"
+        )),
+        Cond::State { .. } => None,
+        Cond::Has { .. } => Some(format!("what parts it has, which changes; a formula is computed once, so a value that follows its parts is a define: `define: a {kind}'s x is …`")),
     }
 }
 
@@ -201,6 +224,14 @@ fn formula_cycle(p: &Program, kind: &str) -> Option<Vec<String>> {
                 Num::Bin(x, _, y) => {
                     walk(x, out);
                     walk(y, out);
+                }
+                Num::Flag(c) => cond_nums(c, &mut |m| walk(m, out)),
+                Num::If { cases, otherwise } => {
+                    for (c, n) in cases {
+                        cond_nums(c, &mut |m| walk(m, out));
+                        walk(n, out);
+                    }
+                    walk(otherwise, out);
                 }
                 _ => {}
             }
@@ -285,6 +316,7 @@ fn body_sums(b: &Body) -> bool {
             Num::Sum { .. } | Num::Count { .. } | Num::Taken { .. } => true,
             Num::Bin(x, _, y) => num(x) || num(y),
             Num::Flag(c) => cond(c),
+            Num::If { cases, otherwise } => cases.iter().any(|(c, n)| cond(c) || num(n)) || num(otherwise),
             Num::Path(_) | Num::Lit(_) => false,
         }
     }
@@ -541,6 +573,13 @@ fn key_reads(p: &Program, b: &Binding) -> Vec<(String, String)> {
                 num(p, from, x, out);
                 num(p, from, y, out);
             }
+            Num::If { cases, otherwise } => {
+                for (c, n) in cases {
+                    cond_nums(c, &mut |m| num(p, from, m, out));
+                    num(p, from, n, out);
+                }
+                num(p, from, otherwise, out);
+            }
             _ => {}
         }
     }
@@ -585,6 +624,14 @@ fn others_totals(p: &Program, r: &Rule) -> Vec<(String, String)> {
                 }
             }
             Num::Count { filter: Some(f), .. } => cond(p, f, seen, out),
+            Num::Flag(c) => cond(p, c, seen, out),
+            Num::If { cases, otherwise } => {
+                for (c, n) in cases {
+                    cond(p, c, seen, out);
+                    num(p, n, seen, out);
+                }
+                num(p, otherwise, seen, out);
+            }
             _ => {}
         }
     }
@@ -651,6 +698,27 @@ fn rule_reads(p: &Program, r: &Rule, see: &mut dyn FnMut(&Path, Option<&str>)) {
     }
 }
 
+/// The calculations a condition compares, at any depth of `and` and `or`.
+fn cond_nums(c: &Cond, see: &mut dyn FnMut(&Num)) {
+    match c {
+        Cond::Cmp { left, right, .. } | Cond::Contains { set: left, item: right, .. } => {
+            see(left);
+            see(right);
+        }
+        Cond::And(cs) | Cond::Or(cs) => cs.iter().for_each(|c| cond_nums(c, see)),
+        Cond::State { .. } | Cond::Has { .. } => {}
+    }
+}
+
+/// Whether a condition only compares values: no state, no parts.
+fn cond_values_only(c: &Cond) -> bool {
+    match c {
+        Cond::Cmp { .. } | Cond::Contains { .. } => true,
+        Cond::And(cs) | Cond::Or(cs) => cs.iter().all(cond_values_only),
+        Cond::State { .. } | Cond::Has { .. } => false,
+    }
+}
+
 fn num_reads(p: &Program, n: &Num, see: &mut dyn FnMut(&Path, Option<&str>)) {
     match n {
         Num::Path(x) => see(x, match x.steps.last() { Some(Step::Attr(a)) => Some(a.as_str()), _ => None }),
@@ -665,6 +733,14 @@ fn num_reads(p: &Program, n: &Num, see: &mut dyn FnMut(&Path, Option<&str>)) {
             }
         }
         Num::Count { filter: Some(f), .. } => cond_reads(p, f, see),
+        Num::Flag(c) => cond_reads(p, c, see),
+        Num::If { cases, otherwise } => {
+            for (c, n) in cases {
+                cond_reads(p, c, see);
+                num_reads(p, n, see);
+            }
+            num_reads(p, otherwise, see);
+        }
         _ => {}
     }
 }
@@ -767,6 +843,11 @@ fn changeable_formulas(p: &Program) -> Vec<String> {
             Num::Bin(a, _, b) => reads(a, ch) || reads(b, ch),
             Num::Flag(c) => matches!(c.as_ref(), Cond::Cmp { left, .. } if reads(left, ch)),
             Num::Sum { .. } | Num::Count { .. } | Num::Taken { .. } => true,
+            Num::If { cases, otherwise } => {
+                let mut cond = false;
+                cases.iter().for_each(|(c, _)| cond_nums(c, &mut |m| cond |= reads(m, ch)));
+                cond || cases.iter().any(|(c, n)| !cond_values_only(c) || reads(n, ch)) || reads(otherwise, ch)
+            }
         }
     }
     let mut ch = changeable(p);
@@ -863,6 +944,11 @@ fn fixed_rule(p: &Program, r: &Rule) -> bool {
             Num::Bin(a, _, b) => num(a, path) && num(b, path),
             Num::Flag(c) => matches!(c.as_ref(), Cond::Cmp { left, .. } if num(left, path)),
             Num::Sum { .. } | Num::Count { .. } | Num::Taken { .. } => false,
+            Num::If { cases, otherwise } => {
+                let mut fixed = true;
+                cases.iter().for_each(|(c, _)| cond_nums(c, &mut |m| fixed &= num(m, path)));
+                fixed && cases.iter().all(|(c, n)| cond_values_only(c) && num(n, path)) && num(otherwise, path)
+            }
         }
     }
     fn cond(p: &Program, c: &Cond, ch: &[String], parts: &[(Vec<Step>, String)], path: &dyn Fn(&Path) -> bool) -> bool {
@@ -924,6 +1010,7 @@ fn per_period(b: &Body) -> bool {
         match n {
             Num::Taken { period, .. } => period.is_some(),
             Num::Bin(x, _, y) => num(x) || num(y),
+            Num::If { cases, otherwise } => cases.iter().any(|(c, n)| cond(c) || num(n)) || num(otherwise),
             _ => false,
         }
     }
@@ -2638,6 +2725,46 @@ impl Checker {
                     return None;
                 }
                 Some((Num::Bin(Box::new(l), if *weekdays { Arith::Weekdays } else { Arith::Days }, Box::new(r)), Ty::Count))
+            }
+            ast::Num::If { cases, otherwise } => {
+                let mut out = vec![];
+                let mut ty: Option<Ty> = None;
+                for (c, branch) in cases.iter().map(|(c, b)| (Some(c), b)).chain([(None, otherwise.as_ref())]) {
+                    let c = match c {
+                        Some(c) => Some(self.cond(p, at, from, c)?),
+                        None => None,
+                    };
+                    let (b, t) = self.num(p, at, from, branch)?;
+                    if matches!(t, Ty::Ref | Ty::Set) {
+                        let what = if t == Ty::Ref { "a reference" } else { "a set" };
+                        self.errors.push(err(at, format!("`{}`: each branch gives a value, and `{}` gives {what}", show_num(n), show_num(branch))));
+                        return None;
+                    }
+                    match ty {
+                        Some(first) if first != t => {
+                            self.errors.push(err(at, format!("`{}`: one branch gives a {first:?} and `{}` a {t:?}; every branch gives the same type", show_num(n), show_num(branch))));
+                            return None;
+                        }
+                        _ => ty = Some(t),
+                    }
+                    out.push((c, b));
+                }
+                let otherwise = Box::new(out.pop().expect("the otherwise branch").1);
+                let cases = out.into_iter().map(|(c, b)| (c.expect("a case has a condition"), b)).collect();
+                Some((Num::If { cases, otherwise }, ty.expect("a conditional has branches")))
+            }
+            ast::Num::Pick { larger, a: x, b: y } => {
+                let (l, lt) = self.num(p, at, from, x)?;
+                let (r, rt) = self.num(p, at, from, y)?;
+                if lt != rt {
+                    self.errors.push(err(at, format!("`{}`: one side is a {lt:?} and the other a {rt:?}; both sides are of one type", show_num(n))));
+                    return None;
+                }
+                if !matches!(lt, Ty::Money | Ty::Count | Ty::Duration | Ty::Time) {
+                    self.errors.push(err(at, format!("`{}` compares amounts, counts, durations or times, and these are {lt:?}", show_num(n))));
+                    return None;
+                }
+                Some((Num::Bin(Box::new(l), if *larger { Arith::Max } else { Arith::Min }, Box::new(r)), lt))
             }
             ast::Num::Bin(x, op, y) => {
                 // In arithmetic, a Bool counts 1 for yes and 0 for no (appendix BN.2.5).

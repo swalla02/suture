@@ -86,6 +86,11 @@ pub enum Num {
     /// `the work time from … to …`: the time a calendar works between two
     /// times (appendix BL).
     Working { calendar: String, from: Box<Num>, to: Box<Num> },
+    /// `a if c, otherwise b if d, otherwise e`: the first value whose
+    /// condition holds (appendix BO.2.1).
+    If { cases: Vec<(Cond, Num)>, otherwise: Box<Num> },
+    /// `the larger of a and b`, `the smaller of a and b` (appendix BO.2.2).
+    Pick { larger: bool, a: Box<Num>, b: Box<Num> },
 }
 
 /// What follows `is`: a literal, a noun phrase, or a bare word that the

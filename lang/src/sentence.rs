@@ -323,13 +323,32 @@ fn term(c: &mut Cursor) -> Result<Term, Error> {
 
 /// A calculation: sums of products, `×` and `/` binding tighter (appendix E.2.3).
 pub fn calc_expr(c: &mut Cursor) -> Result<Num, Error> {
-    sum_of(c, false)
+    cases(c, false)
 }
 
 /// A formula after `=` in a kind (appendix E.2.5): a calculation in which a
 /// bare attribute stands for the entity's own (`seats * 12 EUR`, `order's total`).
 pub fn calc_formula(c: &mut Cursor) -> Result<Num, Error> {
-    sum_of(c, true)
+    cases(c, true)
+}
+
+/// A calculation, or `a if c, otherwise b`, chained as `… otherwise b if d,
+/// otherwise e` (appendix BO.2.1). The conditions are written as in a rule.
+fn cases(c: &mut Cursor, bare: bool) -> Result<Num, Error> {
+    let mut value = sum_of(c, bare)?;
+    if !c.is_word("if") {
+        return Ok(value);
+    }
+    let mut cases = vec![];
+    while c.eat_word("if") {
+        let cond = condition(c)?;
+        cases.push((cond, value));
+        if !(c.eat_sym(',') && c.eat_word("otherwise")) {
+            return Err(c.error(format!("expected `, otherwise` and a value after a condition in a calculation, found {}: as in `0 USD if its size is at most 62, otherwise 30 USD`", c.found())));
+        }
+        value = sum_of(c, bare)?;
+    }
+    Ok(Num::If { cases, otherwise: Box::new(value) })
 }
 
 fn sum_of(c: &mut Cursor, bare: bool) -> Result<Num, Error> {
@@ -371,9 +390,21 @@ fn atom(c: &mut Cursor, bare: bool) -> Result<Num, Error> {
 
 fn atom_in(c: &mut Cursor, bare: bool) -> Result<Num, Error> {
     if c.eat_sym('(') {
-        let n = sum_of(c, bare)?;
+        let n = cases(c, bare)?;
         c.expect_sym(')')?;
         return Ok(n);
+    }
+    // `the larger of a and b`: each side one value, as in `the days from` (appendix BO.2.2).
+    if word_at(c, 0, "the") && (word_at(c, 1, "larger") || word_at(c, 1, "smaller")) && word_at(c, 2, "of") {
+        c.expect_word("the")?;
+        let larger = c.eat_word("larger");
+        if !larger {
+            c.expect_word("smaller")?;
+        }
+        c.expect_word("of")?;
+        let a = Box::new(atom(c, bare)?);
+        c.expect_word("and")?;
+        return Ok(Num::Pick { larger, a, b: Box::new(atom(c, bare)?) });
     }
     if word_at(c, 0, "the") && word_at(c, 1, "total") && word_at(c, 2, "of") {
         c.expect_word("the")?;
@@ -724,7 +755,8 @@ fn each_in_cond(c: &Cond) -> Option<String> {
         };
         match n {
             Num::Np(x) | Num::Total { of: x, .. } | Num::Number { of: x, .. } | Num::Taken { from: x, .. } | Num::Run { of: x, .. } => np(x),
-            Num::Bin(a, _, b) | Num::Days { from: a, to: b, .. } | Num::Working { from: a, to: b, .. } => num(a).or_else(|| num(b)),
+            Num::Bin(a, _, b) | Num::Days { from: a, to: b, .. } | Num::Working { from: a, to: b, .. } | Num::Pick { a, b, .. } => num(a).or_else(|| num(b)),
+            Num::If { cases, otherwise } => cases.iter().find_map(|(c, n)| each_in_cond(c).or_else(|| num(n))).or_else(|| num(otherwise)),
             Num::Over { list, .. } => np(list),
             Num::Lit(_) => None,
         }

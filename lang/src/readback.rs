@@ -147,8 +147,13 @@ fn num_formula(p: &Program, kind: &str, v: &str, n: &Num) -> String {
     match n {
         Num::Path(x) => path_formula(p, kind, v, x),
         Num::Lit(l) => lit_text(p, l),
+        Num::Bin(x, op @ (Arith::Max | Arith::Min), y) => format!("{}({}, {})", if *op == Arith::Max { "max" } else { "min" }, num_formula(p, kind, v, x), num_formula(p, kind, v, y)),
         Num::Bin(x, op, y) => bin(p, *op, x, y, |m| num_formula(p, kind, v, m)),
         Num::Flag(c) => format!("({} ? 1 : 0)", cond_formula(p, kind, v, c)),
+        Num::If { cases, otherwise } => {
+            let cases: String = cases.iter().map(|(c, n)| format!("{} ? {} : ", cond_formula(p, kind, v, c), num_formula(p, kind, v, n))).collect();
+            format!("({cases}{})", num_formula(p, kind, v, otherwise))
+        }
         Num::Sum { of, kind: k, calc, filter, .. } => {
             let e = element_var(k, v);
             let filter = filter.as_ref().map_or_else(String::new, |f| format!(" where {}", cond_formula(p, k, &e, f)));
@@ -225,6 +230,10 @@ fn num_words(p: &Program, kind: &str, n: &Num) -> String {
         Num::Path(x) => path_words(p, kind, x),
         Num::Lit(l) => lit_text(p, l),
         Num::Bin(x, op, y) => bin(p, *op, x, y, |m| num_words(p, kind, m)),
+        Num::If { cases, otherwise } => {
+            let cases: Vec<String> = cases.iter().map(|(c, n)| format!("{} if {}", num_words(p, kind, n), cond_words(p, kind, c))).collect();
+            format!("{}, otherwise {}", cases.join(", otherwise "), num_words(p, kind, otherwise))
+        }
         // Read back as written: the yes-or-no attribute's name.
         Num::Flag(c) => match c.as_ref() {
             Cond::Cmp { left, .. } => num_words(p, kind, left),
@@ -292,11 +301,16 @@ fn element_words(p: &Program, owner: &str, element: &str, one: &str, n: &Num) ->
 
 /// `x op y`, with parentheses where the reading needs them.
 fn bin(p: &Program, op: Arith, x: &Num, y: &Num, show: impl Fn(&Num) -> String) -> String {
-    if matches!(op, Arith::Days | Arith::Weekdays | Arith::Working(_)) {
+    let one = |a: Arith| matches!(a, Arith::Days | Arith::Weekdays | Arith::Working(_) | Arith::Max | Arith::Min);
+    if one(op) {
         let end = |m: &Num| match m {
-            Num::Bin(_, inner, _) if !matches!(inner, Arith::Days | Arith::Weekdays | Arith::Working(_)) => format!("({})", show(m)),
+            Num::Bin(_, inner, _) if !one(*inner) => format!("({})", show(m)),
+            Num::If { .. } => format!("({})", show(m)),
             _ => show(m),
         };
+        if matches!(op, Arith::Max | Arith::Min) {
+            return format!("the {} of {} and {}", if op == Arith::Max { "larger" } else { "smaller" }, end(x), end(y));
+        }
         let what = match op {
             Arith::Weekdays => "weekdays".to_string(),
             Arith::Working(i) => format!("{} time", p.calendars.get(i as usize).map_or("?", |c| c.name.as_str())),
@@ -308,7 +322,7 @@ fn bin(p: &Program, op: Arith, x: &Num, y: &Num, show: impl Fn(&Num) -> String) 
     let prec = |a: Arith| match a {
         Arith::Add | Arith::Sub => 1,
         Arith::Mul | Arith::Div => 2,
-        Arith::Days | Arith::Weekdays | Arith::Working(_) => 3,
+        Arith::Days | Arith::Weekdays | Arith::Working(_) | Arith::Max | Arith::Min => 3,
     };
     let side = |m: &Num, right: bool| match m {
         // A right operand of the same precedence is bracketed too: with whole
@@ -316,6 +330,7 @@ fn bin(p: &Program, op: Arith, x: &Num, y: &Num, show: impl Fn(&Num) -> String) 
         Num::Bin(_, inner, _) if prec(*inner) < prec(op) || (right && prec(*inner) == prec(op)) => {
             format!("({})", show(m))
         }
+        Num::If { .. } => format!("({})", show(m)),
         _ => show(m),
     };
     let sym = match op {
@@ -323,7 +338,7 @@ fn bin(p: &Program, op: Arith, x: &Num, y: &Num, show: impl Fn(&Num) -> String) 
         Arith::Sub => "−",
         Arith::Mul => "×",
         Arith::Div => "/",
-        Arith::Days | Arith::Weekdays | Arith::Working(_) => unreachable!("read above"),
+        Arith::Days | Arith::Weekdays | Arith::Working(_) | Arith::Max | Arith::Min => unreachable!("read above"),
     };
     format!("{} {sym} {}", side(x, false), side(y, true))
 }
