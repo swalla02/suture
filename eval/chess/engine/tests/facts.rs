@@ -75,9 +75,9 @@ fn back_rank_checks_that_can_only_be_blocked() {
 #[test]
 fn a_check_that_takes_nothing_only_delays_a_threat() {
     // Nd5 attacks two loose rooks; Black's best is a check, Re4+, after which
-    // the knight cannot take at once, but one rook still falls.
+    // the knight cannot take at once, but one rook still falls, for the knight.
     let f = of("4k3/8/1r6/8/5r2/2N5/8/4K3 w - - 0 1", "c3d5");
-    assert!(f.outlook >= 2, "{f:?}");
+    assert_eq!(f.outlook, 2, "{f:?}");
 }
 
 #[test]
